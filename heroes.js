@@ -13,6 +13,23 @@ export const TRAITS                                                             
   grim: { name: '阴郁', desc: '光环强度+20%，生命-6%', good: true },
   diligent: { name: '勤恳', desc: '疲劳增长-40%', good: true },
   gifted: { name: '天资', desc: '全属性+6%，升级骨币+30%', good: true },
+  // 新增普通
+  greedy: { name: '贪婪', desc: '攻击+8%，战利品骨币+15%', good: true },
+  tenacious: { name: '坚韧', desc: '生命+10%，受伤-5%', good: true },
+  fanatic: { name: '狂热', desc: '攻速+10%，防御-3%', good: true },
+  cunning: { name: '狡猾', desc: '普攻20%概率1.5倍伤害', good: true },
+  calm: { name: '沉稳', desc: '技能冷却-10%', good: true },
+  feral: { name: '野性', desc: '生命低于30%时攻击+20%', good: true },
+  vengeful: { name: '复仇', desc: '倒下时反弹30%攻击伤害', good: true },
+  guardian: { name: '护主', desc: '同房怪物生命+5%', good: true },
+  bloodthirsty: { name: '嗜血', desc: '击杀回复5%生命', good: true },
+  farsighted: { name: '远见', desc: '经验获取+20%', good: true },
+  // 新增金色传奇
+  undying_trait: { name: '不灭', desc: '首次倒下以50%生命复活', good: true, legend: true },
+  demonblood: { name: '魔王之血', desc: '全属性+12%，光环+15%', good: true, legend: true },
+  souldevour: { name: '噬魂', desc: '每击倒勇者永久+1攻击（上限30）', good: true, legend: true },
+  divinefavor: { name: '神恩', desc: '受到致命伤害25%概率保留1点生命', good: true, legend: true },
+  overlord: { name: '统御', desc: '同房怪物攻击+10%，攻速+10%', good: true, legend: true },
 };
 
 // 专精：Lv3/6/9 各开一个槽，每槽三选一。跨种族共用（数值取向不同，读起来一眼明白）
@@ -71,6 +88,23 @@ export const HEAL_MANA = 16;      // 疗一道伤
 export const WOUND_CAP = 3;
 export const WOUND_MULT = 0.08;   // 每道伤压 8% 属性
 export const RESPEC_MANA = 14;    // 每个已选专精的洗点单价
+
+export const REROLL_TRAIT_BONE = 200;
+export const REROLL_TRAIT_MANA = 200;
+
+export function rerollTraits(c, rng) {
+  const keys = Object.keys(TRAITS);
+  const normal = keys.filter((k) => !TRAITS[k].legend);
+  const legend = keys.filter((k) => TRAITS[k].legend);
+  const slots = Math.min(2, c.traits.length + (c.traits.length < 2 && rng() < 0.3 ? 1 : 0));
+  const out = [];
+  for (let i = 0; i < slots; i++) {
+    const isLegend = rng() < 0.10;
+    const pool = isLegend ? legend : normal;
+    out.push(pool[Math.floor(rng() * pool.length)]);
+  }
+  c.traits = out;
+}
 
 // ---------- 称号：长期履历的读数，只取最高一档 ----------
                                                                                                           
@@ -182,7 +216,7 @@ export function rollCands(raidNo        , unlocked          , rng              ,
   }
   const out         = [];
   if (!pool.length) return out;
-  const keys = Object.keys(TRAITS)             ;
+  const keys = Object.keys(TRAITS).filter((k) => !TRAITS[k].legend);
   // 种族轮转：把可选族洗牌后按顺序发，池子够大时同批不重复族
   const bag = pool.map((l) => l.id);
   for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
@@ -200,7 +234,13 @@ export function rollCands(raidNo        , unlocked          , rng              ,
 }
 
 export function newChamp(uid        , c      )        {
-  return { uid, race: c.race, name: c.name, lv: 1, xp: 0, traits: [...c.traits], talents: [], fatigue: 0, battles: 0, kills: 0, wounds: 0, gear: {} };
+  return {
+    uid, race: c.race, name: c.name, lv: 1, xp: 0,
+    traits: [...c.traits], talents: [], fatigue: 0,
+    battles: 0, kills: 0, wounds: 0, gear: {},
+    activeTitle: '',
+    stats: {},
+  };
 }
 export const champGear = (c       )          => gearEff(c.gear);
 export const woundGuarded = (c       ) => gearEff(c.gear).woundGuard;
