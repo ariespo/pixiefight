@@ -41,24 +41,36 @@ export const TRAITS                                                             
 // 每层三选一，且每一层都给"真机制"（复用 battle.ts 已实现的 MonEff 字段）——
 // 英雄贵在稀有（名册 6、统领席 4、还会疲劳留伤），所以成长必须压过改造过的精英。
 export const TALENTS                                                                        = {
+  // 第一层
   t1hp: { name: '壮骨', desc: '生命 +20%，每秒回血 2', tier: 1 },
   t1atk: { name: '利爪', desc: '攻击 +20%，普攻破防 3', tier: 1 },
   t1aura: { name: '号令', desc: '光环 +25%，同房怪物攻击 +8%', tier: 1 },
+  t1thorn: { name: '荆棘', desc: '反伤 +15%，生命 +10%', tier: 1 },
+  t1hunter: { name: '猎手', desc: '对勇者伤害 +12%', tier: 1 },
+  // 第二层
   t2def: { name: '铁皮', desc: '防御 +6，受伤 -12%，反弹 14% 伤害', tier: 2 },
   t2spd: { name: '迅捷', desc: '攻速 +20%，普攻溅射 30%', tier: 2 },
   t2aura: { name: '传令', desc: '光环 +25%，同房怪物受伤 -8%', tier: 2 },
+  t2bulwark: { name: '盾墙', desc: '同房怪物防御 +4', tier: 2 },
+  t2inspire: { name: '鼓舞', desc: '同房怪物攻速 +10%', tier: 2 },
+  // 第三层
   t3cd: { name: '暴怒', desc: '技能冷却 -25%，越打越快', tier: 3 },
   t3revive: { name: '不朽', desc: '首次倒下以30%生命复活，并拉起一名同房怪物', tier: 3 },
   t3aura: { name: '统御', desc: '光环 +40%，嘲讽近战勇者', tier: 3 },
+  t3abyss: { name: '深渊', desc: '技能伤害 +25%', tier: 3 },
+  t3regen: { name: '再生', desc: '每秒回血 +6', tier: 3 },
+  // 第四层
   t4exec: { name: '斩首', desc: '勇者残血40%以下伤害翻倍，普攻叠易伤', tier: 4 },
   t4blood: { name: '饮血', desc: '普攻吸血 30%，每秒回血 4', tier: 4 },
   t4lord: { name: '暴君', desc: '攻击 +25%，倒下时全场勇者受 40 伤害', tier: 4 },
+  t4ruin: { name: '毁灭', desc: '攻击 +30%，生命 -10%', tier: 4 },
+  t4warden: { name: '守护', desc: '生命 +25%，防御 +5', tier: 4 },
 };
 export const TALENT_TIERS               = [
-  ['t1hp', 't1atk', 't1aura'],
-  ['t2def', 't2spd', 't2aura'],
-  ['t3cd', 't3revive', 't3aura'],
-  ['t4exec', 't4blood', 't4lord'],
+  ['t1hp', 't1atk', 't1aura', 't1thorn', 't1hunter'],
+  ['t2def', 't2spd', 't2aura', 't2bulwark', 't2inspire'],
+  ['t3cd', 't3revive', 't3aura', 't3abyss', 't3regen'],
+  ['t4exec', 't4blood', 't4lord', 't4ruin', 't4warden'],
 ];
 export const TIER_LV = [3, 5, 7, 10];
 
@@ -304,6 +316,14 @@ export function champStats(c       , potentialMult = 1, chem          = NO_CHEM)
     if (t === 't4exec') { eff.execute = Math.max(eff.execute ?? 0, 0.4); eff.markHit = (eff.markHit ?? 0) + 0.08; }
     if (t === 't4blood') { eff.lifestealPct = Math.max(eff.lifestealPct ?? 0, 0.3); eff.hpRegen = (eff.hpRegen ?? 0) + 4; }
     if (t === 't4lord') { atk *= 1.25; eff.deathBurst = Math.max(eff.deathBurst ?? 0, 40); }
+    if (t === 't1thorn') { hp *= 1.1; eff.thorns = (eff.thorns ?? 0) + 0.15; }
+    if (t === 't1hunter') { eff.dmgToHero = (eff.dmgToHero ?? 1) * 1.12; }
+    if (t === 't2bulwark') { eff.allyDef = (eff.allyDef ?? 0) + 4; }
+    if (t === 't2inspire') { eff.allySpd = (eff.allySpd ?? 1) * 1.10; }
+    if (t === 't3abyss') { eff.skillDmg = (eff.skillDmg ?? 1) * 1.25; }
+    if (t === 't3regen') { eff.hpRegen = (eff.hpRegen ?? 0) + 6; }
+    if (t === 't4ruin') { atk *= 1.30; hp *= 0.9; }
+    if (t === 't4warden') { hp *= 1.25; def += 5; }
   }
   const ti = titleOf(c);
   if (ti) { hp *= ti.hp ?? 1; atk *= ti.atk ?? 1; def += ti.def ?? 0; }
