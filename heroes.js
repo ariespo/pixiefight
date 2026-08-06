@@ -118,25 +118,75 @@ export function rerollTraits(c, rng) {
   c.traits = out;
 }
 
-// ---------- 称号：长期履历的读数，只取最高一档 ----------
-                                                                                                          
-export const TITLES          = [
-  { name: '勇者克星', desc: '生命+6% 攻击+10%', hp: 1.06, atk: 1.1, need: '击倒20名勇者' },
-  { name: '猎首', desc: '攻击+7%', atk: 1.07, need: '击倒10名勇者' },
-  { name: '老兵', desc: '生命+8% 防御+2', hp: 1.08, def: 2, need: '参战10场' },
-  { name: '守门', desc: '生命+4%', hp: 1.04, need: '参战4场' },
+// ---------- 称号：长期履历的读数，可切换已解锁称号 ----------
+export const TITLES = [
+  // 参战维度
+  { id: 'gatekeeper', name: '守门人', desc: '生命 +4%', stats: { hp: 1.04 }, need: (c, s) => c.battles >= 4 },
+  { id: 'veteran', name: '老兵', desc: '生命 +8% 防御 +2', stats: { hp: 1.08, def: 2 }, need: (c, s) => c.battles >= 10 },
+  { id: 'warmaster', name: '战争大师', desc: '生命 +12% 防御 +4', stats: { hp: 1.12, def: 4 }, need: (c, s) => c.battles >= 25 },
+  { id: 'immortal', name: '不灭传说', desc: '生命 +18% 防御 +6 攻速 +5%', stats: { hp: 1.18, def: 6, spd: 1.05 }, need: (c, s) => c.battles >= 40 },
+  { id: 'champion', name: '斗场冠军', desc: '生命 +10% 攻击 +5%', stats: { hp: 1.10, atk: 1.05 }, need: (c, s) => c.battles >= 60 },
+  // 击杀维度
+  { id: 'hunter', name: '猎首', desc: '攻击 +7%', stats: { atk: 1.07 }, need: (c, s) => c.kills >= 10 },
+  { id: 'slayer', name: '勇者克星', desc: '生命 +6% 攻击 +10%', stats: { hp: 1.06, atk: 1.10 }, need: (c, s) => c.kills >= 20 },
+  { id: 'executioner', name: '处刑人', desc: '攻击 +15%', stats: { atk: 1.15 }, need: (c, s) => c.kills >= 50 },
+  { id: 'reaper', name: '死神', desc: '攻击 +20% 攻速 +5%', stats: { atk: 1.20, spd: 1.05 }, need: (c, s) => c.kills >= 100 },
+  { id: 'legend_slayer', name: '传奇猎杀者', desc: '攻击 +25% 生命 +8%', stats: { atk: 1.25, hp: 1.08 }, need: (c, s) => c.kills >= 200 },
+  // 回复维度
+  { id: 'healer', name: '愈者', desc: '每秒回血 +2', stats: { hpRegen: 2 }, need: (c, s) => (s.healDone ?? 0) >= 500 },
+  { id: 'mender', name: '修复师', desc: '每秒回血 +4', stats: { hpRegen: 4 }, need: (c, s) => (s.healDone ?? 0) >= 2000 },
+  { id: 'restorer', name: '复苏者', desc: '每秒回血 +6 生命 +5%', stats: { hpRegen: 6, hp: 1.05 }, need: (c, s) => (s.healDone ?? 0) >= 5000 },
+  { id: 'lifegiver', name: '生命之源', desc: '每秒回血 +8 生命 +10%', stats: { hpRegen: 8, hp: 1.10 }, need: (c, s) => (s.healDone ?? 0) >= 10000 },
+  { id: 'legend_healer', name: '不朽医者', desc: '每秒回血 +12 生命 +12%', stats: { hpRegen: 12, hp: 1.12 }, need: (c, s) => (s.healDone ?? 0) >= 20000 },
+  // 复活维度
+  { id: 'reviver', name: '还魂者', desc: '复活生命 +10%', stats: { reviveHp: 0.10 }, need: (c, s) => (s.revives ?? 0) >= 3 },
+  { id: 'resurrector', name: '复活者', desc: '复活生命 +20%', stats: { reviveHp: 0.20 }, need: (c, s) => (s.revives ?? 0) >= 10 },
+  { id: 'phoenix', name: '凤凰', desc: '复活生命 +30% 攻击 +5%', stats: { reviveHp: 0.30, atk: 1.05 }, need: (c, s) => (s.revives ?? 0) >= 25 },
+  { id: 'undying', name: '不死者', desc: '复活生命 +40% 生命 +5%', stats: { reviveHp: 0.40, hp: 1.05 }, need: (c, s) => (s.revives ?? 0) >= 50 },
+  { id: 'legend_reviver', name: '轮回之主', desc: '复活生命 +50% 生命 +10% 攻击 +10%', stats: { reviveHp: 0.50, hp: 1.10, atk: 1.10 }, need: (c, s) => (s.revives ?? 0) >= 100 },
+  // 反伤维度
+  { id: 'thorn', name: '荆棘', desc: '反伤 +5%', stats: { thorns: 0.05 }, need: (c, s) => (s.thornDmg ?? 0) >= 200 },
+  { id: 'spiker', name: '尖刺', desc: '反伤 +10%', stats: { thorns: 0.10 }, need: (c, s) => (s.thornDmg ?? 0) >= 800 },
+  { id: 'porcupine', name: '猬甲', desc: '反伤 +15% 防御 +2', stats: { thorns: 0.15, def: 2 }, need: (c, s) => (s.thornDmg ?? 0) >= 2000 },
+  { id: 'mirror', name: '镜反', desc: '反伤 +20% 防御 +4', stats: { thorns: 0.20, def: 4 }, need: (c, s) => (s.thornDmg ?? 0) >= 5000 },
+  { id: 'legend_thorn', name: '荆棘王座', desc: '反伤 +30% 防御 +6 生命 +8%', stats: { thorns: 0.30, def: 6, hp: 1.08 }, need: (c, s) => (s.thornDmg ?? 0) >= 10000 },
+  // 攻速维度
+  { id: 'quick', name: '快手', desc: '攻速 +5%', stats: { spd: 1.05 }, need: (c, s) => (s.attacks ?? 0) >= 100 },
+  { id: 'agile', name: '敏捷', desc: '攻速 +10%', stats: { spd: 1.10 }, need: (c, s) => (s.attacks ?? 0) >= 500 },
+  { id: 'swiftlord', name: '迅捷领主', desc: '攻速 +15% 攻击 +3%', stats: { spd: 1.15, atk: 1.03 }, need: (c, s) => (s.attacks ?? 0) >= 1500 },
+  { id: 'blitz', name: '闪电', desc: '攻速 +20% 攻击 +5%', stats: { spd: 1.20, atk: 1.05 }, need: (c, s) => (s.attacks ?? 0) >= 4000 },
+  { id: 'legend_speed', name: '风暴化身', desc: '攻速 +25% 攻击 +10%', stats: { spd: 1.25, atk: 1.10 }, need: (c, s) => (s.attacks ?? 0) >= 8000 },
+  // 攻击维度
+  { id: 'bruiser', name: '碎骨者', desc: '攻击 +5%', stats: { atk: 1.05 }, need: (c, s) => (s.dmgDealt ?? 0) >= 1000 },
+  { id: 'brute', name: '蛮力', desc: '攻击 +10%', stats: { atk: 1.10 }, need: (c, s) => (s.dmgDealt ?? 0) >= 5000 },
+  { id: 'destroyer', name: '毁灭者', desc: '攻击 +15% 生命 +3%', stats: { atk: 1.15, hp: 1.03 }, need: (c, s) => (s.dmgDealt ?? 0) >= 15000 },
+  { id: 'annihilator', name: '湮灭者', desc: '攻击 +20% 生命 +5%', stats: { atk: 1.20, hp: 1.05 }, need: (c, s) => (s.dmgDealt ?? 0) >= 40000 },
+  { id: 'legend_power', name: '天灾', desc: '攻击 +30% 生命 +10%', stats: { atk: 1.30, hp: 1.10 }, need: (c, s) => (s.dmgDealt ?? 0) >= 100000 },
+  // 4 个高要求传奇称号
+  { id: 'legend_war', name: '战争神话', desc: '全属性 +10%', stats: { hp: 1.10, atk: 1.10, def: 5, spd: 1.10 }, need: (c, s) => c.battles >= 40 && c.kills >= 200 },
+  { id: 'legend_tank', name: '不朽壁垒', desc: '生命 +25% 防御 +10 反伤 +10%', stats: { hp: 1.25, def: 10, thorns: 0.10 }, need: (c, s) => (s.thornDmg ?? 0) >= 10000 && (s.healDone ?? 0) >= 20000 },
+  { id: 'legend_dps', name: '毁灭风暴', desc: '攻击 +25% 攻速 +15%', stats: { atk: 1.25, spd: 1.15 }, need: (c, s) => (s.dmgDealt ?? 0) >= 100000 && (s.attacks ?? 0) >= 8000 },
+  { id: 'legend_rebirth', name: '轮回帝君', desc: '生命 +15% 攻击 +15% 复活生命 +30%', stats: { hp: 1.15, atk: 1.15, reviveHp: 0.30 }, need: (c, s) => (s.revives ?? 0) >= 100 && c.kills >= 200 },
 ];
-export function titleOf(c       )               {
-  if (c.kills >= 20) return TITLES[0];
-  if (c.kills >= 10) return TITLES[1];
-  if (c.battles >= 10) return TITLES[2];
-  if (c.battles >= 4) return TITLES[3];
-  return null;
+
+export function unlockedTitles(c) {
+  return TITLES.filter((t) => t.need(c, c.stats ?? {})).map((t) => t.id);
 }
-export function nextTitle(c       )                                  {
-  if (c.kills < 10) return { t: TITLES[1], at: `再击倒${10 - c.kills}名勇者` };
-  if (c.kills < 20) return { t: TITLES[0], at: `再击倒${20 - c.kills}名勇者` };
-  return null;
+export function titleById(id) {
+  return TITLES.find((t) => t.id === id) ?? null;
+}
+export function activeTitleOf(c) {
+  const unlocked = unlockedTitles(c);
+  if (unlocked.includes(c.activeTitle)) return titleById(c.activeTitle);
+  const best = TITLES.filter((t) => unlocked.includes(t.id)).pop();
+  return best ?? null;
+}
+// 兼容旧调用：用 activeTitleOf 替代 titleOf
+export function titleOf(c) { return activeTitleOf(c); }
+export function nextTitle(c) {
+  const unlocked = unlockedTitles(c);
+  const next = TITLES.find((t) => !unlocked.includes(t.id));
+  return next ? { t: next, at: '继续战斗解锁更多称号' } : null;
 }
 
 // ---------- 同僚关系：由"谁和谁同时上阵"决定，是布阵层面的取舍 ----------
@@ -325,8 +375,17 @@ export function champStats(c       , potentialMult = 1, chem          = NO_CHEM)
     if (t === 't4ruin') { atk *= 1.30; hp *= 0.9; }
     if (t === 't4warden') { hp *= 1.25; def += 5; }
   }
-  const ti = titleOf(c);
-  if (ti) { hp *= ti.hp ?? 1; atk *= ti.atk ?? 1; def += ti.def ?? 0; }
+  const ti = activeTitleOf(c);
+  if (ti?.stats) {
+    if (ti.stats.hp) hp *= ti.stats.hp;
+    if (ti.stats.atk) atk *= ti.stats.atk;
+    if (ti.stats.def) def += ti.stats.def;
+    if (ti.stats.spd) spd *= ti.stats.spd;
+    if (ti.stats.aura) auraPow *= ti.stats.aura;
+    if (ti.stats.hpRegen) eff.hpRegen = (eff.hpRegen ?? 0) + ti.stats.hpRegen;
+    if (ti.stats.thorns) eff.thorns = (eff.thorns ?? 0) + ti.stats.thorns;
+    if (ti.stats.reviveHp) eff.reviveHp = (eff.reviveHp ?? 0) + ti.stats.reviveHp;
+  }
   // 装备与套装：和特质/专精同层相乘，最后再叠同僚效应
   hp *= ge.hp * (set?.hp ?? 1); atk *= ge.atk; def += ge.def; spd *= ge.spd;
   auraPow *= ge.aura * (set?.aura ?? 1); dmgTaken *= ge.dmgTaken;
