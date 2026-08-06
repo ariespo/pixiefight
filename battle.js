@@ -198,6 +198,7 @@ function makeChampUnit(st           , uid        , roomIdx        , mod         
     flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, phase: 0, room: roomIdx,
     marked: 1, guardT: 0, healCutT: 0, healCutPct: 1, barbT: 0, atkCut: 1, rallyT: 0,
     legend: true, aura: st.auraId, auraPow: st.auraPow, dmgTakenMult: st.dmgTakenMult, charmT: 0, auraRevived: false,
+    __battleAttacks: 0, __battleDmgDealt: 0, __battleThornDmg: 0, __battleHealDone: 0, __battleRevives: 0,
   };
 }
 
@@ -512,6 +513,7 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     if (tgt.side === 'mon' && tgt.eff?.passive === 'revive' && tgt.lv >= 5 && !tgt.revived) {
       tgt.revived = true;
       tgt.hp = Math.round(tgt.maxHp * 0.2);
+      if (tgt.champUid) tgt.__battleRevives++;
       log(b, `不朽骨：${tgt.name}以20%生命复活`, 'good');
       return;
     }
@@ -519,6 +521,7 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     if (tgt.side === 'mon' && auraOf(b, tgt) === 'undying' && !tgt.auraRevived) {
       tgt.auraRevived = true;
       tgt.hp = Math.max(1, Math.round(tgt.maxHp * Math.min(0.9, 0.3 * auraPow(b, tgt.room))));
+      if (tgt.champUid) tgt.__battleRevives++;
       b.events.push({ k: 'cast', room: b.roomIndex, x: tgt.x, y: tgt.y, color: 0x9b5de5 });
       log(b, `亡者不休：${tgt.name}被${b.rooms[tgt.room]?.leader?.name ?? '巫妖'}拽了回来`, 'good');
       return;
@@ -580,6 +583,7 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     src.hp -= back;
     src.flashT = 0.12;
     tgt.dmgDealt += back;
+    if (tgt.champUid) tgt.__battleThornDmg += back;
     b.events.push({ k: 'hit', room: b.roomIndex, x: src.x, y: src.y, dmg: back, heavy: false, target: src });
     if (src.hp <= 0) {
       src.alive = false; src.hp = 0; src.deadT = 0;
@@ -780,6 +784,7 @@ function basicAttack(b        , u      ) {
   const tgt = charmed ? charmTarget(b, u) : u.side === 'hero' ? heroTarget(b, u) : monTarget(b, u);
   if (!tgt) return;
   u.lungeT = 0.22;
+  if (u.champUid) u.__battleAttacks++;
   const mult = u.side === 'hero' ? b.moraleMult * u.atkCut : atkMult(b, u);
   if (u.side === 'hero') barbBite(b, u);
   if (u.side !== 'mon' || !u.eff) { damage(b, u, tgt, u.atk * mult, false); return; }
@@ -1591,6 +1596,20 @@ function finish(b        ) {
       }
     }
   }
+  const champStats = new Map();
+  for (const r of b.rooms) {
+    for (const m of r.mons) {
+      if (!m.champUid) continue;
+      champStats.set(m.champUid, {
+        attacks: m.__battleAttacks ?? 0,
+        dmgDealt: Math.round(m.dmgDealt),
+        thornDmg: Math.round(m.__battleThornDmg ?? 0),
+        healDone: Math.round(m.healed),
+        revives: m.__battleRevives ?? 0,
+      });
+    }
+  }
+
   let firstCause = '地牢守住了防线';
   if (!win) {
     if (kills === 0) firstCause = '全队勇者毫无损伤地走到王座：地牢得先有守军';
@@ -1609,6 +1628,7 @@ function finish(b        ) {
     win, kills, total, seal, skulls, roomsHeld, bone, mana, loot,
     xp: [...xpMap.entries()].map(([uid, xp]) => ({ uid, xp })),
     champXp: [...champXp.entries()].map(([uid, v]) => ({ uid, xp: v.xp, kills: v.kills, fell: v.fell })),
+    champStats: [...champStats.entries()].map(([uid, v]) => ({ uid, ...v })),
     firstCause,
   };
   log(b, win ? `守住地牢！封印剩余${seal}` : `封印被击破，勇者攻入王座`, win ? 'good' : 'bad');

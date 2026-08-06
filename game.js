@@ -3734,6 +3734,17 @@ function finishBattle() {
     S.vault.push(id);
   }
   tickFatigue(S.champs, seatedChampUids());
+  // 战后维度统计写入英雄长期 stats，供称号解锁/切换读取
+  for (const x of r.champStats ?? []) {
+    const c = champById(x.uid);
+    if (!c) continue;
+    c.stats = c.stats ?? {};
+    c.stats.attacks = (c.stats.attacks ?? 0) + (x.attacks ?? 0);
+    c.stats.dmgDealt = (c.stats.dmgDealt ?? 0) + (x.dmgDealt ?? 0);
+    c.stats.thornDmg = (c.stats.thornDmg ?? 0) + (x.thornDmg ?? 0);
+    c.stats.healDone = (c.stats.healDone ?? 0) + (x.healDone ?? 0);
+    c.stats.revives = (c.stats.revives ?? 0) + (x.revives ?? 0);
+  }
   const units = [...b.heroes.map((h) => ({ name: h.name, dmg: Math.round(h.dmgDealt), heal: Math.round(h.healed), side: 'hero' })),
     ...b.rooms.flatMap((rm) => rm.mons.map((m) => ({ name: m.name, dmg: Math.round(m.dmgDealt), heal: Math.round(m.healed), side: 'mon' })))]
     .sort((a, z) => z.dmg - a.dmg);
@@ -4103,7 +4114,7 @@ window.__debug = {
   devWound: (uid        , n        ) => { const c = champById(uid); if (c) c.wounds = n; persist(); render(); return c?.wounds; },
   devHeal: (uid        ) => { const c = champById(uid); if (c) healChamp(c); return champById(uid)?.wounds; },
   devRespec: (uid        ) => { const c = champById(uid); if (c) respecChamp(c); return champById(uid)?.talents; },
-  devKills: (uid        , k        , b = 0) => { const c = champById(uid); if (c) { c.kills = k; c.battles = b || c.battles; } persist(); render(); return titleOf(c )?.name ?? null; },
+  devKills: (uid        , k        , b = 0) => { const c = champById(uid); if (c) { c.kills = k; c.battles = b || c.battles; } persist(); render(); return activeTitleOf(c)?.name ?? null; },
   get cands() { return S.cands.map((c) => ({ ...c, cost: candCostOf(c) })); },
   devChamp: (race        , lv = 1, traits           = []) => {
     const c = newChamp(S.champNext++, { id: 0, race, name: randomName(race, Math.random, S.champs.map((x) => x.name)), traits: traits           , potential: 1 });
