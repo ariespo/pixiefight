@@ -3717,7 +3717,7 @@ function finishBattle() {
     const c = champById(x.uid);
     if (!c) continue;
     if (c.lv < CHAMP_LV_CAP) {
-      const st = statOf(c, chemBefore.map);
+      const st = statOf(c, chemBefore);
       c.xp += Math.round(x.xp * chemOf(chemBefore, c.uid).xp * (st.xpMult ?? 1));
     }
     c.kills += x.kills;

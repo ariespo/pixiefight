@@ -409,7 +409,7 @@ export function champStats(c       , potentialMult = 1, chem          = NO_CHEM)
     if (t === 'farsighted') xpMult *= 1.20;
     if (t === 'undying_trait') { eff.undyingTrait = 0.50; }
     if (t === 'demonblood') { hp *= 1.12; atk *= 1.12; def *= 1.12; spd *= 1.12; auraPow *= 1.15; }
-    if (t === 'souldevour') { /* 攻击加值来自 c.soulAtk，在下面结算 */ }
+    if (t === 'souldevour') { eff.soulDevour = true; }
     if (t === 'divinefavor') eff.divineFavor = 0.25;
     if (t === 'overlord') { eff.allyAtk = 1.10; eff.allySpd = 1.10; }
   }
