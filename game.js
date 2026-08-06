@@ -14,9 +14,9 @@ import { applyEffects, fillText, getProvider, requestScene, sceneById, setProvid
 import { READ_PATHS, foldMods, modSummary } from './vars.js';
                                                                         
 import { CHAMP_CAP, CHAMP_LV_CAP, CHEM_INFO, HEAL_MANA, POT_MULT, POT_NAME, REROLL_MANA, REST_MANA, RESPEC_MANA,
-  TALENTS, TALENT_CAP, TALENT_TIERS, TIER_LV, TRAITS, WOUND_CAP,
-  auraText, canLevel, champStats, chemOf, chemistry, fatigueTier, newChamp, nextTitle, pendingTier, randomName, respecCost,
-  rollCands, talentSlots, tickFatigue, titleOf, upCostOf, xpNeed } from './heroes.js';
+  REROLL_TRAIT_BONE, REROLL_TRAIT_MANA, TALENTS, TALENT_CAP, TALENT_TIERS, TIER_LV, TRAITS, WOUND_CAP,
+  activeTitleOf, auraText, canLevel, champStats, chemOf, chemistry, fatigueTier, newChamp, nextTitle, pendingTier, randomName, respecCost,
+  rerollTraits, rollCands, talentSlots, tickFatigue, titleById, titleOf, unlockedTitles, upCostOf, xpNeed } from './heroes.js';
                                                          
 import { TEX, txt, label, labelC, panel, panelF, frame, bar, sprite, Hits, button, setTextRes, FONT } from './ui.js';
 import { initAudio, unlockAudio, playSfx, playHit, playMusic, setMuted, audioSnapshot, tickAudio } from './audio.js';
@@ -178,6 +178,8 @@ function sanitizeSave() {
     c.battles = Math.max(0, Math.round(c.battles || 0));
     c.kills = Math.max(0, Math.round(c.kills || 0));
     c.wounds = Math.max(0, Math.min(WOUND_CAP, Math.round(c.wounds || 0)));
+    c.activeTitle = c.activeTitle ?? '';
+    c.stats = c.stats ?? {};
     c.traits = (Array.isArray(c.traits) ? c.traits : []).filter((t) => t in TRAITS).slice(0, 2);
     c.talents = (Array.isArray(c.talents) ? c.talents : []).filter((t) => t in TALENTS).slice(0, talentSlots(c));
     // 装备：旧档没有该字段；槽位与 id 都要有效，且同一件不能同时穿在两处
@@ -2892,51 +2894,78 @@ function drawChampDetail(g               , c       ) {
   const chem = chemistry(S.champs, seatedChampUids());
   const st = statOf(c, chem.map);
   const pot = S.champPot[c.uid] ?? 0;
-  const ti = titleOf(c);
+  const ti = activeTitleOf(c);
   label(uiLayer, cut(`${c.name}${ti ? `・${ti.name}` : ''}`, 12), 174, 64, 12, C.gold);
-  label(uiLayer, `${monKind(c.race).name}・Lv${c.lv}/${CHAMP_LV_CAP}・资质${POT_NAME[pot]}`, 174, 79, 12, C.bone);
+  label(uiLayer, `${monKind(c.race).name}・Lv${c.lv}/${CHAMP_LV_CAP}・资质${POT_NAME[pot]}`, 174, 78, 12, C.bone);
   uiLayer.addChild(sprite(monKind(c.race).tex, 446, 104, 40));
   const ft = fatigueTier(c.fatigue);
-  label(uiLayer, `生命 ${st.hp}`, 174, 96, 12, C.bone);
-  label(uiLayer, `攻击 ${st.atk}`, 248, 96, 12, C.bone);
-  label(uiLayer, `防御 ${st.def}`, 316, 96, 12, C.bone);
-  label(uiLayer, `攻速 ${st.spd.toFixed(2)}`, 384, 96, 12, C.bone);
-  label(uiLayer, `疲劳 ${c.fatigue} ${ft.text}${ft.mult < 1 ? `×${ft.mult}` : ''}`, 174, 111, 12, ft.bad ? C.red : C.steel);
+  label(uiLayer, `生命 ${st.hp}`, 174, 92, 12, C.bone);
+  label(uiLayer, `攻击 ${st.atk}`, 248, 92, 12, C.bone);
+  label(uiLayer, `防御 ${st.def}`, 316, 92, 12, C.bone);
+  label(uiLayer, `攻速 ${st.spd.toFixed(2)}`, 384, 92, 12, C.bone);
+  label(uiLayer, `疲劳 ${c.fatigue} ${ft.text}${ft.mult < 1 ? `×${ft.mult}` : ''}`, 174, 106, 12, ft.bad ? C.red : C.steel);
   const wd = c.wounds || 0;
-  label(uiLayer, wd ? `伤 ${wd}道 属性-${wd * 8}%` : '无伤', 296, 111, 12, wd ? C.red : C.green);
-  label(uiLayer, cut(auraText(st.auraId, st.auraPow), 22), 174, 126, 12, C.gold);
+  label(uiLayer, wd ? `伤 ${wd}道 属性-${wd * 8}%` : '无伤', 296, 106, 12, wd ? C.red : C.green);
+  label(uiLayer, cut(auraText(st.auraId, st.auraPow), 22), 174, 120, 12, C.gold);
   const ge = gearEff(c.gear);
-  label(uiLayer, `装备 ${ge.names.length}/3`, 392, 126, 12, ge.names.length ? C.purple : C.stoneLit);
+  label(uiLayer, `装备 ${ge.names.length}/3`, 392, 120, 12, ge.names.length ? C.purple : C.stoneLit);
   const traitTxt = c.traits.map((t) => `${TRAITS[t].name}（${TRAITS[t].desc}）`).join('；');
-  label(uiLayer, cut(`特质 ${traitTxt || '无'}`, 34), 174, 141, 12, C.purple);
+  label(uiLayer, cut(`特质 ${traitTxt || '无'}`, 34), 174, 134, 12, C.purple);
   const tags = chemOf(chem.map, c.uid).tags;
   const at = roomOfChamp(c.uid);
   label(uiLayer, at < 0 ? '未上阵（留守，疲劳每战-25）' : cut(`${at + 1}房统领 ${tags.length ? tags.join('・') : '无同僚效应'}`, 20),
-    174, 156, 12, at < 0 ? C.stoneLit : C.steel);
+    174, 148, 12, at < 0 ? C.stoneLit : C.steel);
   const nt = nextTitle(c);
-  label(uiLayer, cut(`${c.battles}战${c.kills}杀${nt ? `→${nt.t.name}` : '・满'}`, 10), 400, 156, 12, C.stoneLit);
+  label(uiLayer, cut(`${c.battles}战${c.kills}杀${nt ? `→${nt.t.name}` : '・满'}`, 10), 400, 148, 12, C.stoneLit);
   // 机制行独占一行并可点开看全文（专精点满后这串会超过一行能放的字数）
   const mech = effText(st.eff);
   const mechTxt = mech ? `机制 ${mech}` : '机制 无（点专精拿战斗机制）';
-  label(uiLayer, cut(mechTxt, 22), 174, 171, 12, mech ? C.green : C.stoneLit);
-  if (mechTxt.length > 22) hits.add(174, 171, 292, 15, () => say(cut(mechTxt, 40)));
+  label(uiLayer, cut(mechTxt, 22), 174, 179, 12, mech ? C.green : C.stoneLit);
+  if (mechTxt.length > 22) hits.add(174, 179, 292, 15, () => say(cut(mechTxt, 40)));
+  // 称号条：显示已解锁称号并可切换
+  const unlocked = unlockedTitles(c);
+  if (unlocked.length > 0) {
+    let tx = 174;
+    label(uiLayer, '称号', tx, 162, 12, C.gold);
+    tx += 30;
+    for (const id of unlocked.slice(0, 5)) {
+      const t = titleById(id);
+      const active = c.activeTitle === id;
+      button(g, uiLayer, hits, tx, 160, 48, 15, t.name, () => { c.activeTitle = id; playSfx('tab'); persist(); render(); },
+        { size: 10, fill: active ? C.goldDark : C.ink, border: active ? C.gold : C.stoneLit, color: active ? C.white : C.steel });
+      tx += 52;
+    }
+  }
   if (c.lv < CHAMP_LV_CAP) {
     const need = xpNeed(c.lv);
-    label(uiLayer, `经验 ${c.xp}/${need}`, 174, 186, 12, C.bone);
-    bar(uiGfx, 262, 190, 88, 5, Math.min(1, c.xp / need), C.green);
+    label(uiLayer, `经验 ${c.xp}/${need}`, 174, 188, 12, C.bone);
+    bar(uiGfx, 262, 192, 88, 5, Math.min(1, c.xp / need), C.green);
     const cost = upCostOf(c);
-    button(g, uiLayer, hits, 362, 184, 106, 15, `升级 ${cost}骨`, () => levelChamp(c),
+    button(g, uiLayer, hits, 362, 186, 106, 15, `升级 ${cost}骨`, () => levelChamp(c),
       { size: 12, enabled: canLevel(c) && S.bone >= cost, fill: C.greenDark, border: C.green, color: C.white });
   } else {
-    label(uiLayer, '已达顶级 专精已满', 174, 186, 12, C.gold);
+    label(uiLayer, '已达顶级 专精已满', 174, 188, 12, C.gold);
   }
   // 底部按钮行：下沿不过 222，给 224 的提示条留位置
-  button(g, uiLayer, hits, 174, 206, 78, 15, `休整 ${REST_MANA}魔`, () => restChamp(c),
-    { size: 12, enabled: c.fatigue > 0 && S.mana >= REST_MANA, border: C.steel, color: C.white });
-  button(g, uiLayer, hits, 258, 206, 80, 15, `疗伤 ${HEAL_MANA}魔`, () => healChamp(c),
-    { size: 12, enabled: wd > 0 && S.mana >= HEAL_MANA, border: wd ? C.red : C.stoneLit, color: wd ? C.white : C.stoneLit });
-  button(g, uiLayer, hits, 344, 206, 60, 15, '同僚', () => sayChem(chem.lines), { size: 12, border: C.purple, color: C.purple });
-  button(g, uiLayer, hits, 410, 206, 58, 15, '遣退', () => dismissChamp(c), { size: 12, border: C.red, color: C.red });
+  button(g, uiLayer, hits, 174, 204, 130, 15, `重随特质 ${REROLL_TRAIT_BONE}骨+${REROLL_TRAIT_MANA}魔`, () => rerollChampTraits(c),
+    { size: 10, enabled: S.bone >= REROLL_TRAIT_BONE && S.mana >= REROLL_TRAIT_MANA, border: C.purple, color: C.white });
+  button(g, uiLayer, hits, 306, 204, 48, 15, `休整 ${REST_MANA}魔`, () => restChamp(c),
+    { size: 10, enabled: c.fatigue > 0 && S.mana >= REST_MANA, border: C.steel, color: C.white });
+  button(g, uiLayer, hits, 356, 204, 50, 15, `疗伤 ${HEAL_MANA}魔`, () => healChamp(c),
+    { size: 10, enabled: wd > 0 && S.mana >= HEAL_MANA, border: wd ? C.red : C.stoneLit, color: wd ? C.white : C.stoneLit });
+  button(g, uiLayer, hits, 408, 204, 36, 15, '同僚', () => sayChem(chem.lines), { size: 10, border: C.purple, color: C.purple });
+  button(g, uiLayer, hits, 446, 204, 34, 15, '遣退', () => dismissChamp(c), { size: 10, border: C.red, color: C.red });
+}
+
+function rerollChampTraits(c) {
+  if (S.bone < REROLL_TRAIT_BONE || S.mana < REROLL_TRAIT_MANA) { say('资源不足'); return; }
+  S.bone -= REROLL_TRAIT_BONE;
+  S.mana -= REROLL_TRAIT_MANA;
+  rerollTraits(c, Math.random);
+  playSfx('buy');
+  say(`重随为：${c.traits.map((t) => TRAITS[t].name).join('、')}`);
+  persist();
+  render();
 }
 
 const cut = (t        , n        ) => (t.length > n ? `${t.slice(0, n)}…` : t);
@@ -2954,17 +2983,17 @@ function drawChampTalents(g               , c       ) {
     const isPend = pend === i + 1;
     if (own) {
       label(uiLayer, `Lv${TIER_LV[i]} ${TALENTS[own].name}`, 174, y, 12, C.white);
-      label(uiLayer, cut(TALENTS[own].desc, 22), 174, y + 17, 12, C.steel);
+      label(uiLayer, cut(TALENTS[own].desc, 30), 174, y + 17, 11, C.steel);
     } else if (isPend) {
-      label(uiLayer, `Lv${TIER_LV[i]} 三选一`, 174, y, 12, C.purple);
+      label(uiLayer, `Lv${TIER_LV[i]} 五选一`, 174, y, 12, C.purple);
       tier.forEach((id, j) => {
-        button(g, uiLayer, hits, 254 + j * 72, y - 2, 70, 15, TALENTS[id].name, () => pickTalent(c, id),
-          { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
+        button(g, uiLayer, hits, 200 + j * 48, y - 2, 46, 15, TALENTS[id].name, () => pickTalent(c, id),
+          { size: 10, fill: C.purpleDark, border: C.purple, color: C.white });
       });
-      label(uiLayer, cut(tier.map((t) => TALENTS[t].name).join('／'), 22), 174, y + 17, 12, C.stoneLit);
+      label(uiLayer, cut(tier.map((t) => `${TALENTS[t].name}：${TALENTS[t].desc}`).join('／'), 30), 174, y + 17, 11, C.stoneLit);
     } else {
       label(uiLayer, `Lv${TIER_LV[i]} ${open ? '待上一层选完' : '未开启'}`, 174, y, 12, C.stoneLit);
-      label(uiLayer, cut(tier.map((t) => TALENTS[t].name).join('／'), 22), 174, y + 17, 12, C.wallLit);
+      label(uiLayer, cut(tier.map((t) => `${TALENTS[t].name}：${TALENTS[t].desc}`).join('／'), 30), 174, y + 17, 11, C.wallLit);
     }
   });
   const rc = respecCost(c);
@@ -3687,7 +3716,10 @@ function finishBattle() {
   for (const x of r.champXp ?? []) {
     const c = champById(x.uid);
     if (!c) continue;
-    if (c.lv < CHAMP_LV_CAP) c.xp += Math.round(x.xp * chemOf(chemBefore, c.uid).xp);
+    if (c.lv < CHAMP_LV_CAP) {
+      const st = statOf(c, chemBefore);
+      c.xp += Math.round(x.xp * chemOf(chemBefore, c.uid).xp * (st.xpMult ?? 1));
+    }
     c.kills += x.kills;
     // 被打倒不会永久死亡，但会留一道伤：压属性、更容易累，得花魔质疗
     // 圣职长袍（woundGuard）能免掉这道伤 —— 这是金装身位最实在的价值
@@ -3705,6 +3737,18 @@ function finishBattle() {
     S.vault.push(id);
   }
   tickFatigue(S.champs, seatedChampUids());
+  // 战后维度统计写入英雄长期 stats，供称号解锁/切换读取
+  for (const x of r.champStats ?? []) {
+    const c = champById(x.uid);
+    if (!c) continue;
+    c.stats = c.stats ?? {};
+    c.stats.attacks = (c.stats.attacks ?? 0) + (x.attacks ?? 0);
+    c.stats.dmgDealt = (c.stats.dmgDealt ?? 0) + (x.dmgDealt ?? 0);
+    c.stats.thornDmg = (c.stats.thornDmg ?? 0) + (x.thornDmg ?? 0);
+    c.stats.healDone = (c.stats.healDone ?? 0) + (x.healDone ?? 0);
+    c.stats.revives = (c.stats.revives ?? 0) + (x.revives ?? 0);
+    if (x.soulAtk) c.soulAtk = Math.min(30, (c.soulAtk ?? 0) + x.soulAtk);
+  }
   const units = [...b.heroes.map((h) => ({ name: h.name, dmg: Math.round(h.dmgDealt), heal: Math.round(h.healed), side: 'hero' })),
     ...b.rooms.flatMap((rm) => rm.mons.map((m) => ({ name: m.name, dmg: Math.round(m.dmgDealt), heal: Math.round(m.healed), side: 'mon' })))]
     .sort((a, z) => z.dmg - a.dmg);
@@ -4074,7 +4118,7 @@ window.__debug = {
   devWound: (uid        , n        ) => { const c = champById(uid); if (c) c.wounds = n; persist(); render(); return c?.wounds; },
   devHeal: (uid        ) => { const c = champById(uid); if (c) healChamp(c); return champById(uid)?.wounds; },
   devRespec: (uid        ) => { const c = champById(uid); if (c) respecChamp(c); return champById(uid)?.talents; },
-  devKills: (uid        , k        , b = 0) => { const c = champById(uid); if (c) { c.kills = k; c.battles = b || c.battles; } persist(); render(); return titleOf(c )?.name ?? null; },
+  devKills: (uid        , k        , b = 0) => { const c = champById(uid); if (c) { c.kills = k; c.battles = b || c.battles; } persist(); render(); return activeTitleOf(c)?.name ?? null; },
   get cands() { return S.cands.map((c) => ({ ...c, cost: candCostOf(c) })); },
   devChamp: (race        , lv = 1, traits           = []) => {
     const c = newChamp(S.champNext++, { id: 0, race, name: randomName(race, Math.random, S.champs.map((x) => x.name)), traits: traits           , potential: 1 });

@@ -198,6 +198,7 @@ function makeChampUnit(st           , uid        , roomIdx        , mod         
     flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, phase: 0, room: roomIdx,
     marked: 1, guardT: 0, healCutT: 0, healCutPct: 1, barbT: 0, atkCut: 1, rallyT: 0,
     legend: true, aura: st.auraId, auraPow: st.auraPow, dmgTakenMult: st.dmgTakenMult, charmT: 0, auraRevived: false,
+    __battleAttacks: 0, __battleThornDmg: 0, __battleRevives: 0, __soulAtk: 0,
   };
 }
 
@@ -268,6 +269,18 @@ export function createBattle(raid         , rooms           , insts             
     };
   });
   const heroes = raid.members.map((mm, i) => makeHeroUnit(mm.cls, mm.lv, i, raid.members.length, mod));
+  // 护主/统御等领袖特质：开场给同房非英雄单位加生命上限
+  for (const r of rt) {
+    const ld = r.leader;
+    if (ld?.eff?.allyHp) {
+      for (const m of r.mons) {
+        if (m.legend) continue;
+        const mult = ld.eff.allyHp;
+        m.maxHp = Math.max(1, Math.round(m.maxHp * mult));
+        m.hp = Math.min(m.maxHp, Math.round(m.hp * mult));
+      }
+    }
+  }
   const affixes = raid.affixes;
   if (affixes.includes('brave')) heroes.forEach((h) => (h.atk = Math.round(h.atk * 1.15)));
   if (affixes.includes('shield')) heroes.forEach((h) => (h.shield = Math.round(h.maxHp * 0.25)));
@@ -403,7 +416,9 @@ function interval(u      , b         ) {
   const slow = u.slowT > 0 ? 1 - u.slowAmt : 1;
   const aura = b && auraOf(b, u) === 'haste' ? 1 + 0.2 * auraPow(b, u.room) : 1;
   const rally = u.rallyT > 0 ? 1.35 : 1;
-  const spd = u.spd * slow * (1 + u.hasteAmt) * (1 + u.killBoost) * aura * rally;
+  const allySpd = (u.side === 'mon' && !u.legend && b && b.rooms[u.room]?.leader?.alive && b.rooms[u.room].leader.eff?.allySpd)
+    ? b.rooms[u.room].leader.eff.allySpd : 1;
+  const spd = u.spd * slow * (1 + u.hasteAmt) * (1 + u.killBoost) * aura * rally * allySpd;
   return 1.6 / Math.max(0.15, spd);
 }
 
@@ -423,7 +438,10 @@ const bulwarkMult = (b        , u      ) => roomEffAura(b, u, 'bulwarkAura');
 // 怪物出手的攻击乘数：王冠光环 + 督战buff（勇者侧用 atkCut 反向削弱）
 function atkMult(b        , u      ) {
   if (u.side !== 'mon') return u.atkCut;
-  return roomEffAura(b, u, 'rageAura') * (u.rallyT > 0 ? 1.2 : 1);
+  let mult = roomEffAura(b, u, 'rageAura');
+  const ld = b.rooms[u.room]?.leader;
+  if (ld?.alive && ld.eff?.allyAtk && !u.legend) mult *= ld.eff.allyAtk;
+  return mult * (u.rallyT > 0 ? 1.2 : 1);
 }
 
 function damage(b        , src      , tgt      , raw        , heavy         , pierce = 0) {
@@ -503,15 +521,30 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     }
     if (dmg <= 0) return;
   }
+  // 神恩：致命伤害有机会保留 1 点生命
+  if (tgt.eff?.divineFavor && !tgt.divineFavorUsed && tgt.hp - dmg <= 0 && b.rng() < tgt.eff.divineFavor) {
+    dmg = Math.max(0, tgt.hp - 1);
+    tgt.divineFavorUsed = true;
+    log(b, `神恩：${tgt.name}以1点生命幸存`, 'good');
+  }
   tgt.hp -= dmg;
   tgt.flashT = 0.12;
   src.dmgDealt += dmg;
   b.events.push({ k: 'hit', room: b.roomIndex, x: tgt.x, y: tgt.y, dmg, heavy, target: tgt });
   if (heavy) b.events.push({ k: 'shake', amount: 2 });
   if (tgt.hp <= 0) {
+    // 不灭（英雄特质）：首次倒下以 50% 生命复活
+    if (tgt.side === 'mon' && tgt.eff?.undyingTrait && !tgt.revived) {
+      tgt.revived = true;
+      tgt.hp = Math.max(1, Math.round(tgt.maxHp * tgt.eff.undyingTrait));
+      if (tgt.champUid) tgt.__battleRevives++;
+      log(b, `不灭：${tgt.name}以${Math.round(tgt.eff.undyingTrait * 100)}%生命站起`, 'good');
+      return;
+    }
     if (tgt.side === 'mon' && tgt.eff?.passive === 'revive' && tgt.lv >= 5 && !tgt.revived) {
       tgt.revived = true;
       tgt.hp = Math.round(tgt.maxHp * 0.2);
+      if (tgt.champUid) tgt.__battleRevives++;
       log(b, `不朽骨：${tgt.name}以20%生命复活`, 'good');
       return;
     }
@@ -519,6 +552,7 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     if (tgt.side === 'mon' && auraOf(b, tgt) === 'undying' && !tgt.auraRevived) {
       tgt.auraRevived = true;
       tgt.hp = Math.max(1, Math.round(tgt.maxHp * Math.min(0.9, 0.3 * auraPow(b, tgt.room))));
+      if (tgt.champUid) tgt.__battleRevives++;
       b.events.push({ k: 'cast', room: b.roomIndex, x: tgt.x, y: tgt.y, color: 0x9b5de5 });
       log(b, `亡者不休：${tgt.name}被${b.rooms[tgt.room]?.leader?.name ?? '巫妖'}拽了回来`, 'good');
       return;
@@ -554,7 +588,43 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     if (tgt.side === 'hero') { const rm = b.rooms[b.roomIndex]; if (rm) rm.heroKills++; }
     if (src.side === 'mon' && src.eff?.passive === 'bloodlust' && src.lv >= 5) src.killBoost = 0.3;
     if (src.side === 'mon' && src.eff?.frenzy && tgt.side === 'hero') src.killBoost = Math.max(src.killBoost, 0.25);
+    // 嗜血：击杀回血
+    if (src.side === 'mon' && src.eff?.bloodthirsty && tgt.side === 'hero') {
+      const amt = Math.max(1, Math.round(src.maxHp * src.eff.bloodthirsty));
+      const before = src.hp;
+      src.hp = Math.min(src.maxHp, src.hp + amt);
+      const got = src.hp - before;
+      if (got > 0) {
+        src.healed += got;
+        b.events.push({ k: 'heal', room: b.roomIndex, x: src.x, y: src.y, amt: got, target: src });
+        log(b, `嗜血：${src.name}回复${got}生命`, 'good');
+      }
+    }
+    // 噬魂：击杀勇者永久+1攻击（本场累计，战后写入英雄）
+    if (src.champUid && src.eff?.soulDevour && tgt.side === 'hero') {
+      src.__soulAtk = Math.min(30, (src.__soulAtk ?? 0) + 1);
+      log(b, `噬魂：${src.name}吞噬灵魂，攻击成长`, 'good');
+    }
     log(b, `${tgt.name} 被 ${src.name} 击倒`, tgt.side === 'hero' ? 'good' : 'bad');
+  }
+  // 复仇：倒下时向房内所有勇者反弹 30% 攻击伤害
+  if (tgt.side === 'mon' && tgt.eff?.vengeful && tgt.hp <= 0) {
+    const amt = Math.max(1, Math.round(tgt.atk * tgt.eff.vengeful));
+    let any = false;
+    for (const h of b.heroes) {
+      if (!h.alive || h.room !== tgt.room) continue;
+      h.hp -= amt;
+      h.flashT = 0.12;
+      tgt.dmgDealt += amt;
+      b.events.push({ k: 'hit', room: b.roomIndex, x: h.x, y: h.y, dmg: amt, heavy: false, target: h });
+      any = true;
+      if (h.hp <= 0) {
+        h.alive = false; h.hp = 0; h.deadT = 0;
+        b.events.push({ k: 'die', room: b.roomIndex, x: h.x, y: h.y, side: 'hero' });
+        const rm = b.rooms[b.roomIndex]; if (rm) rm.heroKills++;
+      }
+    }
+    if (any) log(b, `复仇：${tgt.name}倒下时反噬房内勇者`, 'good');
   }
   // 映照阵：勇者打出的伤害按比例折回自身。和荆棘一样不走 damage() 避免递归。
   if (src.side === 'hero' && tgt.side === 'mon' && dmg > 0) {
@@ -580,6 +650,7 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     src.hp -= back;
     src.flashT = 0.12;
     tgt.dmgDealt += back;
+    if (tgt.champUid) tgt.__battleThornDmg += back;
     b.events.push({ k: 'hit', room: b.roomIndex, x: src.x, y: src.y, dmg: back, heavy: false, target: src });
     if (src.hp <= 0) {
       src.alive = false; src.hp = 0; src.deadT = 0;
@@ -780,6 +851,7 @@ function basicAttack(b        , u      ) {
   const tgt = charmed ? charmTarget(b, u) : u.side === 'hero' ? heroTarget(b, u) : monTarget(b, u);
   if (!tgt) return;
   u.lungeT = 0.22;
+  if (u.champUid) u.__battleAttacks++;
   const mult = u.side === 'hero' ? b.moraleMult * u.atkCut : atkMult(b, u);
   if (u.side === 'hero') barbBite(b, u);
   if (u.side !== 'mon' || !u.eff) { damage(b, u, tgt, u.atk * mult, false); return; }
@@ -793,6 +865,11 @@ function basicAttack(b        , u      ) {
     heavy = true;
     tgt.stunT = Math.max(tgt.stunT, 0.6);
     log(b, `${u.name}的蓄力撞击命中${tgt.name}`, 'good');
+  }
+  // 狡猾：普攻有概率造成 1.5 倍伤害
+  if (eff.cunning && b.rng() < eff.cunning) {
+    raw *= eff.cunningMult ?? 1.5;
+    heavy = true;
   }
   // 霜首处决：目标残血时这一击翻倍
   if (eff.execute && tgt.side === 'hero' && tgt.hp < tgt.maxHp * eff.execute) { raw *= 2; heavy = true; }
@@ -1591,6 +1668,21 @@ function finish(b        ) {
       }
     }
   }
+  const champStats = new Map();
+  for (const r of b.rooms) {
+    for (const m of r.mons) {
+      if (!m.champUid) continue;
+      champStats.set(m.champUid, {
+        attacks: m.__battleAttacks ?? 0,
+        dmgDealt: Math.round(m.dmgDealt),
+        thornDmg: Math.round(m.__battleThornDmg ?? 0),
+        healDone: Math.round(m.healed),
+        revives: m.__battleRevives ?? 0,
+        soulAtk: m.__soulAtk ?? 0,
+      });
+    }
+  }
+
   let firstCause = '地牢守住了防线';
   if (!win) {
     if (kills === 0) firstCause = '全队勇者毫无损伤地走到王座：地牢得先有守军';
@@ -1609,6 +1701,7 @@ function finish(b        ) {
     win, kills, total, seal, skulls, roomsHeld, bone, mana, loot,
     xp: [...xpMap.entries()].map(([uid, xp]) => ({ uid, xp })),
     champXp: [...champXp.entries()].map(([uid, v]) => ({ uid, xp: v.xp, kills: v.kills, fell: v.fell })),
+    champStats: [...champStats.entries()].map(([uid, v]) => ({ uid, ...v })),
     firstCause,
   };
   log(b, win ? `守住地牢！封印剩余${seal}` : `封印被击破，勇者攻入王座`, win ? 'good' : 'bad');

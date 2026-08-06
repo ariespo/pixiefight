@@ -13,9 +13,26 @@ export const TRAITS                                                             
   grim: { name: '阴郁', desc: '光环强度+20%，生命-6%', good: true },
   diligent: { name: '勤恳', desc: '疲劳增长-40%', good: true },
   gifted: { name: '天资', desc: '全属性+6%，升级骨币+30%', good: true },
+  // 新增普通
+  greedy: { name: '贪婪', desc: '攻击+8%，战利品骨币+15%', good: true },
+  tenacious: { name: '坚韧', desc: '生命+10%，受伤-5%', good: true },
+  fanatic: { name: '狂热', desc: '攻速+10%，防御-3%', good: true },
+  cunning: { name: '狡猾', desc: '普攻20%概率1.5倍伤害', good: true },
+  calm: { name: '沉稳', desc: '技能冷却-10%', good: true },
+  feral: { name: '野性', desc: '生命低于30%时攻击+20%', good: true },
+  vengeful: { name: '复仇', desc: '倒下时反弹30%攻击伤害', good: true },
+  guardian: { name: '护主', desc: '同房怪物生命+5%', good: true },
+  bloodthirsty: { name: '嗜血', desc: '击杀回复5%生命', good: true },
+  farsighted: { name: '远见', desc: '经验获取+20%', good: true },
+  // 新增金色传奇
+  undying_trait: { name: '不灭', desc: '首次倒下以50%生命复活', good: true, legend: true },
+  demonblood: { name: '魔王之血', desc: '全属性+12%，光环+15%', good: true, legend: true },
+  souldevour: { name: '噬魂', desc: '每击倒勇者永久+1攻击（上限30）', good: true, legend: true },
+  divinefavor: { name: '神恩', desc: '受到致命伤害25%概率保留1点生命', good: true, legend: true },
+  overlord: { name: '统御', desc: '同房怪物攻击+10%，攻速+10%', good: true, legend: true },
 };
 
-// 专精：Lv3/6/9 各开一个槽，每槽三选一。跨种族共用（数值取向不同，读起来一眼明白）
+// 专精：Lv3/5/7/10 各开一个槽，每槽五选一。跨种族共用（数值取向不同，读起来一眼明白）
                       
                                
                                 
@@ -24,24 +41,36 @@ export const TRAITS                                                             
 // 每层三选一，且每一层都给"真机制"（复用 battle.ts 已实现的 MonEff 字段）——
 // 英雄贵在稀有（名册 6、统领席 4、还会疲劳留伤），所以成长必须压过改造过的精英。
 export const TALENTS                                                                        = {
+  // 第一层
   t1hp: { name: '壮骨', desc: '生命 +20%，每秒回血 2', tier: 1 },
   t1atk: { name: '利爪', desc: '攻击 +20%，普攻破防 3', tier: 1 },
   t1aura: { name: '号令', desc: '光环 +25%，同房怪物攻击 +8%', tier: 1 },
+  t1thorn: { name: '荆棘', desc: '反伤 +15%，生命 +10%', tier: 1 },
+  t1hunter: { name: '猎手', desc: '对勇者伤害 +12%', tier: 1 },
+  // 第二层
   t2def: { name: '铁皮', desc: '防御 +6，受伤 -12%，反弹 14% 伤害', tier: 2 },
   t2spd: { name: '迅捷', desc: '攻速 +20%，普攻溅射 30%', tier: 2 },
   t2aura: { name: '传令', desc: '光环 +25%，同房怪物受伤 -8%', tier: 2 },
+  t2bulwark: { name: '盾墙', desc: '同房怪物防御 +4', tier: 2 },
+  t2inspire: { name: '鼓舞', desc: '同房怪物攻速 +10%', tier: 2 },
+  // 第三层
   t3cd: { name: '暴怒', desc: '技能冷却 -25%，越打越快', tier: 3 },
   t3revive: { name: '不朽', desc: '首次倒下以30%生命复活，并拉起一名同房怪物', tier: 3 },
   t3aura: { name: '统御', desc: '光环 +40%，嘲讽近战勇者', tier: 3 },
+  t3abyss: { name: '深渊', desc: '技能伤害 +25%', tier: 3 },
+  t3regen: { name: '再生', desc: '每秒回血 +6', tier: 3 },
+  // 第四层
   t4exec: { name: '斩首', desc: '勇者残血40%以下伤害翻倍，普攻叠易伤', tier: 4 },
   t4blood: { name: '饮血', desc: '普攻吸血 30%，每秒回血 4', tier: 4 },
   t4lord: { name: '暴君', desc: '攻击 +25%，倒下时全场勇者受 40 伤害', tier: 4 },
+  t4ruin: { name: '毁灭', desc: '攻击 +30%，生命 -10%', tier: 4 },
+  t4warden: { name: '守护', desc: '生命 +25%，防御 +5', tier: 4 },
 };
 export const TALENT_TIERS               = [
-  ['t1hp', 't1atk', 't1aura'],
-  ['t2def', 't2spd', 't2aura'],
-  ['t3cd', 't3revive', 't3aura'],
-  ['t4exec', 't4blood', 't4lord'],
+  ['t1hp', 't1atk', 't1aura', 't1thorn', 't1hunter'],
+  ['t2def', 't2spd', 't2aura', 't2bulwark', 't2inspire'],
+  ['t3cd', 't3revive', 't3aura', 't3abyss', 't3regen'],
+  ['t4exec', 't4blood', 't4lord', 't4ruin', 't4warden'],
 ];
 export const TIER_LV = [3, 5, 7, 10];
 
@@ -72,25 +101,137 @@ export const WOUND_CAP = 3;
 export const WOUND_MULT = 0.08;   // 每道伤压 8% 属性
 export const RESPEC_MANA = 14;    // 每个已选专精的洗点单价
 
-// ---------- 称号：长期履历的读数，只取最高一档 ----------
-                                                                                                          
-export const TITLES          = [
-  { name: '勇者克星', desc: '生命+6% 攻击+10%', hp: 1.06, atk: 1.1, need: '击倒20名勇者' },
-  { name: '猎首', desc: '攻击+7%', atk: 1.07, need: '击倒10名勇者' },
-  { name: '老兵', desc: '生命+8% 防御+2', hp: 1.08, def: 2, need: '参战10场' },
-  { name: '守门', desc: '生命+4%', hp: 1.04, need: '参战4场' },
-];
-export function titleOf(c       )               {
-  if (c.kills >= 20) return TITLES[0];
-  if (c.kills >= 10) return TITLES[1];
-  if (c.battles >= 10) return TITLES[2];
-  if (c.battles >= 4) return TITLES[3];
-  return null;
+export const REROLL_TRAIT_BONE = 200;
+export const REROLL_TRAIT_MANA = 200;
+
+export function rerollTraits(c, rng) {
+  const keys = Object.keys(TRAITS);
+  const normal = keys.filter((k) => !TRAITS[k].legend);
+  const legend = keys.filter((k) => TRAITS[k].legend);
+  const slots = Math.min(2, Math.max(1, c.traits.length) + (c.traits.length === 1 && rng() < 0.3 ? 1 : 0));
+  const out = [];
+  for (let i = 0; i < slots; i++) {
+    const isLegend = rng() < 0.10;
+    const pool = isLegend ? legend : normal;
+    let pick;
+    do { pick = pool[Math.floor(rng() * pool.length)]; } while (i > 0 && pick === out[0]);
+    out.push(pick);
+  }
+  c.traits = out;
 }
-export function nextTitle(c       )                                  {
-  if (c.kills < 10) return { t: TITLES[1], at: `再击倒${10 - c.kills}名勇者` };
-  if (c.kills < 20) return { t: TITLES[0], at: `再击倒${20 - c.kills}名勇者` };
-  return null;
+
+// ---------- 称号：长期履历的读数，可切换已解锁称号 ----------
+function reqValue(c, s, key) {
+  if (key === 'battles') return c.battles ?? 0;
+  if (key === 'kills') return c.kills ?? 0;
+  return s[key] ?? 0;
+}
+function reqMet(c, s, req) {
+  return Object.entries(req).every(([k, v]) => reqValue(c, s, k) >= v);
+}
+const REQ_NAME = {
+  battles: '场战斗',
+  kills: '次击杀',
+  healDone: '点治疗',
+  revives: '次复活',
+  thornDmg: '点反伤',
+  attacks: '次普攻',
+  dmgDealt: '点输出',
+};
+function reqGap(c, s, req) {
+  let max = 0;
+  const parts = [];
+  for (const [k, v] of Object.entries(req)) {
+    const left = Math.max(0, v - reqValue(c, s, k));
+    if (left > 0) parts.push({ k, left });
+    if (left > max) max = left;
+  }
+  return { max, parts };
+}
+
+export const TITLES = [
+  // 参战维度
+  { id: 'gatekeeper', name: '守门人', desc: '生命 +4%', stats: { hp: 1.04 }, req: { battles: 4 } },
+  { id: 'veteran', name: '老兵', desc: '生命 +8% 防御 +2', stats: { hp: 1.08, def: 2 }, req: { battles: 10 } },
+  { id: 'warmaster', name: '战争大师', desc: '生命 +12% 防御 +4', stats: { hp: 1.12, def: 4 }, req: { battles: 25 } },
+  { id: 'immortal', name: '不灭传说', desc: '生命 +18% 防御 +6 攻速 +5%', stats: { hp: 1.18, def: 6, spd: 1.05 }, req: { battles: 40 } },
+  { id: 'champion', name: '斗场冠军', desc: '生命 +10% 攻击 +5%', stats: { hp: 1.10, atk: 1.05 }, req: { battles: 60 } },
+  // 击杀维度
+  { id: 'hunter', name: '猎首', desc: '攻击 +7%', stats: { atk: 1.07 }, req: { kills: 10 } },
+  { id: 'slayer', name: '勇者克星', desc: '生命 +6% 攻击 +10%', stats: { hp: 1.06, atk: 1.10 }, req: { kills: 20 } },
+  { id: 'executioner', name: '处刑人', desc: '攻击 +15%', stats: { atk: 1.15 }, req: { kills: 50 } },
+  { id: 'reaper', name: '死神', desc: '攻击 +20% 攻速 +5%', stats: { atk: 1.20, spd: 1.05 }, req: { kills: 100 } },
+  { id: 'legend_slayer', name: '传奇猎杀者', desc: '攻击 +25% 生命 +8%', stats: { atk: 1.25, hp: 1.08 }, req: { kills: 200 } },
+  // 回复维度
+  { id: 'healer', name: '愈者', desc: '每秒回血 +2', stats: { hpRegen: 2 }, req: { healDone: 500 } },
+  { id: 'mender', name: '修复师', desc: '每秒回血 +4', stats: { hpRegen: 4 }, req: { healDone: 2000 } },
+  { id: 'restorer', name: '复苏者', desc: '每秒回血 +6 生命 +5%', stats: { hpRegen: 6, hp: 1.05 }, req: { healDone: 5000 } },
+  { id: 'lifegiver', name: '生命之源', desc: '每秒回血 +8 生命 +10%', stats: { hpRegen: 8, hp: 1.10 }, req: { healDone: 10000 } },
+  { id: 'legend_healer', name: '不朽医者', desc: '每秒回血 +12 生命 +12%', stats: { hpRegen: 12, hp: 1.12 }, req: { healDone: 20000 } },
+  // 复活维度
+  { id: 'reviver', name: '还魂者', desc: '复活生命 +10%', stats: { reviveHp: 0.10 }, req: { revives: 3 } },
+  { id: 'resurrector', name: '复活者', desc: '复活生命 +20%', stats: { reviveHp: 0.20 }, req: { revives: 10 } },
+  { id: 'phoenix', name: '凤凰', desc: '复活生命 +30% 攻击 +5%', stats: { reviveHp: 0.30, atk: 1.05 }, req: { revives: 25 } },
+  { id: 'undying', name: '不死者', desc: '复活生命 +40% 生命 +5%', stats: { reviveHp: 0.40, hp: 1.05 }, req: { revives: 50 } },
+  { id: 'legend_reviver', name: '轮回之主', desc: '复活生命 +50% 生命 +10% 攻击 +10%', stats: { reviveHp: 0.50, hp: 1.10, atk: 1.10 }, req: { revives: 100 } },
+  // 反伤维度
+  { id: 'thorn', name: '荆棘', desc: '反伤 +5%', stats: { thorns: 0.05 }, req: { thornDmg: 200 } },
+  { id: 'spiker', name: '尖刺', desc: '反伤 +10%', stats: { thorns: 0.10 }, req: { thornDmg: 800 } },
+  { id: 'porcupine', name: '猬甲', desc: '反伤 +15% 防御 +2', stats: { thorns: 0.15, def: 2 }, req: { thornDmg: 2000 } },
+  { id: 'mirror', name: '镜反', desc: '反伤 +20% 防御 +4', stats: { thorns: 0.20, def: 4 }, req: { thornDmg: 5000 } },
+  { id: 'legend_thorn', name: '荆棘王座', desc: '反伤 +30% 防御 +6 生命 +8%', stats: { thorns: 0.30, def: 6, hp: 1.08 }, req: { thornDmg: 10000 } },
+  // 攻速维度
+  { id: 'quick', name: '快手', desc: '攻速 +5%', stats: { spd: 1.05 }, req: { attacks: 100 } },
+  { id: 'agile', name: '敏捷', desc: '攻速 +10%', stats: { spd: 1.10 }, req: { attacks: 500 } },
+  { id: 'swiftlord', name: '迅捷领主', desc: '攻速 +15% 攻击 +3%', stats: { spd: 1.15, atk: 1.03 }, req: { attacks: 1500 } },
+  { id: 'blitz', name: '闪电', desc: '攻速 +20% 攻击 +5%', stats: { spd: 1.20, atk: 1.05 }, req: { attacks: 4000 } },
+  { id: 'legend_speed', name: '风暴化身', desc: '攻速 +25% 攻击 +10%', stats: { spd: 1.25, atk: 1.10 }, req: { attacks: 8000 } },
+  // 攻击维度
+  { id: 'bruiser', name: '碎骨者', desc: '攻击 +5%', stats: { atk: 1.05 }, req: { dmgDealt: 1000 } },
+  { id: 'brute', name: '蛮力', desc: '攻击 +10%', stats: { atk: 1.10 }, req: { dmgDealt: 5000 } },
+  { id: 'destroyer', name: '毁灭者', desc: '攻击 +15% 生命 +3%', stats: { atk: 1.15, hp: 1.03 }, req: { dmgDealt: 15000 } },
+  { id: 'annihilator', name: '湮灭者', desc: '攻击 +20% 生命 +5%', stats: { atk: 1.20, hp: 1.05 }, req: { dmgDealt: 40000 } },
+  { id: 'legend_power', name: '天灾', desc: '攻击 +30% 生命 +10%', stats: { atk: 1.30, hp: 1.10 }, req: { dmgDealt: 100000 } },
+  // 4 个高要求传奇称号
+  { id: 'legend_war', name: '战争神话', desc: '全属性 +10%', stats: { hp: 1.10, atk: 1.10, def: 5, spd: 1.10 }, req: { battles: 40, kills: 200 } },
+  { id: 'legend_tank', name: '不朽壁垒', desc: '生命 +25% 防御 +10 反伤 +10%', stats: { hp: 1.25, def: 10, thorns: 0.10 }, req: { thornDmg: 10000, healDone: 20000 } },
+  { id: 'legend_dps', name: '毁灭风暴', desc: '攻击 +25% 攻速 +15%', stats: { atk: 1.25, spd: 1.15 }, req: { dmgDealt: 100000, attacks: 8000 } },
+  { id: 'legend_rebirth', name: '轮回帝君', desc: '生命 +15% 攻击 +15% 复活生命 +30%', stats: { hp: 1.15, atk: 1.15, reviveHp: 0.30 }, req: { revives: 100, kills: 200 } },
+];
+
+for (const t of TITLES) t.need = (c, s) => reqMet(c, s, t.req);
+
+export function unlockedTitles(c) {
+  return TITLES.filter((t) => t.need(c, c.stats ?? {})).map((t) => t.id);
+}
+export function titleById(id) {
+  return TITLES.find((t) => t.id === id) ?? null;
+}
+export function activeTitleOf(c) {
+  const unlocked = unlockedTitles(c);
+  if (unlocked.includes(c.activeTitle)) return titleById(c.activeTitle);
+  const best = TITLES.filter((t) => unlocked.includes(t.id)).pop();
+  return best ?? null;
+}
+// 兼容旧调用：用 activeTitleOf 替代 titleOf
+export function titleOf(c) { return activeTitleOf(c); }
+export function nextTitle(c) {
+  const s = c.stats ?? {};
+  const unlocked = unlockedTitles(c);
+  const locked = TITLES.filter((t) => !unlocked.includes(t.id));
+  if (!locked.length) return null;
+  let best = locked[0];
+  let bestGap = reqGap(c, s, best.req);
+  for (const t of locked.slice(1)) {
+    const g = reqGap(c, s, t.req);
+    if (g.max < bestGap.max) { best = t; bestGap = g; }
+  }
+  const hint = bestGap.parts
+    .sort((a, b) => a.left - b.left)
+    .slice(0, 2)
+    .map((p) => `差${p.left}${REQ_NAME[p.k] ?? p.k}`)
+    .join('／');
+  return { t: best, at: hint || '继续战斗解锁更多称号' };
 }
 
 // ---------- 同僚关系：由"谁和谁同时上阵"决定，是布阵层面的取舍 ----------
@@ -182,7 +323,7 @@ export function rollCands(raidNo        , unlocked          , rng              ,
   }
   const out         = [];
   if (!pool.length) return out;
-  const keys = Object.keys(TRAITS)             ;
+  const keys = Object.keys(TRAITS).filter((k) => !TRAITS[k].legend);
   // 种族轮转：把可选族洗牌后按顺序发，池子够大时同批不重复族
   const bag = pool.map((l) => l.id);
   for (let i = bag.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [bag[i], bag[j]] = [bag[j], bag[i]]; }
@@ -200,7 +341,13 @@ export function rollCands(raidNo        , unlocked          , rng              ,
 }
 
 export function newChamp(uid        , c      )        {
-  return { uid, race: c.race, name: c.name, lv: 1, xp: 0, traits: [...c.traits], talents: [], fatigue: 0, battles: 0, kills: 0, wounds: 0, gear: {} };
+  return {
+    uid, race: c.race, name: c.name, lv: 1, xp: 0,
+    traits: [...c.traits], talents: [], fatigue: 0,
+    battles: 0, kills: 0, wounds: 0, gear: {},
+    activeTitle: '',
+    stats: {},
+  };
 }
 export const champGear = (c       )          => gearEff(c.gear);
 export const woundGuarded = (c       ) => gearEff(c.gear).woundGuard;
@@ -240,7 +387,7 @@ export function champStats(c       , potentialMult = 1, chem          = NO_CHEM)
   const m = champMult(c.lv) * potentialMult * fatigueTier(c.fatigue).mult * wound;
   let hp = k.hp * CHAMP_BASE.hp * m, atk = k.atk * CHAMP_BASE.atk * m,
       def = k.def * CHAMP_BASE.def * champMult(c.lv), spd = k.spd * CHAMP_BASE.spd * champSpdMult(c.lv);
-  let auraPow = 1, dmgTaken = 1;
+  let auraPow = 1, dmgTaken = 1, xpMult = 1;
   const eff         = { ...k.eff };
   for (const t of c.traits) {
     if (t === 'glutton') { atk *= 1.12; hp *= 0.92; }
@@ -250,7 +397,23 @@ export function champStats(c       , potentialMult = 1, chem          = NO_CHEM)
     if (t === 'swift') spd *= 1.12;
     if (t === 'grim') { auraPow *= 1.2; hp *= 0.94; }
     if (t === 'gifted') { hp *= 1.06; atk *= 1.06; def += 1; }
+    if (t === 'greedy') atk *= 1.08;
+    if (t === 'tenacious') { hp *= 1.10; dmgTaken *= 0.95; }
+    if (t === 'fanatic') { spd *= 1.10; def -= 3; }
+    if (t === 'cunning') { eff.cunning = 0.20; eff.cunningMult = 1.5; }
+    if (t === 'calm') eff.skillCdMult = (eff.skillCdMult ?? 1) * 0.90;
+    if (t === 'feral') atk *= 1.10; // 简化：常驻 +10%（战斗外无当前血量）
+    if (t === 'vengeful') eff.vengeful = 0.30;
+    if (t === 'guardian') eff.allyHp = 1.05;
+    if (t === 'bloodthirsty') eff.bloodthirsty = 0.05;
+    if (t === 'farsighted') xpMult *= 1.20;
+    if (t === 'undying_trait') { eff.undyingTrait = 0.50; }
+    if (t === 'demonblood') { hp *= 1.12; atk *= 1.12; def *= 1.12; spd *= 1.12; auraPow *= 1.15; }
+    if (t === 'souldevour') { eff.soulDevour = true; }
+    if (t === 'divinefavor') eff.divineFavor = 0.25;
+    if (t === 'overlord') { eff.allyAtk = 1.10; eff.allySpd = 1.10; }
   }
+  atk += Math.min(30, c.soulAtk ?? 0);
   for (const t of c.talents) {
     if (t === 't1hp') { hp *= 1.2; eff.hpRegen = (eff.hpRegen ?? 0) + 2; }
     if (t === 't1atk') { atk *= 1.2; eff.onHit = eff.onHit ?? 'sunder'; }
@@ -264,9 +427,26 @@ export function champStats(c       , potentialMult = 1, chem          = NO_CHEM)
     if (t === 't4exec') { eff.execute = Math.max(eff.execute ?? 0, 0.4); eff.markHit = (eff.markHit ?? 0) + 0.08; }
     if (t === 't4blood') { eff.lifestealPct = Math.max(eff.lifestealPct ?? 0, 0.3); eff.hpRegen = (eff.hpRegen ?? 0) + 4; }
     if (t === 't4lord') { atk *= 1.25; eff.deathBurst = Math.max(eff.deathBurst ?? 0, 40); }
+    if (t === 't1thorn') { hp *= 1.1; eff.thorns = (eff.thorns ?? 0) + 0.15; }
+    if (t === 't1hunter') { eff.dmgToHero = (eff.dmgToHero ?? 1) * 1.12; }
+    if (t === 't2bulwark') { eff.allyDef = (eff.allyDef ?? 0) + 4; }
+    if (t === 't2inspire') { eff.allySpd = (eff.allySpd ?? 1) * 1.10; }
+    if (t === 't3abyss') { eff.skillDmg = (eff.skillDmg ?? 1) * 1.25; }
+    if (t === 't3regen') { eff.hpRegen = (eff.hpRegen ?? 0) + 6; }
+    if (t === 't4ruin') { atk *= 1.30; hp *= 0.9; }
+    if (t === 't4warden') { hp *= 1.25; def += 5; }
   }
-  const ti = titleOf(c);
-  if (ti) { hp *= ti.hp ?? 1; atk *= ti.atk ?? 1; def += ti.def ?? 0; }
+  const ti = activeTitleOf(c);
+  if (ti?.stats) {
+    if (ti.stats.hp) hp *= ti.stats.hp;
+    if (ti.stats.atk) atk *= ti.stats.atk;
+    if (ti.stats.def) def += ti.stats.def;
+    if (ti.stats.spd) spd *= ti.stats.spd;
+    if (ti.stats.aura) auraPow *= ti.stats.aura;
+    if (ti.stats.hpRegen) eff.hpRegen = (eff.hpRegen ?? 0) + ti.stats.hpRegen;
+    if (ti.stats.thorns) eff.thorns = (eff.thorns ?? 0) + ti.stats.thorns;
+    if (ti.stats.reviveHp) eff.reviveHp = (eff.reviveHp ?? 0) + ti.stats.reviveHp;
+  }
   // 装备与套装：和特质/专精同层相乘，最后再叠同僚效应
   hp *= ge.hp * (set?.hp ?? 1); atk *= ge.atk; def += ge.def; spd *= ge.spd;
   auraPow *= ge.aura * (set?.aura ?? 1); dmgTaken *= ge.dmgTaken;
@@ -277,7 +457,7 @@ export function champStats(c       , potentialMult = 1, chem          = NO_CHEM)
     name: c.name, race: c.race, tex: k.tex, lv: c.lv,
     hp: Math.max(1, Math.round(hp)), atk: Math.max(1, Math.round(atk)), def: Math.round(def),
     spd: Math.max(0.15, +spd.toFixed(3)),
-    auraId: k.aura ?? 'atk', auraPow: +auraPow.toFixed(3), dmgTakenMult: +dmgTaken.toFixed(3), eff,
+    auraId: k.aura ?? 'atk', auraPow: +auraPow.toFixed(3), dmgTakenMult: +dmgTaken.toFixed(3), eff, xpMult,
   };
 }
 
