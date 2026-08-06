@@ -96,7 +96,7 @@ export function rerollTraits(c, rng) {
   const keys = Object.keys(TRAITS);
   const normal = keys.filter((k) => !TRAITS[k].legend);
   const legend = keys.filter((k) => TRAITS[k].legend);
-  const slots = Math.min(2, c.traits.length + (c.traits.length < 2 && rng() < 0.3 ? 1 : 0));
+  const slots = Math.min(2, Math.max(1, c.traits.length) + (c.traits.length === 1 && rng() < 0.3 ? 1 : 0));
   const out = [];
   for (let i = 0; i < slots; i++) {
     const isLegend = rng() < 0.10;
