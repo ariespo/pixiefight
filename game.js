@@ -2920,8 +2920,8 @@ function drawChampDetail(g               , c       ) {
   // 机制行独占一行并可点开看全文（专精点满后这串会超过一行能放的字数）
   const mech = effText(st.eff);
   const mechTxt = mech ? `机制 ${mech}` : '机制 无（点专精拿战斗机制）';
-  label(uiLayer, cut(mechTxt, 22), 174, 175, 12, mech ? C.green : C.stoneLit);
-  if (mechTxt.length > 22) hits.add(174, 175, 292, 15, () => say(cut(mechTxt, 40)));
+  label(uiLayer, cut(mechTxt, 22), 174, 179, 12, mech ? C.green : C.stoneLit);
+  if (mechTxt.length > 22) hits.add(174, 179, 292, 15, () => say(cut(mechTxt, 40)));
   // 称号条：显示已解锁称号并可切换
   const unlocked = unlockedTitles(c);
   if (unlocked.length > 0) {
@@ -3716,7 +3716,10 @@ function finishBattle() {
   for (const x of r.champXp ?? []) {
     const c = champById(x.uid);
     if (!c) continue;
-    if (c.lv < CHAMP_LV_CAP) c.xp += Math.round(x.xp * chemOf(chemBefore, c.uid).xp);
+    if (c.lv < CHAMP_LV_CAP) {
+      const st = statOf(c, chemBefore.map);
+      c.xp += Math.round(x.xp * chemOf(chemBefore, c.uid).xp * (st.xpMult ?? 1));
+    }
     c.kills += x.kills;
     // 被打倒不会永久死亡，但会留一道伤：压属性、更容易累，得花魔质疗
     // 圣职长袍（woundGuard）能免掉这道伤 —— 这是金装身位最实在的价值
@@ -3744,6 +3747,7 @@ function finishBattle() {
     c.stats.thornDmg = (c.stats.thornDmg ?? 0) + (x.thornDmg ?? 0);
     c.stats.healDone = (c.stats.healDone ?? 0) + (x.healDone ?? 0);
     c.stats.revives = (c.stats.revives ?? 0) + (x.revives ?? 0);
+    if (x.soulAtk) c.soulAtk = Math.min(30, (c.soulAtk ?? 0) + x.soulAtk);
   }
   const units = [...b.heroes.map((h) => ({ name: h.name, dmg: Math.round(h.dmgDealt), heal: Math.round(h.healed), side: 'hero' })),
     ...b.rooms.flatMap((rm) => rm.mons.map((m) => ({ name: m.name, dmg: Math.round(m.dmgDealt), heal: Math.round(m.healed), side: 'mon' })))]
