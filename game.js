@@ -1058,9 +1058,13 @@ function drawSmith() {
   if (m.woundGuard) rows.push('倒下不留伤');
   rows.slice(0, 4).forEach((t, i) => label(modalLayer, cut(t, 8), 303 + (i % 2) * 80, 104 + Math.floor(i / 2) * 17, 12, C.bone));
   if (rows.length > 4) label(modalLayer, cut(rows.slice(4).join('・'), 16), 303, 138, 12, C.bone);
-  // 机制文案最多两行（面板底 192），超出直接截断 —— wrapText 不会自己停，越界就压到造价行
+  // 机制文案限制在两行以内，避免压到造价行
   const mech = sm.plan.runes.map((id) => runeById(id)?.desc ?? '').filter(Boolean).join('；') || '没刻铭文：纯数值件';
-  wrapText(modalLayer, cut(mech, 19), 303, 158, 148, 12, C.stoneLit);
+  const mechT = wrapText(modalLayer, mech, 303, 158, 148, 12, C.stoneLit);
+  if (mechT.height > 30) {
+    modalLayer.removeChild(mechT);
+    wrapText(modalLayer, cut(mech, 32), 303, 158, 148, 12, C.stoneLit);
+  }
 
   // 底部：命名 + 造价 + 确认
   label(modalLayer, '名字', 22, 220, 12, C.bone);
@@ -2208,18 +2212,20 @@ function drawSidePanel(g               ) {
     const at = roomOf(inst.uid);
     label(uiLayer, at < 0 ? '驻守：空闲' : `驻守：${at + 1}房`, 340, 128, 12, at < 0 ? C.stoneLit : C.gold);
     label(uiLayer, `技能 ${k.skill}`, 340, 142, 12, C.purple);
-    wrapText(uiLayer, cut(k.skillDesc, 24), 340, 161, 130, 12, C.stoneLit);
+    const skillT = wrapText(uiLayer, k.skillDesc, 340, 161, 130, 12, C.stoneLit);
+    const skillH = Math.min(skillT.height, 22);
+    const nextY = 161 + skillH + 6;
     if (inst.lv < 5) {
       const need = XP_PER_LEVEL[inst.lv - 1];
-      bar(uiGfx, 340, 186, 130, 6, inst.xp / need, C.green);
-      label(uiLayer, `经验 ${inst.xp}/${need}`, 340, 192, 12, C.bone);
+      bar(uiGfx, 340, nextY, 130, 6, inst.xp / need, C.green);
+      label(uiLayer, `经验 ${inst.xp}/${need}`, 340, nextY + 6, 12, C.bone);
       const cost = UPGRADE_COST[inst.lv - 1];
       const can = inst.xp >= need && S.bone >= cost;
-      button(g, uiLayer, hits, 340, 205, 130, 15, `升级 ${cost}骨币`, () => {
+      button(g, uiLayer, hits, 340, nextY + 18, 130, 15, `升级 ${cost}骨币`, () => {
         inst.xp -= need; inst.lv++; S.bone -= cost; playSfx('buy'); persist(); say(`${k.name} 升到 Lv${inst.lv}`); render();
       }, { size: 12, enabled: can, fill: C.greenDark, border: C.green, color: C.white });
     } else {
-      label(uiLayer, '已达满级', 340, 192, 12, C.gold);
+      label(uiLayer, '已达满级', 340, nextY + 6, 12, C.gold);
     }
     button(g, uiLayer, hits, 340, 224, 40, 16, '详情', () => { monDetailMode = true; playSfx('tab'); render(); },
       { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
@@ -2256,7 +2262,7 @@ function drawSidePanel(g               ) {
       dy += 14;
       for (const a of instAfs) {
         if (dy > 164) break;
-        const afText = wrapText(uiLayer, `${a.name}：${cut(a.desc, 22)}`, 340, dy, 130, 11, C.bone);
+        const afText = wrapText(uiLayer, `${a.name}：${a.desc}`, 340, dy, 130, 11, C.bone);
         dy += Math.min(afText.height, 24) + 4;
       }
     }
@@ -2264,7 +2270,7 @@ function drawSidePanel(g               ) {
     if (dy < 188) {
       label(uiLayer, `被动：${inst.lv < 5 ? `Lv5 解锁・${k.passive}` : k.passive}`, 340, dy, 12, C.gold);
       if (inst.lv >= 5 && dy < 192) {
-        const psText = wrapText(uiLayer, cut(k.passiveDesc ?? k.passive, 40), 340, dy + 14, 130, 11, C.stoneLit);
+        const psText = wrapText(uiLayer, k.passiveDesc ?? k.passive, 340, dy + 14, 130, 11, C.stoneLit);
         dy += 14 + Math.min(psText.height, 26) + 4;
       } else {
         dy += 14;
@@ -2293,8 +2299,10 @@ function drawSidePanel(g               ) {
     label(uiLayer, `防御 ${k.def}  速度 ${k.spd.toFixed(1)}`, 340, 117, 12, C.bone);
     label(uiLayer, `站位 ${k.row === 'front' ? '前排' : k.row === 'back' ? '后排' : '任意'}`, 340, 136, 12, C.bone);
     label(uiLayer, `技能 ${k.skill}`, 340, 155, 12, C.purple);
-    wrapText(uiLayer, cut(k.skillDesc, 30), 340, 174, 130, 12, C.stoneLit);
-    button(g, uiLayer, hits, 340, 214, 130, 18, `${isCustomKind(k.id) ? '再缝一只' : '招募'} ${k.cost}骨币`,
+    const skillT = wrapText(uiLayer, k.skillDesc, 340, 174, 130, 12, C.stoneLit);
+    const skillH = Math.min(skillT.height, 30);
+    const btnY = 174 + skillH + 10;
+    button(g, uiLayer, hits, 340, btnY, 130, 18, `${isCustomKind(k.id) ? '再缝一只' : '招募'} ${k.cost}骨币`,
       () => recruit(k.id),
       { size: 12, enabled: S.bone >= k.cost, fill: C.greenDark, border: C.green, color: C.white });
     return;
@@ -3202,9 +3210,11 @@ function drawChampTitleList(g, c, x, y, w, h) {
     }
   }
   if (maxPage > 0) {
-    button(g, uiLayer, hits, x, ty + 2, w / 2 - 2, 12, '◀', () => { champTitlePage = Math.max(0, champTitlePage - 1); champTitleExpand = ''; playSfx('tab'); render(); },
+    const px = x + w / 2;
+    button(g, uiLayer, hits, x, ty + 2, w / 2 - 22, 12, '◀', () => { champTitlePage = Math.max(0, champTitlePage - 1); champTitleExpand = ''; playSfx('tab'); render(); },
       { size: 10, enabled: champTitlePage > 0, border: C.stoneLit, color: C.stoneLit });
-    button(g, uiLayer, hits, x + w / 2 + 2, ty + 2, w / 2 - 2, 12, '▶', () => { champTitlePage = Math.min(maxPage, champTitlePage + 1); champTitleExpand = ''; playSfx('tab'); render(); },
+    labelC(uiLayer, `${champTitlePage + 1}/${maxPage + 1}`, px, ty + 2, 12, C.stoneLit);
+    button(g, uiLayer, hits, px + 14, ty + 2, w / 2 - 22, 12, '▶', () => { champTitlePage = Math.min(maxPage, champTitlePage + 1); champTitleExpand = ''; playSfx('tab'); render(); },
       { size: 10, enabled: champTitlePage < maxPage, border: C.stoneLit, color: C.stoneLit });
   }
 }
@@ -3232,8 +3242,14 @@ function drawChampInfo(g, c) {
   label(uiLayer, '特质', 174, ty, 12, C.gold); ty += 16;
   if (c.traits.length) {
     for (const t of c.traits) {
-      label(uiLayer, `${TRAITS[t].name}：${cut(TRAITS[t].desc, 16)}`, 174, ty, 12, traitColor(t));
-      ty += 14;
+      const text = `${TRAITS[t].name}：${TRAITS[t].desc}`;
+      const tw = wrapText(uiLayer, text, 178, ty + 2, 126, 11, traitColor(t));
+      const rowH = Math.min(tw.height, 22) + 4;
+      g.rect(174, ty, 130, rowH).fill(C.ink).stroke({ width: 1, color: C.stoneLit, alignment: 0 });
+      // 重新绘制文本在背景之上
+      uiLayer.removeChild(tw);
+      wrapText(uiLayer, text, 178, ty + 2, 126, 11, traitColor(t));
+      ty += rowH + 2;
     }
   } else {
     label(uiLayer, '无', 174, ty, 12, C.stoneLit); ty += 14;
@@ -3243,17 +3259,23 @@ function drawChampInfo(g, c) {
   label(uiLayer, '战斗机制', 320, 80, 12, C.gold);
   const mechs = effDetailText(st.eff);
   let my = 96;
+  const maxMechY = 210; // 给称号区域留至少 24px
   if (mechs.length) {
-    for (const txt of mechs.slice(0, 4)) {
-      wrapText(uiLayer, cut(txt, 22), 320, my, 140, 11, C.steel);
-      my += 12;
+    for (const txt of mechs) {
+      if (my >= maxMechY) break;
+      const tw = wrapText(uiLayer, txt, 324, my + 2, 132, 11, C.steel);
+      const rowH = Math.min(tw.height, maxMechY - my - 2);
+      g.rect(320, my, 140, rowH + 4).fill(C.ink).stroke({ width: 1, color: C.stoneLit, alignment: 0 });
+      uiLayer.removeChild(tw);
+      wrapText(uiLayer, txt, 324, my + 2, 132, 11, C.steel);
+      my += rowH + 6;
     }
   } else {
     label(uiLayer, '无特殊机制', 320, my, 12, C.stoneLit); my += 14;
   }
 
-  // 右列：称号（Task 4 补充分页/展开）
-  const titleY = my + 8;
+  // 右列：称号
+  const titleY = Math.min(my + 8, 214);
   const titleH = Math.max(40, 234 - titleY - 2);
   drawChampTitleList(g, c, 320, titleY, 140, titleH);
 }
