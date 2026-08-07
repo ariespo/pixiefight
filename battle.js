@@ -323,15 +323,15 @@ function reactionText(tgt      , rng           )          {
   const r = tgt.hp / Math.max(1, tgt.maxHp);
   const hero = tgt.side === 'hero';
   const pools = hero ? {
-    high: ['哈哈，根本不痛', '就这点本事？', '软弱无力'],
-    mid: ['可恶…', '还能撑住', '小伤而已'],
-    low: ['呃啊！', '好痛…', '该死…'],
-    crit: ['难道我就会在这里…', '不、不可能…', '还没…结束…'],
+    high: ['哈哈，根本不痛', '就这点本事？', '软弱无力', '阵形别乱，继续推进', '盔甲替我挡住了', '这种攻击吓不到我', '离王座还远着呢', '保持呼吸，别停下', '它们在试探我们', '我连热身都算不上', '别把背后露出来', '下一击就轮到我了'],
+    mid: ['可恶…', '还能撑住', '小伤而已', '这地方比情报里危险', '别停，我还能走', '治疗留给更需要的人', '它抓住了我的破绽', '重新列阵！', '我低估这些守军了', '小心，它们会配合', '伤口不深，继续', '别让它再来一次'],
+    low: ['呃啊！', '好痛…', '该死…', '护住侧翼！', '我快撑不住了', '谁来压住那只怪物', '药剂，快！', '别管我，先破门', '视线开始模糊了', '这不是普通守军', '再中一下就危险了', '队长，换我到后排'],
+    crit: ['难道我就会在这里…', '不、不可能…', '还没…结束…', '别让远征停在这里', '我听不见号令了…', '至少把同伴送出去', '王座就在前面…', '我的手已经握不住了', '告诉他们，我没有后退', '光啊，再借我一次力量', '这座地牢记住我了', '最后一口气，也要挥剑'],
   } : {
-    high: ['哼，软弱', '再来啊', '不够看'],
-    mid: ['嘶…有点意思', '不过如此', '有点疼'],
-    low: ['吼！', '该死…', '你会后悔的'],
-    crit: ['不…我的地牢…', '我…倒下…', '不可能…'],
+    high: ['哼，软弱', '再来啊', '不够看', '地牢的门还在我身后', '你打碎的只是灰尘', '勇者都这么没力气吗', '再靠近一步试试', '主人在看着这场战斗', '我的骨头比城墙还硬', '这点伤只会让我清醒', '轮到我还手了', '你们走不到下一间房'],
+    mid: ['嘶…有点意思', '不过如此', '有点疼', '守住门口！', '它们比上一队难缠', '别让牧师抬手', '盯紧那个拿盾的', '血的味道让我兴奋', '阵脚还没有乱', '我记住你的气味了', '把它们拖进陷阱', '统领，我还能战'],
+    low: ['吼！', '该死…', '你会后悔的', '不许碰王座！', '我的甲壳裂开了', '快封住缺口', '地牢不会交给你们', '就算爬也要拦住他们', '先杀治疗者', '墙后还有我们的同伴', '别让旗帜倒下', '我需要一点时间'],
+    crit: ['不…我的地牢…', '我…倒下…', '不可能…', '替我守住下一道门', '别踩过我的影子', '主人，我尽力了', '至少留下一个勇者', '把我的部件带回工坊', '门闩还没有断…', '我会在骨坑里再醒来', '王座不能落到他们手里', '下一批守军会替我复仇'],
   };
   const pool = r > 0.7 ? pools.high : r > 0.4 ? pools.mid : r > 0.15 ? pools.low : pools.crit;
   return pool[Math.floor(rng() * pool.length)];
@@ -352,6 +352,23 @@ function logHit(b        , src      , tgt      , dmg        , action        , he
     speak(b, tgt, line, 'reaction');
   }
 }
+
+const HERO_ROOM_LINES = [
+  '检查墙角，陷阱通常藏在最安静的地方。', '保持队形，谁也别独自追出去。', '前面有动静，盾先举起来。',
+  '这里的守军换过布置，小心脚下。', '别被那些怪物的外表骗了。', '王座的气息更近了，继续推进。',
+  '照明往前送，我看不清门后。', '先确认退路，再准备破门。', '听见了吗？它们正在等我们。',
+  '伤员站中间，前排跟我上。', '这间房交给我们，速战速决。', '不要分散火力，逐个击破。',
+];
+const MON_ROOM_LINES = [
+  '门后就是我们的地盘，一步也别让。', '勇者来了，把灯灭掉。', '陷阱已经醒了，等他们再近一点。',
+  '盯住治疗者，别让他念完咒语。', '守住这间房，后面还有同伴。', '它们的盔甲有缝，往关节打。',
+  '别急着冲，等统领的号令。', '让墙壁记住他们的惨叫。', '王座不会欢迎活着的勇者。',
+  '把前排拖住，后排交给我。', '就算倒下，也要咬掉一块甲。', '地牢养了我们，现在轮到我们守它。',
+];
+const BREACH_LINES = [
+  '门闩断了，退到下一道防线！', '这一间守不住了，把伤员带走！', '别让勇者趁乱追上来！',
+  '熄掉火把，撤进暗道！', '记住他们的阵形，通知后面的守军！', '门已经开了，但战斗还没有结束！',
+];
 
 function enterRoom(b        ) {
   const room = b.rooms[b.roomIndex];
@@ -374,6 +391,11 @@ function enterRoom(b        ) {
   }
   if (room.synergy) log(b, `${room.synergy}：${room.theme}与${TRAPS[room.trap].name}同源生效`, 'good');
   room.mons.forEach((m) => { m.charged = false; });
+  const heroSpeaker = b.heroes.find((h) => h.alive);
+  const monSpeaker = room.leader?.alive ? room.leader : room.mons.find((m) => m.alive);
+  log(b, `—— 第${b.roomIndex + 1}房交战：${room.mons.length ? `${room.mons.length}名守军列阵` : '房间无人驻守'} ——`, room.mons.length ? 'good' : 'bad');
+  if (heroSpeaker) log(b, `　${heroSpeaker.name}：${HERO_ROOM_LINES[Math.floor(b.rng() * HERO_ROOM_LINES.length)]}`, 'bad');
+  if (monSpeaker) log(b, `　${monSpeaker.name}：${MON_ROOM_LINES[Math.floor(b.rng() * MON_ROOM_LINES.length)]}`, 'good');
   // 足部件的入场效果：进房瞬间结算一次
   for (const m of room.mons) {
     if (!m.alive || !m.eff?.entry) continue;
@@ -1789,6 +1811,8 @@ function breach(b        ) {
   b.events.push({ k: 'break', room: b.roomIndex });
   b.events.push({ k: 'shake', amount: 3 });
   log(b, `第${b.roomIndex + 1}房失守：${room.breachReason}（${b.time.toFixed(1)}s）`, 'bad');
+  const speaker = room.mons.find((m) => m.alive) ?? room.mons[0];
+  if (speaker) log(b, `　${speaker.name}：${BREACH_LINES[Math.floor(b.rng() * BREACH_LINES.length)]}`, 'bad');
   b.phase = 'break';
   b.phaseT = 0;
 }
@@ -1859,6 +1883,27 @@ function finish(b        ) {
     if (badLine) firstCause += ` · ${badLine.text}`;
   }
   if (echo > 0) log(b, `余晶：存活的缝合体额外析出${echo}魔质`, 'good');
+  const allUnits = [...b.heroes, ...b.rooms.flatMap((room) => room.mons)];
+  const topDamage = [...allUnits].sort((a, z) => z.dmgDealt - a.dmgDealt)[0];
+  const firstBroken = b.rooms.find((room) => room.broken);
+  const review = [
+    win
+      ? `守军最终保住了${roomsHeld}间房，王座封印剩余${seal}%，勇者队伍有${kills}/${total}人倒下。`
+      : `勇者突破了${b.rooms.filter((room) => room.broken).length}间房，王座封印归零；守军击倒${kills}/${total}名勇者。`,
+    topDamage
+      ? `本场最高输出是${topDamage.name}，累计造成${Math.round(topDamage.dmgDealt)}点伤害。`
+      : '本场没有形成有效伤害记录。',
+    firstBroken
+      ? `最早出现缺口的是第${firstBroken.index + 1}房，原因是“${firstBroken.breachReason}”，发生在${firstBroken.breachTime.toFixed(1)}秒。`
+      : '四道房门均未被突破，布防节奏完整。',
+    kills === 0
+      ? '改进建议：至少安排一支能稳定造成伤害的守军，单靠封印无法获得胜利。'
+      : !win
+        ? '改进建议：把高耐久单位前移，并让控制、治疗或光环覆盖最早失守的房间。'
+        : seal < 35
+          ? '改进建议：本次虽胜但封印已接近极限，可加强后两房的持续作战能力。'
+          : '战术结论：当前布防能形成连续消耗，建议保留核心组合并针对下一批勇者词缀微调。',
+  ];
   // 战利品：从被击倒的勇者身上剥下来的东西，用他们的等级决定档次
   const fallen = b.heroes.filter((h) => !h.alive);
   const maxLv = fallen.reduce((m, h) => Math.max(m, h.lv), 0);
@@ -1869,7 +1914,7 @@ function finish(b        ) {
     xp: [...xpMap.entries()].map(([uid, xp]) => ({ uid, xp })),
     champXp: [...champXp.entries()].map(([uid, v]) => ({ uid, xp: v.xp, kills: v.kills, fell: v.fell })),
     champStats: [...champStats.entries()].map(([uid, v]) => ({ uid, ...v })),
-    firstCause,
+    firstCause, review,
   };
   log(b, win ? `守住地牢！封印剩余${seal}` : `封印被击破，勇者攻入王座`, win ? 'good' : 'bad');
 }

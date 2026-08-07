@@ -86,6 +86,23 @@ export const PARTS         = [
   { id: 'swarmlet', cat: 'legs', name: '蛆群座', tex: 'part-legs-swarmlet', bone: 22, hp: 16, atk: 3, def: 1, spd: 0.05, unlockRaid: 5, word: '蛆', desc: '任意站位，每秒回复3点生命；被击倒时对全体造成12点伤害' },
   { id: 'anchor', cat: 'legs', name: '铁锚座', tex: 'part-legs-anchor', bone: 26, hp: 24, atk: 0, def: 4, spd: -0.25, unlockRaid: 6, word: '锚', desc: '前排站位，吸引近战勇者优先攻击自己，受到伤害-15%' },
   { id: 'flame', cat: 'legs', name: '焰座', tex: 'part-legs-flame', bone: 26, hp: 8, atk: 6, def: 0, spd: 0.25, unlockRaid: 7, word: '焰', desc: '任意站位，入场点燃全体勇者（5点/秒，4秒）' },
+  // 扩充部件：复用既有贴图和已落地机制，确保创造、改造与战斗表现一致。
+  { id: 'marrow', cat: 'core', name: '活髓核', tex: 'part-core-bone', bone: 38, hp: 90, atk: 9, def: 3, spd: 0, unlockRaid: 2, word: '髓', desc: '满级被动·生髓：每秒回复5点生命', eff: { passive: 'regen', hpRegen: 5 } },
+  { id: 'glassheart', cat: 'core', name: '琉璃心', tex: 'part-core-crystal', bone: 42, hp: 68, atk: 16, def: 2, spd: 0.1, unlockRaid: 4, word: '璃', desc: '满级被动·镜心：反弹18%伤害，战后存活额外产出5魔质', eff: { passive: 'crystal', thorns: 0.18, manaEcho: 5 } },
+  { id: 'stormcore', cat: 'core', name: '雷鸣核', tex: 'part-core-clock', bone: 46, hp: 76, atk: 15, def: 2, spd: 0.12, unlockRaid: 6, word: '雷', desc: '满级被动·蓄雷：技能冷却-18%，击倒勇者后攻速提升', eff: { passive: 'clock', skillCdMult: 0.82, frenzy: true } },
+  { id: 'abysscore', cat: 'core', name: '深渊囊', tex: 'part-core-void', bone: 50, hp: 88, atk: 14, def: 4, spd: -0.05, unlockRaid: 8, word: '渊', desc: '满级被动·蚀界：普攻叠加易伤，同房怪物受到伤害-8%', eff: { passive: 'voidCore', markHit: 0.08, bulwarkAura: 0.92 } },
+  { id: 'wolf', cat: 'head', name: '狼颅首', tex: 'part-head-maw', bone: 24, hp: 8, atk: 14, def: 1, spd: 0.08, unlockRaid: 2, word: '狼', desc: '普攻回复所造成伤害的22%生命', eff: { onHit: 'lifesteal', lifestealPct: 0.22 } },
+  { id: 'oracle', cat: 'head', name: '先知眼', tex: 'part-head-eye', bone: 26, hp: 5, atk: 12, def: 1, spd: 0.05, unlockRaid: 4, word: '谶', desc: '普攻延后目标技能，并叠加6%易伤', eff: { onHit: 'delay', markHit: 0.06 } },
+  { id: 'ramhorn', cat: 'head', name: '撞角首', tex: 'part-head-horn', bone: 30, hp: 14, atk: 13, def: 2, spd: -0.05, unlockRaid: 6, word: '撞', desc: '每房首次普攻造成重击并眩晕，受到伤害-6%', eff: { onHit: 'charge', dmgTakenMult: 0.94 } },
+  { id: 'leech', cat: 'head', name: '血蛭首', tex: 'part-head-beak', bone: 30, hp: 10, atk: 12, def: 1, spd: 0.1, unlockRaid: 8, word: '蛭', desc: '普攻使目标中毒并降低治疗，自身获得15%吸血', eff: { onHit: 'plague', lifestealPct: 0.15 } },
+  { id: 'sabres', cat: 'arm', name: '双刃臂', tex: 'part-arm-claw', bone: 28, hp: 0, atk: 16, def: 0, spd: 0.2, unlockRaid: 2, word: '双', desc: '技能·双斩：对当前目标连续两次攻击' },
+  { id: 'mortar', cat: 'arm', name: '骨臼炮', tex: 'part-arm-cannon', bone: 38, hp: 5, atk: 17, def: 0, spd: -0.15, unlockRaid: 4, word: '臼', desc: '技能·散射：轰击后排全体并短暂眩晕' },
+  { id: 'harpoon', cat: 'arm', name: '鱼叉臂', tex: 'part-arm-chain', bone: 34, hp: 4, atk: 15, def: 1, spd: 0, unlockRaid: 6, word: '叉', desc: '技能·钩曳：把最后排勇者拖到前排并造成伤害' },
+  { id: 'reliquary', cat: 'arm', name: '圣匣臂', tex: 'part-arm-shield', bone: 40, hp: 12, atk: 10, def: 3, spd: -0.1, unlockRaid: 8, word: '匣', desc: '技能·结界：给本房怪物各一层护盾' },
+  { id: 'sail', cat: 'legs', name: '骨帆翼', tex: 'part-legs-wing', bone: 26, hp: 8, atk: 3, def: 1, spd: 0.32, unlockRaid: 2, word: '帆', desc: '后排站位，15%概率完全闪避', eff: { dodge: 0.15 } },
+  { id: 'burrow', cat: 'legs', name: '掘地足', tex: 'part-legs-root', bone: 28, hp: 18, atk: 4, def: 2, spd: 0, unlockRaid: 4, word: '掘', desc: '任意站位，每秒回复3点生命', eff: { hpRegen: 3 } },
+  { id: 'battering', cat: 'legs', name: '攻城轮', tex: 'part-legs-wheel', bone: 32, hp: 22, atk: 7, def: 3, spd: -0.1, unlockRaid: 6, word: '城', desc: '前排站位，入场撞击首名勇者', eff: { entry: 'ram' } },
+  { id: 'shade', cat: 'legs', name: '影步足', tex: 'part-legs-cloud', bone: 34, hp: 10, atk: 5, def: 1, spd: 0.28, unlockRaid: 8, word: '影', desc: '任意站位，12%闪避且普攻可直击后排', eff: { dodge: 0.12, reach: true } },
 ];
 
 // 词缀：挂在某个部位上的强化，只收魔质，最多同时挂 2 个。
@@ -314,6 +331,10 @@ const SKILL_BY_ARM                                                           = {
   grail: { skill: 'brew', name: '调剂' },
   banner: { skill: 'rally', name: '督战' },
   syringe: { skill: 'inject', name: '注毒' },
+  sabres: { skill: 'multi', name: '双斩' },
+  mortar: { skill: 'volley', name: '散射' },
+  harpoon: { skill: 'drag', name: '钩曳' },
+  reliquary: { skill: 'wall', name: '结界' },
   // 统领级臂
   sceptre: { skill: 'decree', name: '敕令' },
   magmafist: { skill: 'eruption', name: '熔喷' },
@@ -323,6 +344,7 @@ const ONHIT_BY_HEAD                                  = {
   skull: 'weaken', eye: 'pierceDef', maw: 'lifesteal', horn: 'charge',
   mask: 'sunder', lantern: 'delay', tongue: 'yank', mirror: 'shatter',
   beak: 'plague', crown: 'command', swarm: 'bite', thorn: 'barb', choir: 'wail', frost: 'freeze',
+  wolf: 'lifesteal', oracle: 'delay', ramhorn: 'charge', leech: 'plague',
   diadem: 'command', bell: 'tithe', eightfold: 'ensnare',
 };
 // 头部件除 onHit 之外的附带机制
@@ -337,6 +359,7 @@ const PASSIVE_BY_CORE                                    = {
   jelly: 'tough', bone: 'revive', rock: 'stone', fungus: 'spore',
   slag: 'ember', moss: 'regen', crystal: 'crystal', wrath: 'wrath',
   plague: 'plagueCore', cage: 'cage', void: 'voidCore', hive: 'hive', clock: 'clock', tomb: 'tomb',
+  marrow: 'regen', glassheart: 'crystal', stormcore: 'clock', abysscore: 'voidCore',
   throne: 'sovereign', magma: 'coreMagma', brood: 'coreBrood',
 };
 // 核心件除被动之外的附带机制
@@ -362,6 +385,7 @@ const LEGS_EXTRA                                  = {
   swarmlet: { hpRegen: 3, deathBurst: 12 },
   anchor: { anchorHold: true, dmgTakenMult: 0.85 },
   flame: { entry: 'flameWake' },
+  sail: { dodge: 0.15 }, burrow: { hpRegen: 3 }, battering: { entry: 'ram' }, shade: { dodge: 0.12, reach: true },
   palanquin: { entry: 'courtEntry' },
   molten: { entry: 'moltenEntry', deathBurst: 30 },
   broodleg: { entry: 'webEntry', dodge: 0.18 },
@@ -383,9 +407,9 @@ export function deriveKind(def           )              {
   const spd = Math.max(0.35, Math.min(1.9, BASE_SPD + ps.reduce((n, x) => n + x.spd, 0)
     + afs.reduce((n, a) => n + (a.spdAdd ?? 0), 0)));
   const ranged = arm.id === 'bow' || arm.id === 'staff' || arm.id === 'censer' || arm.id === 'cannon';
-  const ANYROW = ['tentacle', 'root', 'spider', 'coil', 'swarmlet', 'flame', 'palanquin', 'broodleg'];
-  const BACKROW = ['wing', 'cloud', 'stilt'];
-  const FRONTROW = ['tread', 'anchor', 'molten'];
+  const ANYROW = ['tentacle', 'root', 'spider', 'coil', 'swarmlet', 'flame', 'palanquin', 'broodleg', 'burrow', 'shade'];
+  const BACKROW = ['wing', 'cloud', 'stilt', 'sail'];
+  const FRONTROW = ['tread', 'anchor', 'molten', 'battering'];
   const row                     = FRONTROW.includes(legs.id) ? 'front'
     : BACKROW.includes(legs.id) ? 'back'
     : ANYROW.includes(legs.id) ? 'any' : ranged ? 'any' : 'front';
@@ -689,6 +713,6 @@ const GRAFT_PASSIVE                                    = PASSIVE_BY_CORE;
 const GRAFT_CORE_EXTRA = CORE_EXTRA;
 const GRAFT_HEAD_EXTRA = HEAD_EXTRA;
 const GRAFT_LEGS_EXTRA = LEGS_EXTRA;
-const GRAFT_BACK = ['wing', 'cloud', 'stilt'];
-const GRAFT_ANY = ['tentacle', 'root', 'spider', 'coil', 'swarmlet', 'flame', 'palanquin', 'broodleg'];
-const GRAFT_FRONT = ['tread', 'anchor', 'molten'];
+const GRAFT_BACK = ['wing', 'cloud', 'stilt', 'sail'];
+const GRAFT_ANY = ['tentacle', 'root', 'spider', 'coil', 'swarmlet', 'flame', 'palanquin', 'broodleg', 'burrow', 'shade'];
+const GRAFT_FRONT = ['tread', 'anchor', 'molten', 'battering'];

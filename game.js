@@ -15,7 +15,7 @@ import { READ_PATHS, foldMods, modSummary } from './vars.js';
                                                                         
 import { CHAMP_CAP, CHAMP_LV_CAP, CHEM_INFO, HEAL_MANA, POT_MULT, POT_NAME, REROLL_MANA, REST_MANA, RESPEC_MANA,
   REROLL_TRAIT_BONE, REROLL_TRAIT_MANA, TALENTS, TALENT_CAP, TALENT_TIERS, TIER_LV, TRAITS, WOUND_CAP,
-  activeTitleOf, auraText, canLevel, champStats, chemOf, chemistry, fatigueTier, newChamp, nextTitle, pendingTier, randomName, respecCost,
+  activeTitleOf, auraText, backgroundById, canLevel, champStats, chemOf, chemistry, ensureChampLore, fatigueTier, newChamp, nextTitle, pendingTier, personalityById, randomName, respecCost,
   rerollTraits, rollCands, talentSlots, tickFatigue, titleById, titleOf, unlockedTitles, upCostOf, xpNeed } from './heroes.js';
                                                          
 import { TEX, txt, label, labelC, panel, panelF, frame, bar, sprite, Hits, button, setTextRes, FONT,
@@ -171,8 +171,11 @@ function sanitizeSave() {
   if (typeof S.candNext !== 'number') S.candNext = 1;
   if (typeof S.candRaid !== 'number') S.candRaid = 0;
   if (!S.champPot || typeof S.champPot !== 'object') S.champPot = {};
+  S.cands = S.cands.filter((c) => c && typeof c.id === 'number' && kindById(c.race)?.legend && typeof c.name === 'string');
+  for (const c of S.cands) ensureChampLore(c);
   S.champs = S.champs.filter((c) => c && typeof c.uid === 'number' && kindById(c.race)?.legend && typeof c.name === 'string');
   for (const c of S.champs) {
+    ensureChampLore(c);
     c.lv = Math.max(1, Math.min(CHAMP_LV_CAP, Math.round(c.lv || 1)));
     c.xp = Math.max(0, Math.round(c.xp || 0));
     c.fatigue = Math.max(0, Math.min(100, Math.round(c.fatigue || 0)));
@@ -328,8 +331,7 @@ let screen         = 'manage';
 let sel                                                                                                                                                                            = null;
 let heroSel                = null;          // 当前查看的英雄 uid
 let heroTab                       = 'roster';
-let heroView                             = 'stat';   // 名册右侧详情的三个视图
-let champTitlePage                       = 0;          // 称号列表分页
+let heroView                             = 'stat';   // 名册右侧详情的五个视图
 let champTitleExpand                     = '';         // 详情页当前展开的称号 id
 let gearSlotSel           = 'crown';                 // 装备页当前编辑的槽
 let talentPreview = null;                            // 专精页预览；确认前不写存档
@@ -618,7 +620,7 @@ function bindInput() {
       }
     } else if (screen === 'battle') {
       if (e.key === ' ') { paused = !paused; return; }
-      if (e.key.toLowerCase() === 's') { speed = speed === 1 ? 2 : 1; return; }
+      if (e.key.toLowerCase() === 's') { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; return; }
     } else if (screen === 'result') {
       if (e.key === 'Enter') { afterResult(); return; }
     } else if (screen === 'ending') {
@@ -2285,7 +2287,8 @@ function drawSidePanel(g               ) {
       button(g, uiLayer, hits, 382, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
       button(g, uiLayer, hits, 432, 224, 38, 16, '拆', () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
     } else {
-      button(g, uiLayer, hits, 382, 224, 88, 16, `遣散+${Math.round(k.cost * 0.5)}`, () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
+      button(g, uiLayer, hits, 382, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
+      button(g, uiLayer, hits, 432, 224, 38, 16, '遣散', () => dismantle(inst.uid), { size: 10, border: C.red, color: C.red });
     }
   }
 
@@ -2322,8 +2325,8 @@ function drawSidePanel(g               ) {
     if (inst.lv >= 5 && passiveH >= 13) boundedText(uiLayer, passiveBody, 340, dy + 16, 130, passiveH, 10, C.stoneLit);
     dy = 218;
 
-    if (isCustomKind(inst.kind) && dy < 218) {
-      label(uiLayer, `改造 ${gcount}/${GRAFT_CAP}件・重组 1次`, 340, dy, 10, C.steel);
+    if (gcount && dy < 218) {
+      label(uiLayer, `已移植 ${gcount}/${GRAFT_CAP} 件`, 340, dy, 10, C.steel);
     }
 
     button(g, uiLayer, hits, 340, 224, 40, 16, '返回', () => { monDetailMode = false; playSfx('tab'); render(); },
@@ -2332,7 +2335,8 @@ function drawSidePanel(g               ) {
       button(g, uiLayer, hits, 382, 224, 38, 16, '重组', () => openStitch(inst.uid), { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
       button(g, uiLayer, hits, 422, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
     } else {
-      button(g, uiLayer, hits, 382, 224, 88, 16, `遣散+${Math.round(k.cost * 0.5)}`, () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
+      button(g, uiLayer, hits, 382, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
+      button(g, uiLayer, hits, 432, 224, 38, 16, '遣散', () => dismantle(inst.uid), { size: 10, border: C.red, color: C.red });
     }
   }
   if (sel.kind === 'monkind') {
@@ -3108,18 +3112,6 @@ function traitColor(t        ) {
   }
 }
 
-function titleEffectText(t        ) {
-  const parts = [];
-  if (t.stats?.hp)       parts.push(`生命 ${Math.round((t.stats.hp - 1) * 100)}%`);
-  if (t.stats?.atk)      parts.push(`攻击 ${Math.round((t.stats.atk - 1) * 100)}%`);
-  if (t.stats?.def)      parts.push(`防御 +${t.stats.def}`);
-  if (t.stats?.spd)      parts.push(`攻速 ${Math.round((t.stats.spd - 1) * 100)}%`);
-  if (t.stats?.hpRegen)  parts.push(`回血 +${t.stats.hpRegen}`);
-  if (t.stats?.thorns)   parts.push(`反伤 ${Math.round(t.stats.thorns * 100)}%`);
-  if (t.stats?.reviveHp) parts.push(`复活生命 ${Math.round(t.stats.reviveHp * 100)}%`);
-  return parts.join('，') || '无数值加成';
-}
-
 function effDetailText(e        ) {
   const out = [];
   if (e.thorns)        out.push(`反伤 ${Math.round(e.thorns * 100)}%`);
@@ -3208,95 +3200,49 @@ function drawChampStat(g, c) {
   button(g, uiLayer, hits, 446, 200, 34, 15, '遣退', () => dismissChamp(c), { size: 10, border: C.red, color: C.red });
 }
 
-function drawChampTitleList(g, c, x, y, w, h) {
-  label(uiLayer, '称号', x, y, 12, C.gold);
+function drawChampTitles(g, c) {
+  const x = 174, y = 80, w = 286;
+  label(uiLayer, `${c.name.split('·')[0]} 的称号`, 174, 64, 12, C.gold);
   const unlocked = unlockedTitles(c);
   if (!unlocked.length) {
-    label(uiLayer, '暂无称号', x, y + 16, 12, C.stoneLit);
+    label(uiLayer, '暂无已解锁称号', x, y, 12, C.stoneLit);
+    const nt = nextTitle(c);
+    if (nt) boundedText(uiLayer, `最近目标：${nt.t.name}（${nt.at}）`, x, y + 20, w, 34, 11, C.bone);
     return;
   }
-  const headerH = 16;
-  const normalRowH = 16;
-  const pgH = 14;
-  const activeId = c.activeTitle;
-  const activeIdx = activeId ? unlocked.indexOf(activeId) : -1;
-
-  // 展开某称号时显示效果与激活按钮；默认展开当前激活称号（如果无手动展开）
-  let expandId = '';
-  if (champTitleExpand && unlocked.includes(champTitleExpand)) expandId = champTitleExpand;
-  else if (activeIdx >= 0) expandId = activeId;
-
-  function expandedH(id        ) {
+  const activeId = activeTitleOf(c)?.id ?? '';
+  if (!champTitleExpand || !unlocked.includes(champTitleExpand)) champTitleExpand = activeId || unlocked[0];
+  const selectedId = champTitleExpand;
+  const pg = paged(`champ-titles-${c.uid}`, unlocked, 8);
+  const cols = 2;
+  pg.view.forEach((id, i) => {
     const t = titleById(id);
-    const tmp = new PIXI.Text({
-      text: cut(`${t.desc}｜${titleEffectText(t)}`, 28),
-      style: { fontFamily: FONT, fontSize: 10, fill: C.bone, lineHeight: 13, wordWrap: true, wordWrapWidth: w - 8, breakWords: true }
-    });
-    const hh = 14 + Math.min(tmp.height, 26) + 4;
-    tmp.destroy();
-    return hh;
-  }
-
-  function pageFits(size, pageIdx) {
-    const start = pageIdx * size;
-    const page = unlocked.slice(start, start + size);
-    const hasExpand = expandId && page.includes(expandId);
-    const needPg = Math.ceil(unlocked.length / size) > 1 ? pgH : 0;
-    const used = headerH + (page.length - (hasExpand ? 1 : 0)) * normalRowH + (hasExpand ? expandedH(expandId) : 0) + needPg;
-    return used <= h;
-  }
-
-  let pageSize = Math.max(1, Math.floor((h - headerH - pgH) / normalRowH));
-  let maxPage = Math.max(0, Math.ceil(unlocked.length / pageSize) - 1);
-  champTitlePage = Math.min(champTitlePage, maxPage);
-
-  while (pageSize > 1 && !pageFits(pageSize, champTitlePage)) {
-    pageSize--;
-    maxPage = Math.max(0, Math.ceil(unlocked.length / pageSize) - 1);
-    champTitlePage = Math.min(champTitlePage, maxPage);
-  }
-
-  // 若展开项不在当前页，跳转过去并重新约束
-  if (expandId) {
-    const targetPage = Math.floor(unlocked.indexOf(expandId) / pageSize);
-    if (targetPage !== champTitlePage && targetPage <= maxPage) champTitlePage = targetPage;
-  }
-
-  const expandFits = pageFits(pageSize, champTitlePage);
-
-  const start = champTitlePage * pageSize;
-  const page = unlocked.slice(start, start + pageSize);
-  let ty = y + headerH;
-  for (const id of page) {
-    const t = titleById(id);
-    const active = c.activeTitle === id;
-    const expanded = expandFits && expandId === id;
-    // 行按钮：点击展开/收起详情；展开时右侧留激活按钮位
-    const btnW = expanded && !active ? w - 34 : w;
-    button(g, uiLayer, hits, x, ty, btnW, 14, cut(t.name, 8), () => {
-      champTitleExpand = champTitleExpand === id ? '' : id;
+    const bx = x + (i % cols) * 142;
+    const by = y + Math.floor(i / cols) * 18;
+    const active = activeId === id;
+    const selected = selectedId === id;
+    button(g, uiLayer, hits, bx, by, 138, 16, `${active ? '★' : '·'}${cut(t.name, 8)}`, () => {
+      champTitleExpand = id;
       playSfx('tab'); render();
-    }, { size: 10, fill: active ? C.goldDark : C.ink, border: active ? C.gold : C.stoneLit, color: active ? C.white : C.steel });
-    if (expanded && !active) {
-      button(g, uiLayer, hits, x + btnW + 2, ty, 32, 14, '激活', () => {
-        c.activeTitle = id; playSfx('tab'); persist(); render();
-      }, { size: 10, fill: C.purpleDark, border: C.purple, color: C.white });
-    }
-    if (expanded) {
-      const block = boundedText(uiLayer, `${t.desc}｜${titleEffectText(t)}`, x + 4, ty + 14, w - 8, 26, 10, C.bone);
-      ty += 14 + block.height + 4;
-    } else {
-      ty += normalRowH;
-    }
+    }, { size: 10, fill: active ? C.goldDark : selected ? C.purpleDark : C.ink,
+      border: active ? C.gold : selected ? C.purple : C.stoneLit, color: active || selected ? C.white : C.steel });
+  });
+  pager(g, `champ-titles-${c.uid}`, pg.pages, 174, 153, 286, '称号 ');
+
+  const t = titleById(selectedId);
+  panel(g, 174, 172, 286, 38, C.ink, activeId === selectedId ? C.gold : C.purple);
+  if (t) {
+    label(uiLayer, `${t.name}${activeId === t.id ? '・当前生效' : '・已解锁'}`, 180, 175, 11, activeId === t.id ? C.gold : C.purple);
+    boundedText(uiLayer, `效果：${t.desc}`, 180, 190, 204, 18, 10, C.bone);
+    button(g, uiLayer, hits, 390, 180, 62, 22, activeId === t.id ? '使用中' : '启用称号', () => {
+      if (activeId === t.id) return;
+      c.activeTitle = t.id;
+      champTitleExpand = t.id;
+      playSfx('place'); persist(); render();
+    }, { size: 11, enabled: activeId !== t.id, fill: C.purpleDark, border: activeId === t.id ? C.gold : C.purple, color: C.white });
   }
-  if (maxPage > 0) {
-    const px = x + w / 2;
-    button(g, uiLayer, hits, x, ty + 2, w / 2 - 22, 12, '◀', () => { champTitlePage = Math.max(0, champTitlePage - 1); champTitleExpand = ''; playSfx('tab'); render(); },
-      { size: 10, enabled: champTitlePage > 0, border: C.stoneLit, color: C.stoneLit });
-    labelC(uiLayer, `${champTitlePage + 1}/${maxPage + 1}`, px, ty + 2, 12, C.stoneLit);
-    button(g, uiLayer, hits, px + 14, ty + 2, w / 2 - 22, 12, '▶', () => { champTitlePage = Math.min(maxPage, champTitlePage + 1); champTitleExpand = ''; playSfx('tab'); render(); },
-      { size: 10, enabled: champTitlePage < maxPage, border: C.stoneLit, color: C.stoneLit });
-  }
+  const nt = nextTitle(c);
+  label(uiLayer, nt ? cut(`下一目标：${nt.t.name}・${nt.at}`, 32) : '所有称号均已解锁', 174, 216, 10, nt ? C.stoneLit : C.gold);
 }
 
 function drawChampInfo(g, c) {
@@ -3337,24 +3283,27 @@ function drawChampInfo(g, c) {
   label(uiLayer, '战斗机制', 320, 80, 12, C.gold);
   const mechs = effDetailText(st.eff);
   let my = 96;
-  const maxMechY = 210; // 给称号区域留至少 24px
   if (mechs.length) {
-    for (const txt of mechs) {
-      if (my >= maxMechY) break;
-      const rowH = Math.min(24, maxMechY - my);
-      g.rect(320, my, 140, rowH + 4).fill(C.ink).stroke({ width: 1, color: C.stoneLit, alignment: 0 });
-      const block = boundedText(uiLayer, txt, 324, my + 2, 132, rowH, 11, C.steel);
-      if (block.truncated) hits.add(320, my, 140, rowH + 4, () => openDetailPopup('战斗机制', txt, C.steel));
-      my += rowH + 6;
-    }
+    const allMechs = mechs.join('；');
+    g.rect(320, my, 140, 48).fill(C.ink).stroke({ width: 1, color: C.stoneLit, alignment: 0 });
+    const block = boundedText(uiLayer, allMechs, 324, my + 3, 132, 42, 10, C.steel);
+    if (block.truncated || mechs.length > 1) hits.add(320, my, 140, 48, () => openDetailPopup('战斗机制', mechs.join('\n'), C.steel));
+    my += 52;
   } else {
     label(uiLayer, '无特殊机制', 320, my, 12, C.stoneLit); my += 14;
   }
 
-  // 右列：称号
-  const titleY = Math.min(my + 8, 214);
-  const titleH = Math.max(40, 234 - titleY - 2);
-  drawChampTitleList(g, c, 320, titleY, 140, titleH);
+  // 右列：英雄档案。完整背景可点击查看，避免和机制说明抢高度。
+  const personality = personalityById(c.personality);
+  const background = backgroundById(c.background);
+  const loreY = Math.min(Math.max(my + 4, 150), 174);
+  label(uiLayer, '英雄档案', 320, loreY, 12, C.gold);
+  button(g, uiLayer, hits, 320, loreY + 15, 140, 16, `性格・${personality.name}`,
+    () => openDetailPopup(`性格・${personality.name}`, personality.desc, C.purple),
+    { size: 11, fill: C.ink, border: C.purpleDark, color: C.purple });
+  button(g, uiLayer, hits, 320, loreY + 34, 140, 16, `背景・${background.name}`,
+    () => openDetailPopup(`背景故事・${background.name}`, background.story, C.gold),
+    { size: 11, fill: C.ink, border: C.goldDark, color: C.gold });
 }
 
 function drawChampDetail(g, c) {
@@ -3362,10 +3311,10 @@ function drawChampDetail(g, c) {
   const pend = pendingTier(c);
   if (pend && heroView === 'stat') heroView = 'talent';
   const vaultDot = S.vault.length > 0;
-  const tabs = [['stat', '状态'], ['info', '详情'], ['talent', pend ? '专精●' : '专精'], ['gear', vaultDot ? '装备●' : '装备']];
+  const tabs = [['stat', '状态'], ['info', '详情'], ['talent', pend ? '专精●' : '专精'], ['gear', vaultDot ? '装备●' : '装备'], ['title', '称号']];
   for (const [i, v] of tabs.entries()) {
     const on = heroView === v[0];
-    button(g, uiLayer, hits, 326 + i * 38, 60, 36, 14, v[1], () => {
+    button(g, uiLayer, hits, 326 + i * 30, 60, 28, 14, v[1], () => {
       heroView = v[0];
       if (heroView !== 'talent') talentPreview = null;
       playSfx('tab'); render();
@@ -3375,6 +3324,7 @@ function drawChampDetail(g, c) {
   if (heroView === 'info') { drawChampInfo(g, c); return; }
   if (heroView === 'talent') { drawChampTalents(g, c); return; }
   if (heroView === 'gear') { drawChampGear(g, c); return; }
+  if (heroView === 'title') { drawChampTitles(g, c); return; }
   drawChampStat(g, c);
 }
 
@@ -3390,6 +3340,12 @@ function rerollChampTraits(c) {
 }
 
 const cut = (t        , n        ) => (t.length > n ? `${t.slice(0, n)}…` : t);
+function openGearDetail(k) {
+  if (!k) return;
+  const slot = GEAR_SLOTS.find((s) => s.id === k.slot)?.name ?? '未知';
+  const rank = ['普通', '精良', '传奇', '神话'][k.rank] ?? `阶级${k.rank}`;
+  openDetailPopup(`装备・${k.name}`, `槽位：${slot}\n品质：${rank}${k.forged ? '・自制装备' : '・缴获装备'}\n\n完整效果：${k.desc}\n\n以上数值会在穿戴后直接计入英雄最终属性与战斗机制。`, RANK_COL[k.rank] ?? C.gold);
+}
 function sayChem(lines          ) {
   say(lines.length ? cut(lines.join(' / '), 40) : `同僚效应：${CHEM_INFO[0].desc.split('：')[0]}等，需多名英雄同时上阵`);
 }
@@ -3441,27 +3397,32 @@ function drawChampGear(g               , c       ) {
   const ge = gearEff(c.gear);
   const set = gearSet(c.gear);
   label(uiLayer, cut(`${c.name.split('·')[0]} 的装备`, 9), 174, 64, 12, C.gold);
-  // 三个槽：每格 38px，名字与说明分两行（行距 18），说明在左、图标压右不占文字位
+  // 三个槽：压成 36px 节奏，底部给当前装备效果留下完整两行摘要。
   GEAR_SLOTS.forEach((sl, i) => {
-    const y = 80 + i * 38;
+    const y = 80 + i * 36;
     const cur = gearById(eq[sl.id] ?? '');
     const on = gearSlotSel === sl.id;
-    g.rect(174, y, 150, 34).fill(on ? C.wallLit : C.ink)
+    g.rect(174, y, 150, 32).fill(on ? C.wallLit : C.ink)
       .stroke({ width: 1, color: on ? C.gold : cur ? C.purple : C.stoneLit, alignment: 0 });
     label(uiLayer, sl.name, 178, y + 1, 12, C.stoneLit);
     if (cur) {
       uiLayer.addChild(sprite(cur.tex, 313, y + 17, 18));
       label(uiLayer, cut(cur.name, 5), 196, y + 1, 12, RANK_COL[cur.rank]);
-      label(uiLayer, cut(cur.desc, 12), 178, y + 18, 12, C.steel);
+      const desc = boundedText(uiLayer, cur.desc, 178, y + 18, 112, 14, 10, C.steel);
+      hits.add(176, y + 16, 116, 15, () => openGearDetail(cur));
+      button(g, uiLayer, hits, 292, y + 1, 24, 13, '详', () => openGearDetail(cur),
+        { size: 10, border: desc.truncated ? C.gold : C.stoneLit, color: desc.truncated ? C.gold : C.stoneLit });
     } else {
       label(uiLayer, '空', 196, y + 1, 12, C.wallLit);
       label(uiLayer, '从右侧装上', 178, y + 18, 12, C.wallLit);
     }
-    hits.add(174, y, 150, 34, () => { gearSlotSel = sl.id; playSfx('tab'); render(); });
+    hits.add(174, y, 116, 16, () => { gearSlotSel = sl.id; playSfx('tab'); render(); });
   });
-  label(uiLayer, set ? cut(`${set.name}：${set.desc}`, 15) : `仓库 ${S.vault.length}/${GEAR_CAP}・自制 ${S.forged.length}/${FORGED_CAP}`, 174, 196, 12, set ? C.gold : C.stoneLit);
   // 卸下 / 重铸 / 锻造台
   const curSel = gearById(eq[gearSlotSel] ?? '');
+  const summary = curSel ? curSel.desc : set ? `${set.name}：${set.desc}` : `仓库 ${S.vault.length}/${GEAR_CAP}・自制 ${S.forged.length}/${FORGED_CAP}`;
+  const summaryBlock = boundedText(uiLayer, summary, 174, 187, 150, 24, 10, curSel ? C.steel : set ? C.gold : C.stoneLit);
+  if (curSel && summaryBlock.truncated) hits.add(174, 186, 150, 26, () => openGearDetail(curSel));
   button(g, uiLayer, hits, 174, 214, 46, 15, '卸下', () => unequipGear(c, gearSlotSel),
     { size: 12, enabled: !!curSel, border: C.red, color: curSel ? C.white : C.stoneLit });
   const rf = curSel ? REFORGE_MANA : 0;
@@ -3487,9 +3448,9 @@ function drawChampGear(g               , c       ) {
       button(g, uiLayer, hits, 424, y + 1, 44, 13, `熔${MELT_MANA[it.k.rank]}`, () => meltGear(it.idx),
         { size: 12, border: C.purple, color: C.purple });
     }
-    label(uiLayer, cut(it.k.desc, 15), 336, y + 18, 12, C.stoneLit);
+    boundedText(uiLayer, it.k.desc, 336, y + 18, 132, 13, 10, C.stoneLit);
     hits.add(332, y, 66, 16, () => equipGear(c, it.idx));
-    hits.add(332, y + 17, 140, 15, () => equipGear(c, it.idx));
+    hits.add(332, y + 17, 140, 15, () => openGearDetail(it.k));
     y += 34;
   }
   pager(g, `vault-${gearSlotSel}`, pv.pages, 332, 214, 140);
@@ -3579,6 +3540,11 @@ function drawRecruit(g               ) {
     button(g, uiLayer, hits, x + 6, 178, 136, 18, cut(`被动・${aura.name}`, 10),
       () => openDetailPopup(`英雄被动・${aura.name}`, aura.desc, C.gold),
       { size: 11, fill: C.ink, border: C.goldDark, color: C.gold });
+    const personality = personalityById(c.personality);
+    const background = backgroundById(c.background);
+    button(g, uiLayer, hits, x + 6, 198, 136, 11, cut(`性格・${personality.name}｜${background.name}`, 14),
+      () => openDetailPopup(`${c.name}・英雄档案`, `性格：${personality.name}\n${personality.desc}\n\n背景：${background.name}\n${background.story}`, C.purple),
+      { size: 9, fill: C.ink, border: C.purpleDark, color: C.steel });
     button(g, uiLayer, hits, x + 6, 210, 136, 15, `征召 ${cost}骨`, () => recruitChamp(c),
       { size: 12, enabled: afford, fill: C.goldDark, border: C.gold, color: C.white });
   });
@@ -3718,7 +3684,7 @@ function pageReport(g               ) {
   reportIdx = Math.min(reportIdx, S.reports.length - 1);
   const r = S.reports[reportIdx];
   const lkey0 = `rep-logs-${reportIdx}`;
-  if (pageState[lkey0] === undefined) pageState[lkey0] = Math.max(0, Math.ceil(r.logs.length / 10) - 1);
+  if (pageState[lkey0] === undefined) pageState[lkey0] = Math.max(0, Math.ceil(r.logs.length / 5) - 1);
   S.reports.forEach((rp, i) => {
     const x = 8 + i * 44;
     button(g, uiLayer, hits, x, 40, 40, 18, `#${rp.raidNo}`, () => { reportIdx = i; playSfx('tab'); render(); },
@@ -3734,7 +3700,12 @@ function pageReport(g               ) {
     y += 18;
   }
   label(uiLayer, '关键败因/结论：', 8, y + 4, 12, C.gold);
-  boundedText(uiLayer, r.firstCause, 8, y + 18, 200, Math.max(15, 224 - (y + 18)), 12, C.bone);
+  button(g, uiLayer, hits, 132, y + 2, 76, 15, '完整战术复盘', () => {
+    const review = Array.isArray(r.review) && r.review.length ? r.review : [r.firstCause];
+    const quotes = r.logs.filter((l) => /^　/.test(l.text)).slice(0, 12).map((l) => l.text.trim());
+    openDetailPopup(`#${r.raidNo} 战术复盘`, `${review.join('\n\n')}${quotes.length ? `\n\n战场台词摘录：\n${quotes.join('\n')}` : ''}`, r.win ? C.green : C.red);
+  }, { size: 9, fill: C.ink, border: C.goldDark, color: C.gold });
+  boundedText(uiLayer, r.firstCause, 8, y + 20, 200, Math.max(15, 210 - (y + 20)), 11, C.bone);
   const pu = paged(`rep-units-${reportIdx}`, r.units, 5);
   label(uiLayer, `单位战绩 ${r.units.length}`, 216, 82, 12, C.white);
   let y2 = 98;
@@ -3745,9 +3716,9 @@ function pageReport(g               ) {
   }
   pager(g, `rep-units-${reportIdx}`, pu.pages, 216, 212, 106);
   panelF(g, uiLayer, 'stone', 334, 40, 142, 194, C.wall);
-  // 日志分页：一页 10 条，最新一页在最后 —— 想看开局就往前翻
+  // 日志分页：扩充台词后每页固定 5 条，避免长对白被下边界吞掉。
   const lkey = `rep-logs-${reportIdx}`;
-  const pl = paged(lkey, r.logs, 10);
+  const pl = paged(lkey, r.logs, 5);
   labelC(uiLayer, '战斗日志', 392, 46, 12, C.white);
   // 日志行会折行（统领溃散等长句），按固定行距步进必压字 → 用实测 Text.height 累加，填满即停
   let y3 = 62;
@@ -4221,7 +4192,7 @@ function drawBattleHud() {
   }
   if (interactive) {
     button(hudGfx, hudLayer, hits, 384, 2, 42, 18, paused ? '继续' : '暂停', () => { paused = !paused; }, { size: 12 });
-    button(hudGfx, hudLayer, hits, 430, 2, 42, 18, `${speed}×`, () => { speed = speed === 1 ? 2 : 1; }, { size: 12 });
+    button(hudGfx, hudLayer, hits, 430, 2, 42, 18, `${speed}×`, () => { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; }, { size: 12 });
   }
   // 行动时间轴：本房所有可行动单位按 cd 排序，右到左为行动先后
   drawBattleTimeline(b, hudGfx, hudLayer);
@@ -4297,7 +4268,7 @@ function finishBattle() {
   const report         = {
     raidNo: b.raid.no, title: b.raid.title, win: r.win, skulls: r.skulls, seal: r.seal, time: b.time,
     rooms: b.rooms.map((rm) => ({ i: rm.index, broken: rm.broken, t: rm.breachTime, reason: rm.breachReason })),
-    units, firstCause: r.firstCause,
+    units, firstCause: r.firstCause, review: r.review ?? [],
     logs: b.log.map((l) => ({ text: l.text, tone: l.tone })),
   };
   S.reports.unshift(report);
@@ -4482,8 +4453,8 @@ function tick(dt        ) {
 
   if (screen === 'battle' && battle) {
     if (!paused) {
-      const steps = speed === 2 ? 2 : 1;
-      for (let i = 0; i < steps; i++) stepBattle(battle, dt);
+      // 新的 1× 是旧版速度的 50%；2× 对应旧版常速，4× 对应旧版双速。
+      for (let i = 0; i < speed; i++) stepBattle(battle, dt * 0.5);
       consumeEvents();
     }
     updateBattleVisuals(dt);
@@ -4554,6 +4525,8 @@ function drawRotateHint() {
 window.__debug = {
   get screen() { return screen; },
   get paused() { return paused; },
+  get battleSpeed() { return speed; },
+  setBattleSpeed: (v) => { if ([1, 2, 4].includes(v)) speed = v; return speed; },
   get tab() { return tab; },
   get save() { return S; },
   get bone() { return S.bone; },
@@ -4653,6 +4626,8 @@ window.__debug = {
   },
   get chem() { return chemistry(S.champs, seatedChampUids()).lines; },
   heroView: (v                            ) => { heroView = v; render(); },
+  titlePreview: (uid, id) => { const c = champById(uid); if (c && unlockedTitles(c).includes(id)) { heroSel = uid; heroView = 'title'; champTitleExpand = id; render(); } return champTitleExpand; },
+  titleActivate: (uid, id) => { const c = champById(uid); if (c && unlockedTitles(c).includes(id)) { c.activeTitle = id; champTitleExpand = id; persist(); render(); } return c?.activeTitle ?? null; },
   get vault() { return [...S.vault]; },
   gearOf: (uid        ) => ({ ...(champById(uid)?.gear ?? {}) }),
   champStatOf: (uid        ) => { const c = champById(uid); return c ? statOf(c) : null; },
@@ -4682,7 +4657,7 @@ window.__debug = {
     S.champs.push(c); S.champPot[c.uid] = 1; persist(); render(); return c.uid;
   },
   devSeat: (room        , uid        ) => { seatChamp(room, uid); return S.rooms[room].leader; },
-  heroSelect: (uid        ) => { heroSel = uid; heroTab = 'roster'; champTitlePage = 0; champTitleExpand = ''; render(); },
+  heroSelect: (uid        ) => { heroSel = uid; heroTab = 'roster'; champTitleExpand = ''; render(); },
   heroTabSet: (t                      ) => { heroTab = t; render(); },
   devChampXp: (uid        , xp        ) => { const c = champById(uid); if (c) c.xp += xp; persist(); render(); },
   devLevelChamp: (uid        ) => { const c = champById(uid); if (c) levelChamp(c); return c ? c.lv : 0; },

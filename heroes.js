@@ -104,6 +104,54 @@ export const RESPEC_MANA = 14;    // 每个已选专精的洗点单价
 export const REROLL_TRAIT_BONE = 200;
 export const REROLL_TRAIT_MANA = 200;
 
+// 英雄档案只提供叙事身份，不额外叠加数值，避免旧存档因补档案而改变强度。
+export const PERSONALITIES = [
+  { id: 'quiet', name: '寡言', desc: '习惯先观察再行动，很少把判断说出口。' },
+  { id: 'bold', name: '果敢', desc: '面对强敌会主动迎上去，相信迟疑比受伤更危险。' },
+  { id: 'cunning', name: '机敏', desc: '擅长从规则缝隙里找机会，也乐于给敌人布下误判。' },
+  { id: 'loyal', name: '重诺', desc: '把承诺看得比战利品重要，从不抛下同阵的伙伴。' },
+  { id: 'curious', name: '好奇', desc: '对地牢机关与陌生魔法充满兴趣，常在战后做记录。' },
+  { id: 'stern', name: '严谨', desc: '凡事讲究次序和准备，对草率的计划没有耐心。' },
+  { id: 'warm', name: '温厚', desc: '善于照顾伤员，也能让脾气古怪的同伴安静下来。' },
+  { id: 'proud', name: '自负', desc: '确信自己能扭转败局，不愿让任何人看见软弱。' },
+  { id: 'restless', name: '躁动', desc: '无法忍受漫长等待，总想率先试探未知的道路。' },
+  { id: 'melancholy', name: '忧郁', desc: '记得每一次失败与离别，因此比旁人更珍惜胜利。' },
+  { id: 'wry', name: '诙谐', desc: '越是危险越爱说冷笑话，用轻松掩饰紧张。' },
+  { id: 'devout', name: '虔执', desc: '遵循一套只属于自己的仪式，并从中获得坚定。' },
+];
+
+export const BACKGROUNDS = [
+  { id: 'gravewatch', name: '墓园守夜者', story: '曾独自在荒废墓园守过七十个夜晚。后来墓碑开始回答问题，它便循着低语来到地牢，想找到声音真正的主人。' },
+  { id: 'caravan', name: '失散商队', story: '原本替一支地下商队护送货物。一次塌方吞没了队伍与道路，只留下它和一张写满欠账的旧清单。' },
+  { id: 'arena', name: '斗场余生', story: '在黑市斗场里活过许多轮厮杀，学会从观众的呼吸判断危险。逃出铁笼后，它决定只为自己认可的统领战斗。' },
+  { id: 'archive', name: '禁书抄写员', story: '曾为一座修道院誊写禁书，因为偷偷保留了一页会自行改写的手稿而被放逐。那一页至今仍藏在行囊深处。' },
+  { id: 'border', name: '边境遗民', story: '故乡在勇者远征中化为焦土。它记不清村庄原来的名字，却记得每一面参与围攻的旗帜。' },
+  { id: 'pilgrim', name: '逆行朝圣者', story: '与朝圣队伍背道而行，专门前往被祝福之地的阴影。它相信真正的答案总藏在光照不到的角落。' },
+  { id: 'workshop', name: '废炉学徒', story: '在一座废弃锻造厂里长大，能凭敲击声判断金属的裂纹。它来地牢寻找足够古老、值得重新点燃的炉火。' },
+  { id: 'deserter', name: '勇者逃兵', story: '曾短暂加入勇者军，却在第一次清剿中放走了幼小怪物。从那以后，它的名字同时出现在通缉令和怪物酒馆的账本上。' },
+  { id: 'dreamer', name: '梦境漂流者', story: '醒来时身边只有一枚陌生钥匙和不属于自己的记忆。每深入地牢一层，那段记忆就会变得更清晰。' },
+  { id: 'undertaker', name: '无名收殓人', story: '替敌我双方收敛遗骸多年，从尸骨上的伤痕学会战斗。它不敬畏死亡，只厌恶毫无意义的牺牲。' },
+  { id: 'exile', name: '王庭放逐者', story: '因拒绝执行一次屠村命令被逐出旧王庭。它保留着断裂的徽记，等待有一天证明忠诚不等于服从。' },
+  { id: 'deepborn', name: '深层原住民', story: '出生在地图尚未标出的地底深处，熟悉岩层移动的声音。它说这座地牢正在醒来，而勇者只是最先听见动静的人。' },
+];
+
+export const personalityById = (id) => PERSONALITIES.find((p) => p.id === id) ?? PERSONALITIES[0];
+export const backgroundById = (id) => BACKGROUNDS.find((p) => p.id === id) ?? BACKGROUNDS[0];
+
+function loreSeed(c) {
+  const text = `${c.race ?? ''}|${c.name ?? ''}|${c.id ?? c.uid ?? 0}`;
+  let h = 2166136261;
+  for (const ch of text) { h ^= ch.codePointAt(0); h = Math.imul(h, 16777619); }
+  return h >>> 0;
+}
+
+export function ensureChampLore(c) {
+  const seed = loreSeed(c);
+  if (!PERSONALITIES.some((p) => p.id === c.personality)) c.personality = PERSONALITIES[seed % PERSONALITIES.length].id;
+  if (!BACKGROUNDS.some((p) => p.id === c.background)) c.background = BACKGROUNDS[Math.floor(seed / 17) % BACKGROUNDS.length].id;
+  return c;
+}
+
 export function rerollTraits(c, rng) {
   const keys = Object.keys(TRAITS);
   const normal = keys.filter((k) => !TRAITS[k].legend);
@@ -335,19 +383,20 @@ export function rollCands(raidNo        , unlocked          , rng              ,
       if (t2 !== traits[0]) traits.push(t2);
     }
     const r = rng();
-    out.push({ id: idBase + i, race, name: randomName(race, rng), traits, potential: r < 0.12 ? 2 : r < 0.42 ? 1 : 0 });
+    out.push(ensureChampLore({ id: idBase + i, race, name: randomName(race, rng), traits, potential: r < 0.12 ? 2 : r < 0.42 ? 1 : 0 }));
   }
   return out;
 }
 
 export function newChamp(uid        , c      )        {
-  return {
+  return ensureChampLore({
     uid, race: c.race, name: c.name, lv: 1, xp: 0,
     traits: [...c.traits], talents: [], fatigue: 0,
+    personality: c.personality, background: c.background,
     battles: 0, kills: 0, wounds: 0, gear: {},
     activeTitle: '',
     stats: {},
-  };
+  });
 }
 export const champGear = (c       )          => gearEff(c.gear);
 export const woundGuarded = (c       ) => gearEff(c.gear).woundGuard;
