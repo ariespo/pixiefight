@@ -221,6 +221,42 @@ function persist() {
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); saveFlash = 1.2; } catch { /* 忽略写入失败 */ }
 }
 
+function exportSave() {
+  try {
+    const data = localStorage.getItem(SAVE_KEY);
+    if (!data) { say('没有可导出的存档'); return; }
+    const blob = new Blob([data], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+    a.href = url;
+    a.download = `yqh-save-${ts}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    say('存档已导出');
+  } catch { say('导出失败'); }
+}
+
+function importSave() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json,.txt,application/json,text/plain';
+  input.onchange = async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      JSON.parse(text);
+      localStorage.setItem(SAVE_KEY, text);
+      say('存档导入成功，即将刷新');
+      setTimeout(() => location.reload(), 800);
+    } catch { say('导入失败：文件格式错误'); }
+  };
+  input.click();
+}
+
 // ---------- 派生数据 ----------
 const sealMax = () => 100 + S.sealLv * 25;
 const trapPower = () => 1 + S.trapLv * 0.25;
@@ -1825,13 +1861,15 @@ function drawTopBar(g               ) {
   label(uiLayer, '勇者请回', 240, 12, 12, C.stoneLit);
   if (saveFlash > 0) label(uiLayer, '已保存', 300, 12, 12, C.green);
   // 测试按钮：一键补资源，方便试各种阵容
-  button(g, uiLayer, hits, 348, 6, 46, 22, '+1000', () => {
+  button(g, uiLayer, hits, 340, 6, 36, 22, '+1000', () => {
     S.bone += 1000; S.mana += 1000; playSfx('buy'); persist(); say('测试：骨币与魔质各 +1000'); render();
   }, { size: 12, fill: C.greenDark, border: C.green, color: C.white });
-  button(g, uiLayer, hits, 398, 6, 34, 22, S.muted ? '静音' : '音量', () => {
+  button(g, uiLayer, hits, 378, 6, 30, 22, '导出', () => { exportSave(); }, { size: 10 });
+  button(g, uiLayer, hits, 410, 6, 30, 22, '导入', () => { importSave(); }, { size: 10 });
+  button(g, uiLayer, hits, 442, 6, 30, 22, S.muted ? '静音' : '音量', () => {
     S.muted = !S.muted; setMuted(S.muted); persist(); render();
-  }, { size: 12 });
-  button(g, uiLayer, hits, 436, 6, 38, 22, '新档', () => {
+  }, { size: 10 });
+  button(g, uiLayer, hits, 474, 6, 36, 22, '新档', () => {
     if (confirmNew) { S = freshSave(); syncCustoms(); persist(); confirmNew = false; sel = null; say('已开启新档'); render(); }
     else { confirmNew = true; say('再点一次“新档”确认清空存档'); render(); }
   }, { size: 12, border: confirmNew ? C.red : C.bone, color: confirmNew ? C.red : C.bone });
