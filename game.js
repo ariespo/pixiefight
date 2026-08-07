@@ -780,7 +780,11 @@ function drawGraft() {
   label(modalLayer, now.spd === base.spd ? '—' : `→ ${now.spd.toFixed(2)}`, 396, 69, 12, now.spd > base.spd ? C.green : C.red);
   label(modalLayer, `站位 ${now.row === 'front' ? '前排' : now.row === 'back' ? '后排' : '任意'}`, 396, 84, 12, now.row === base.row ? C.stoneLit : C.gold);
   label(modalLayer, cut(`技能・${now.skill}`, 16), 206, 118, 12, C.purple);
-  wrapText(modalLayer, cut(now.skillDesc, 42), 206, 133, 254, 12, C.stoneLit);
+  const skillT = wrapText(modalLayer, now.skillDesc, 206, 133, 254, 12, C.stoneLit);
+  if (skillT.height > 26) {
+    modalLayer.removeChild(skillT);
+    wrapText(modalLayer, cut(now.skillDesc, 48), 206, 133, 254, 12, C.stoneLit);
+  }
   label(modalLayer, cut(gf.picks.length ? `移植：${gf.picks.map((id) => partById(id)?.name ?? '').join('、')}` : '尚未选择移植件', 30), 206, 164, 12, gf.picks.length ? C.gold : C.stoneLit);
 
   // 底部：花费与确认
@@ -1485,10 +1489,18 @@ function drawStitch() {
   label(modalLayer, `防御 ${k.def}`, 308, 52, 12, C.steel);
   label(modalLayer, `速度 ${k.spd.toFixed(2)}`, 390, 52, 12, C.gold);
   label(modalLayer, `技能・${k.skill}`, 308, 68, 12, C.purple);
-  wrapText(modalLayer, cut(k.skillDesc, 24), 308, 83, 156, 12, C.stoneLit);
+  const skillT = wrapText(modalLayer, k.skillDesc, 308, 83, 156, 12, C.stoneLit);
+  if (skillT.height > 28) {
+    modalLayer.removeChild(skillT);
+    wrapText(modalLayer, cut(k.skillDesc, 34), 308, 83, 156, 12, C.stoneLit);
+  }
   const afs = selectedAffixes(st.affixes);
-  label(modalLayer, afs.length ? `词缀 ${afs.map((a) => a.name).join('・')}` : '满级被动', 308, 112, 12, C.gold);
-  wrapText(modalLayer, cut(afs.length ? afs.map((a) => `${a.name}：${a.desc}`).join('；') : k.passive, 24), 308, 127, 156, 12, C.stoneLit);
+  label(modalLayer, afs.length ? `词缀 ${afs.map((a) => a.name).join('・')}` : '满级被动', 308, 116, 12, C.gold);
+  const passT = wrapText(modalLayer, afs.length ? afs.map((a) => `${a.name}：${a.desc}`).join('；') : k.passive, 308, 131, 156, 12, C.stoneLit);
+  if (passT.height > 28) {
+    modalLayer.removeChild(passT);
+    wrapText(modalLayer, cut(afs.length ? afs.map((a) => `${a.name}：${a.desc}`).join('；') : k.passive, 34), 308, 131, 156, 12, C.stoneLit);
+  }
 
   // 底部：命名与确认
   label(modalLayer, '名字', 62, 202, 12, C.bone);
@@ -3316,30 +3328,38 @@ function sayChem(lines          ) {
 function drawChampTalents(g               , c       ) {
   const pend = pendingTier(c);
   label(uiLayer, `${c.name} 的专精 ${c.talents.length}/${TALENT_CAP}`, 174, 62, 12, C.gold);
+  let y = 78;
   TALENT_TIERS.forEach((tier, i) => {
-    const y = 78 + i * 34;
     const own = c.talents[i];
     const open = c.lv >= TIER_LV[i];
     const isPend = pend === i + 1;
+    let descText = '';
+    let descColor = C.wallLit;
     if (own) {
       label(uiLayer, `Lv${TIER_LV[i]} ${TALENTS[own].name}`, 174, y, 12, C.white);
-      label(uiLayer, cut(TALENTS[own].desc, 30), 174, y + 17, 11, C.steel);
+      descText = TALENTS[own].desc;
+      descColor = C.steel;
     } else if (isPend) {
       label(uiLayer, `Lv${TIER_LV[i]} 五选一`, 174, y, 12, C.purple);
       tier.forEach((id, j) => {
         button(g, uiLayer, hits, 200 + j * 48, y - 2, 46, 15, TALENTS[id].name, () => pickTalent(c, id),
           { size: 10, fill: C.purpleDark, border: C.purple, color: C.white });
       });
-      label(uiLayer, cut(tier.map((t) => `${TALENTS[t].name}：${TALENTS[t].desc}`).join('／'), 30), 174, y + 17, 11, C.stoneLit);
+      descText = tier.map((t) => `${TALENTS[t].name}：${TALENTS[t].desc}`).join('／');
+      descColor = C.stoneLit;
     } else {
       label(uiLayer, `Lv${TIER_LV[i]} ${open ? '待上一层选完' : '未开启'}`, 174, y, 12, C.stoneLit);
-      label(uiLayer, cut(tier.map((t) => `${TALENTS[t].name}：${TALENTS[t].desc}`).join('／'), 30), 174, y + 17, 11, C.wallLit);
+      descText = tier.map((t) => `${TALENTS[t].name}：${TALENTS[t].desc}`).join('／');
+      descColor = C.wallLit;
     }
+    const tw = wrapText(uiLayer, descText, 174, y + 17, 130, 11, descColor);
+    const descH = Math.min(tw.height, 24);
+    y += 17 + descH + 8;
   });
   const rc = respecCost(c);
-  button(g, uiLayer, hits, 174, 218, 116, 15, rc ? `洗点 ${rc}魔` : '无专精可洗', () => respecChamp(c),
+  button(g, uiLayer, hits, 174, Math.min(y, 214), 116, 15, rc ? `洗点 ${rc}魔` : '无专精可洗', () => respecChamp(c),
     { size: 12, enabled: rc > 0 && S.mana >= rc, border: C.purple, color: C.white });
-  label(uiLayer, `洗点单价 ${RESPEC_MANA}魔/个`, 300, 220, 12, C.stoneLit);
+  label(uiLayer, `洗点单价 ${RESPEC_MANA}魔/个`, 300, Math.min(y + 2, 216), 12, C.stoneLit);
 }
 
 // ---------- 装备页 ----------
@@ -3478,9 +3498,9 @@ function drawRecruit(g               ) {
     uiLayer.addChild(sprite(k.tex, x + 74, 150, 34));
     let ty = 152;
     for (const t of c.traits) {
-      const d = TRAITS[t].desc.length > 9 ? `${TRAITS[t].desc.slice(0, 9)}…` : TRAITS[t].desc;
-      label(uiLayer, `${TRAITS[t].name}：${d}`, x + 6, ty, 12, TRAITS[t].good ? C.steel : C.redDark);
-      ty += 22;
+      const text = `${TRAITS[t].name}：${TRAITS[t].desc}`;
+      const tw = wrapText(uiLayer, text, x + 6, ty, 136, 11, TRAITS[t].good ? C.steel : C.redDark);
+      ty += Math.min(tw.height, 26) + 4;
     }
     label(uiLayer, AURAS[k.aura ?? 'atk'].short, x + 6, 196, 12, C.gold);
     button(g, uiLayer, hits, x + 6, 210, 136, 15, `征召 ${cost}骨`, () => recruitChamp(c),
