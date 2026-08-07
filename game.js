@@ -294,6 +294,7 @@ let heroTab                       = 'roster';
 let heroView                             = 'stat';   // 名册右侧详情的三个视图
 let champTitlePage                       = 0;          // 称号列表分页
 let gearSlotSel           = 'crown';                 // 装备页当前编辑的槽
+let monDetailMode = false;                             // 已招募魔物卡片默认/详情切换
 let reportIdx = 0;
 let battle                = null;
 let speed = 1;
@@ -2143,21 +2144,26 @@ function drawSidePanel(g               ) {
     const inst = instById(sel.uid);
     if (!inst) { sel = null; return; }
     const k = instKind(inst);
+    if (monDetailMode) {
+      drawMonInstDetail(g, inst, k);
+    } else {
+      drawMonInstCard(g, inst, k);
+    }
+    return;
+  }
+
+  function drawMonInstCard(g, inst, k) {
     labelC(uiLayer, cut(`${k.name} Lv${inst.lv}`, 11), 405, 46, 12, C.white);
-    const s = sprite(k.tex, 405, 96, 36);
-    uiLayer.addChild(s);
+    uiLayer.addChild(sprite(k.tex, 405, 96, 36));
     const mult = LEVEL_MULT[inst.lv - 1];
     label(uiLayer, `生命 ${Math.round(k.hp * mult)}  攻击 ${Math.round(k.atk * mult)}`, 340, 100, 12, C.bone);
     label(uiLayer, `防御 ${Math.round(k.def * mult)}  速度 ${k.spd.toFixed(1)}`, 340, 114, 12, C.bone);
     const at = roomOf(inst.uid);
     label(uiLayer, at < 0 ? '驻守：空闲' : `驻守：${at + 1}房`, 340, 128, 12, at < 0 ? C.stoneLit : C.gold);
     label(uiLayer, `技能 ${k.skill}`, 340, 142, 12, C.purple);
-    wrapText(uiLayer, cut(k.skillDesc, 20), 340, 161, 130, 12, C.stoneLit);
-    const instAfs = selectedAffixes(k.affixes);
-    if (instAfs.length) label(uiLayer, `词缀 ${instAfs.map((a) => a.name).join('・')}`, 340, 176, 12, C.gold);
+    wrapText(uiLayer, cut(k.skillDesc, 24), 340, 161, 130, 12, C.stoneLit);
     if (inst.lv < 5) {
       const need = XP_PER_LEVEL[inst.lv - 1];
-      // 经验行与升级按钮之间只有 18px：文字包围盒高 16，行 y 必须 ≤192 才不压到按钮标签
       bar(uiGfx, 340, 186, 130, 6, inst.xp / need, C.green);
       label(uiLayer, `经验 ${inst.xp}/${need}`, 340, 192, 12, C.bone);
       const cost = UPGRADE_COST[inst.lv - 1];
@@ -2166,18 +2172,51 @@ function drawSidePanel(g               ) {
         inst.xp -= need; inst.lv++; S.bone -= cost; playSfx('buy'); persist(); say(`${k.name} 升到 Lv${inst.lv}`); render();
       }, { size: 12, enabled: can, fill: C.greenDark, border: C.green, color: C.white });
     } else {
-      label(uiLayer, instAfs.length ? `被动 ${k.passive}` : `满级被动：${k.passive}`, 340, 190, 12, C.gold);
+      label(uiLayer, '已达满级', 340, 192, 12, C.gold);
     }
+    button(g, uiLayer, hits, 340, 224, 62, 16, '详情', () => { monDetailMode = true; playSfx('tab'); render(); },
+      { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
     const gcount = (inst.graft ?? []).length;
     if (isCustomKind(inst.kind)) {
-      button(g, uiLayer, hits, 340, 224, 42, 16, '重组', () => openStitch(inst.uid), { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
-      button(g, uiLayer, hits, 386, 224, 46, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
-      button(g, uiLayer, hits, 436, 224, 34, 16, '拆', () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
+      button(g, uiLayer, hits, 406, 224, 46, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
+      button(g, uiLayer, hits, 456, 224, 34, 16, '拆', () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
     } else {
-      button(g, uiLayer, hits, 340, 224, 62, 16, gcount ? `改造 ${gcount}/${GRAFT_CAP}` : '改造', () => openGraft(inst.uid), { size: 12, fill: C.purpleDark, border: gcount ? C.gold : C.purple, color: C.white });
-      button(g, uiLayer, hits, 406, 224, 64, 16, `遣散+${Math.round(k.cost * 0.5)}`, () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
+      button(g, uiLayer, hits, 406, 224, 84, 16, `遣散+${Math.round(k.cost * 0.5)}`, () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
     }
-    return;
+  }
+
+  function drawMonInstDetail(g, inst, k) {
+    labelC(uiLayer, cut(`${k.name} Lv${inst.lv}`, 11), 405, 46, 12, C.white);
+    uiLayer.addChild(sprite(k.tex, 405, 78, 32));
+    const mult = LEVEL_MULT[inst.lv - 1];
+    label(uiLayer, `生命 ${Math.round(k.hp * mult)}  攻击 ${Math.round(k.atk * mult)}`, 340, 66, 12, C.bone);
+    label(uiLayer, `防御 ${Math.round(k.def * mult)}  速度 ${k.spd.toFixed(1)}`, 340, 80, 12, C.bone);
+    const at = roomOf(inst.uid);
+    label(uiLayer, at < 0 ? '驻守：空闲' : `驻守：${at + 1}房`, 340, 94, 12, at < 0 ? C.stoneLit : C.gold);
+    label(uiLayer, `技能 ${k.skill}`, 340, 108, 12, C.purple);
+    wrapText(uiLayer, k.skillDesc, 340, 122, 130, 11, C.stoneLit);
+    const instAfs = selectedAffixes(k.affixes);
+    let dy = 156;
+    if (instAfs.length) {
+      label(uiLayer, '词缀', 340, dy, 12, C.gold); dy += 14;
+      for (const a of instAfs) {
+        wrapText(uiLayer, `${a.name}：${cut(a.desc, 26)}`, 340, dy, 130, 11, C.bone);
+        dy += 13;
+      }
+    }
+    label(uiLayer, `被动：${inst.lv < 5 ? 'Lv5 解锁' : k.passive}`, 340, dy, 12, C.gold);
+    if (inst.lv >= 5) {
+      wrapText(uiLayer, cut(k.passiveDesc ?? k.passive, 30), 340, dy + 14, 130, 11, C.stoneLit);
+    }
+    const gcount = (inst.graft ?? []).length;
+    button(g, uiLayer, hits, 340, 224, 80, 16, '返回', () => { monDetailMode = false; playSfx('tab'); render(); },
+      { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
+    if (isCustomKind(inst.kind)) {
+      button(g, uiLayer, hits, 424, 224, 42, 16, '重组', () => openStitch(inst.uid), { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
+      button(g, uiLayer, hits, 470, 224, 34, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
+    } else {
+      button(g, uiLayer, hits, 424, 224, 80, 16, `遣散+${Math.round(k.cost * 0.5)}`, () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
+    }
   }
   if (sel.kind === 'monkind') {
     const k = monKind(sel.id);
