@@ -479,6 +479,7 @@ function bindInput() {
     const sy = (e.clientY - rect.top) * (app.screen.height / rect.height);
     const x = (sx - root.x) / viewScale;
     const y = (sy - root.y) / viewScale;
+    console.log('game pointerdown', e.clientX, e.clientY, '=>', x, y, 'hits', hits.list.length);
     hits.test(x, y);
   });
   window.addEventListener('keydown', (e) => {
@@ -3087,12 +3088,49 @@ function drawChampTitleList(g, c, x, y, w, h) {
   }
   const headerH = 16;
   const normalRowH = 16;
-  const activeRowH = 44; // button 14 + capped text ~26 + spacing 4
   const pgH = 14;
-  // Reserve vertical budget for one expanded active row per page so pagination never leaves the panel.
-  const pageSize = Math.max(1, Math.floor((h - headerH - activeRowH - pgH) / normalRowH) + 1);
-  const maxPage = Math.max(0, Math.ceil(unlocked.length / pageSize) - 1);
+  const activeId = c.activeTitle;
+  const activeIdx = activeId ? unlocked.indexOf(activeId) : -1;
+
+  // Measure the active title's real expanded height (if unlocked) so pageSize is based on
+  // the actual vertical budget instead of a fixed 44 px estimate.
+  let activeH = 0;
+  if (activeIdx >= 0) {
+    const t = titleById(activeId);
+    const tmp = new PIXI.Text({
+      text: cut(`${t.desc}｜${titleEffectText(t)}`, 28),
+      style: { fontFamily: FONT, fontSize: 10, fill: C.bone, lineHeight: 13, wordWrap: true, wordWrapWidth: w - 8, breakWords: true }
+    });
+    activeH = 14 + Math.min(tmp.height, 26) + 4;
+    tmp.destroy();
+  }
+
+  // Does a page of `size` titles on `pageIdx` fit inside the available height?
+  function pageFits(size, pageIdx) {
+    const start = pageIdx * size;
+    const page = unlocked.slice(start, start + size);
+    const hasActive = activeIdx >= start && activeIdx < start + size;
+    const needPg = Math.ceil(unlocked.length / size) > 1 ? pgH : 0;
+    const used = headerH + (page.length - (hasActive ? 1 : 0)) * normalRowH + (hasActive ? activeH : 0) + needPg;
+    return used <= h;
+  }
+
+  // Start with the maximum number of plain rows that fit, then shrink if the active
+  // title on the current page needs the extra expanded height.
+  let pageSize = Math.max(1, Math.floor((h - headerH - pgH) / normalRowH));
+  let maxPage = Math.max(0, Math.ceil(unlocked.length / pageSize) - 1);
   champTitlePage = Math.min(champTitlePage, maxPage);
+
+  while (pageSize > 1 && !pageFits(pageSize, champTitlePage)) {
+    pageSize--;
+    maxPage = Math.max(0, Math.ceil(unlocked.length / pageSize) - 1);
+    champTitlePage = Math.min(champTitlePage, maxPage);
+  }
+
+  // If even a single-title page with the expanded active title does not fit,
+  // render the active title as a normal row so the panel never overflows.
+  const activeFitsExpanded = pageFits(pageSize, champTitlePage);
+
   const start = champTitlePage * pageSize;
   const page = unlocked.slice(start, start + pageSize);
   let ty = y + headerH;
@@ -3102,7 +3140,7 @@ function drawChampTitleList(g, c, x, y, w, h) {
     button(g, uiLayer, hits, x, ty, w, 14, cut(t.name, 8), () => {
       c.activeTitle = id; playSfx('tab'); persist(); render();
     }, { size: 10, fill: active ? C.goldDark : C.ink, border: active ? C.gold : C.stoneLit, color: active ? C.white : C.steel });
-    if (active) {
+    if (active && activeFitsExpanded) {
       const tw = wrapText(uiLayer, cut(`${t.desc}｜${titleEffectText(t)}`, 28), x + 4, ty + 14, w - 8, 10, C.bone);
       ty += 14 + Math.min(tw.height, 26) + 4;
     } else {
@@ -3152,9 +3190,9 @@ function drawChampInfo(g, c) {
   const mechs = effDetailText(st.eff);
   let my = 96;
   if (mechs.length) {
-    for (const txt of mechs.slice(0, 6)) {
+    for (const txt of mechs.slice(0, 4)) {
       wrapText(uiLayer, cut(txt, 22), 320, my, 140, 11, C.steel);
-      my += 13;
+      my += 12;
     }
   } else {
     label(uiLayer, '无特殊机制', 320, my, 12, C.stoneLit); my += 14;
