@@ -23,7 +23,7 @@ export const GEAR_SLOTS                                   = [
 
 // MonEff 的合并规则：数值类相加、乘数类相乘、开关类取或。
 // 单列一份是因为"装备叠词缀"会走两次合并，两边规则必须完全一致，否则同一条铭文在不同来源下强度不同。
-const EFF_MULT = new Set(['rageAura', 'bulwarkAura', 'skillCdMult', 'dmgTakenMult']);
+const EFF_MULT = new Set(['rageAura', 'bulwarkAura', 'skillCdMult', 'dmgTakenMult', 'skillDmg', 'dmgToHero']);
 const EFF_FLAG = new Set(['frenzy', 'reach', 'anchorHold', 'reviveAlly', 'grip']);
 export function mergeEff(dst                 , src                             ) {
   if (!src) return dst;
@@ -120,7 +120,7 @@ export const forgedKinds = () => FORGED.slice();
 export const gearById = (id        )                       =>
   GEARS.find((g) => g.id === id) ?? FORGED.find((g) => g.id === id);
 export const GEAR_CAP = 12;            // 仓库上限，满了掉落会被顶掉（提示玩家熔掉）
-export const MELT_MANA = [4, 7, 12];   // 熔掉一件返还的魔质，按档
+export const MELT_MANA = [4, 7, 12, 18];   // 熔掉一件返还的魔质，按档（白/蓝/金/红）
 export const REFORGE_MANA = 20;        // 重铸：把一件装备换成同槽同档的另一件
 
 // 掉落：本场击倒数与被击倒的最高勇者等级决定件数与档次。
@@ -175,6 +175,7 @@ export function gearSet(eq                      )                               
   if (!eq) return null;
   const gs = GEAR_SLOTS.map((s) => gearById(eq[s.id] ?? '')).filter(Boolean)              ;
   if (gs.length < 3) return null;
+  if (gs.every((g) => g.rank === 3)) return { name: '传说三件', desc: '生命 +18%、光环 +20%', hp: 1.18, aura: 1.2 };
   if (gs.every((g) => g.rank === 2)) return { name: '王者三件', desc: '生命 +12%、光环 +15%', hp: 1.12, aura: 1.15 };
   if (gs.every((g) => g.rank === gs[0].rank)) return { name: '成套装束', desc: '生命 +5%', hp: 1.05, aura: 1 };
   return null;
@@ -193,8 +194,10 @@ export function gearSet(eq                      )                               
                                         
   
 
-// 每槽 4 种胚体：1 条铭文的便宜款 / 2 条铭文的贵款，各两种数值取向
-export const FRAMES              = [
+// 每槽 4 种基础胚体：1 条铭文的便宜款 / 2 条铭文的贵款，各两种数值取向。
+// 每种胚体再细分为 4 个品质档：基础（白）、稀有（紫）、史诗（金）、传说（红）。
+// 每高一档造价 *3，基础数值 +50%，铭文位 +1。
+const BASE_FRAMES              = [
   { id: 'fr-crown-iron', name: '铁盔胚', slot: 'crown', tex: 'gear-helm', bone: 40, mana: 10, slots: 1,
     desc: '防御 +3', mod: { def: 3 } },
   { id: 'fr-crown-bone', name: '骨冠胚', slot: 'crown', tex: 'gear-mask', bone: 55, mana: 14, slots: 1,
@@ -220,6 +223,44 @@ export const FRAMES              = [
   { id: 'fr-hand-staff', name: '法杖胚', slot: 'hand', tex: 'gear-lantern', bone: 92, mana: 34, slots: 2,
     desc: '攻击 +12%，技能冷却 -10%', mod: { atk: 1.12, cd: 0.9 } },
 ];
+
+function scaleFrameMod(mod        , q        )         {
+  if (q === 0) return mod;
+  const mult = 1 + 0.5 * q;
+  const out = {};
+  for (const [k, v] of Object.entries(mod)) {
+    if (k === 'eff' && v) {
+      const eff = {};
+      for (const [ek, ev] of Object.entries(v)) {
+        eff[ek] = typeof ev === 'number' ? ev * mult : ev;
+      }
+      out.eff = eff;
+    } else if (typeof v === 'number') {
+      out[k] = k === 'def' ? v * mult : 1 + (v - 1) * mult;
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+export const FRAMES = [];
+for (const fr of BASE_FRAMES) {
+  for (let q = 0; q < 4; q++) {
+    const costMult = 3 ** q;
+    const suffix = q === 0 ? '' : q === 1 ? '・稀' : q === 2 ? '・史' : '・传';
+    FRAMES.push({
+      ...fr,
+      id: q === 0 ? fr.id : `${fr.id}-q${q}`,
+      name: fr.name + suffix,
+      bone: Math.round(fr.bone * costMult),
+      mana: Math.round(fr.mana * costMult),
+      slots: fr.slots + q,
+      mod: scaleFrameMod(fr.mod, q),
+      rank: q,
+    });
+  }
+}
 export const frameById = (id        ) => FRAMES.find((f) => f.id === id);
 
 // 铭文：装备的"词缀"。slots 限制了同一件上能刻几条；每条有骨/魔成本与适用槽位。
@@ -256,6 +297,17 @@ export const RUNES             = [
   { id: 'rn-bone', name: '积', word: '积', bone: 26, mana: 10, slots: 'any', desc: '战后存活额外产 6 骨币', tag: '产骨6', mod: { eff: { boneEcho: 6 } } },
   { id: 'rn-xp', name: '悟', word: '悟', bone: 28, mana: 10, slots: 'any', desc: '战后经验 +22%', tag: '经验+22%', mod: { xp: 1.22 } },
   { id: 'rn-ward', name: '护', word: '护', bone: 42, mana: 20, slots: ['body', 'crown'], desc: '倒下不留伤', tag: '免留伤', mod: { woundGuard: true } },
+  // 新增铭文（扩展机制池）
+  { id: 'rn-crit', name: '暴', word: '暴', bone: 42, mana: 18, slots: ['hand'], desc: '普攻 30% 暴击', tag: '暴击30%', mod: { eff: { cunning: 0.3 } } },
+  { id: 'rn-sunder', name: '破', word: '破', bone: 36, mana: 14, slots: ['hand'], desc: '普攻破防 3', tag: '破防3', mod: { eff: { onHit: 'sunder' } } },
+  { id: 'rn-stun', name: '晕', word: '晕', bone: 40, mana: 16, slots: ['hand'], desc: '普攻 15% 眩晕', tag: '眩晕15%', mod: { eff: { stunHit: 0.15 } } },
+  { id: 'rn-skill', name: '咒', word: '咒', bone: 38, mana: 16, slots: ['hand', 'crown'], desc: '技能伤害 +15%', tag: '技伤+15%', mod: { eff: { skillDmg: 1.15 } } },
+  { id: 'rn-hero', name: '戮', word: '戮', bone: 40, mana: 16, slots: 'any', desc: '对勇者伤害 +12%', tag: '对勇+12%', mod: { eff: { dmgToHero: 1.12 } } },
+  { id: 'rn-blood', name: '噬', word: '噬', bone: 42, mana: 18, slots: ['hand', 'body'], desc: '击杀回血 10%', tag: '杀回10%', mod: { eff: { bloodthirsty: 0.1 } } },
+  { id: 'rn-death', name: '亡', word: '亡', bone: 46, mana: 20, slots: ['body'], desc: '倒下时全场勇者受 8 伤害', tag: '亡语8', mod: { eff: { deathBurst: 8 } } },
+  { id: 'rn-venge', name: '怨', word: '怨', bone: 44, mana: 20, slots: ['body'], desc: '倒下反弹 40% 攻击伤害', tag: '倒反40%', mod: { eff: { vengeful: 0.4 } } },
+  { id: 'rn-undying', name: '存', word: '存', bone: 50, mana: 24, slots: ['body'], desc: '首次倒下以 25% 生命复活', tag: '不灭25%', mod: { eff: { undyingTrait: 0.25 } } },
+  { id: 'rn-divine', name: '祈', word: '祈', bone: 48, mana: 22, slots: ['body', 'crown'], desc: '致死伤害 15% 概率保留 1 点生命', tag: '神恩15%', mod: { eff: { divineFavor: 0.15 } } },
 ];
 export const runeById = (id        ) => RUNES.find((r) => r.id === id);
 export const runesFor = (slot          ) => RUNES.filter((r) => r.slots === 'any' || r.slots.includes(slot));
@@ -269,6 +321,17 @@ export const TEMPERS               = [
   { id: 'tp-wind', name: '风淬', mana: 18, desc: '攻速 +12%，防御 -2', mod: { spd: 1.12, def: -2 } },
   { id: 'tp-soul', name: '魂淬', mana: 22, desc: '光环 +16%，疲劳 +14%', mod: { aura: 1.16, fatigue: 1.14 } },
   { id: 'tp-still', name: '静淬', mana: 20, desc: '疲劳 -16%，攻击 -6%', mod: { fatigue: 0.84, atk: 0.94 } },
+  // 新增淬火（扩展偏向池）
+  { id: 'tp-radiant', name: '辉淬', mana: 22, desc: '光环 +14%，受伤 +6%', mod: { aura: 1.14, dmgTaken: 1.06 } },
+  { id: 'tp-tenacity', name: '韧淬', mana: 18, desc: '生命 +12%，攻速 -5%', mod: { hp: 1.12, spd: 0.95 } },
+  { id: 'tp-sharp', name: '锐淬', mana: 20, desc: '攻击 +12%，防御 -3', mod: { atk: 1.12, def: -3 } },
+  { id: 'tp-chill', name: '寒淬', mana: 20, desc: '普攻减速 10%，攻击 -5%', mod: { atk: 0.95, eff: { chillHit: 0.1 } } },
+  { id: 'tp-blaze', name: '烈淬', mana: 20, desc: '普攻点燃 3，生命 -8%', mod: { hp: 0.92, eff: { burnHit: 3 } } },
+  { id: 'tp-corrode', name: '蚀淬', mana: 22, desc: '普攻叠易伤 5%，防御 -2', mod: { def: -2, eff: { markHit: 0.05 } } },
+  { id: 'tp-vamp', name: '噬淬', mana: 24, desc: '普攻吸血 10%，受伤 +8%', mod: { dmgTaken: 1.08, eff: { lifestealPct: 0.1 } } },
+  { id: 'tp-steady', name: '稳淬', mana: 20, desc: '技能冷却 -12%，攻速 -6%', mod: { cd: 0.88, spd: 0.94 } },
+  { id: 'tp-contest', name: '争淬', mana: 22, desc: '对勇者伤害 +10%，生命 -6%', mod: { hp: 0.94, eff: { dmgToHero: 1.1 } } },
+  { id: 'tp-focus', name: '聚淬', mana: 20, desc: '技能伤害 +12%，攻击 -5%', mod: { atk: 0.95, eff: { skillDmg: 1.12 } } },
 ];
 export const temperById = (id        ) => TEMPERS.find((t) => t.id === id);
 
@@ -300,9 +363,8 @@ export function craftKind(plan           , id = 'craft-preview')                
     mergeEff(eff, m.eff);
   }
   if (Object.keys(eff).length) mod.eff = eff;
-  // 档次由投入决定（看总成本），只影响熔化返还与套装判定，不额外加数值
-  const c = craftCost(plan);
-  const rank            = c.bone + c.mana * 3 >= 210 ? 2 : c.bone + c.mana * 3 >= 130 ? 1 : 0;
+  // 档次由胚体品质决定，只影响熔化返还与套装判定，不额外加数值
+  const rank = fr.rank;
   const parts = [...runes.map((r) => r.desc), tp.id === 'tp-none' ? '' : tp.desc].filter(Boolean);
   return {
     id, name: plan.name || craftName(plan), slot: fr.slot, tex: fr.tex, rank,

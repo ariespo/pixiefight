@@ -1042,7 +1042,7 @@ function drawSmith() {
   panelF(g, modalLayer, 'inset', 296, 54, 164, 138, C.ink);
   modalLayer.addChild(sprite(k.tex, 318, 88, 24));
   label(modalLayer, cut(k.name, 5), 338, 62, 12, RANK_COL[k.rank]);
-  label(modalLayer, ['白', '蓝', '金'][k.rank] + '档', 338, 80, 12, RANK_COL[k.rank]);
+  label(modalLayer, ['白', '蓝', '金', '红'][k.rank] + '档', 338, 80, 12, RANK_COL[k.rank]);
   const m = k.mod;
   const rows           = [];
   if ((m.hp ?? 1) !== 1) rows.push(`生命 ${pct(m.hp )}`);
@@ -1094,7 +1094,7 @@ function drawSmithFrames(g               ) {
     const x = 24 + (i % 2) * 132;
     const y = 80 + Math.floor(i / 2) * 17;
     const on = sm.plan.frame === f.id;
-    g.rect(x, y, 130, 16).fill(on ? C.wallLit : C.wall).stroke({ width: 1, color: on ? C.gold : C.ink, alignment: 0 });
+    g.rect(x, y, 130, 16).fill(on ? C.wallLit : C.wall).stroke({ width: 1, color: on ? C.gold : RANK_COL[f.rank], alignment: 0 });
     label(modalLayer, cut(f.name, 3), x + 3, y + 1, 12, on ? C.white : C.bone);
     label(modalLayer, GEAR_SLOTS.find((s2) => s2.id === f.slot) .name, x + 42, y + 1, 12, C.steel);
     label(modalLayer, `${f.slots}文`, x + 56, y + 1, 12, C.purple);
@@ -3364,7 +3364,7 @@ function drawChampGear(g               , c       ) {
   }
   pager(g, `vault-${gearSlotSel}`, pv.pages, 332, 214, 140);
 }
-const RANK_COL = [C.bone, C.steel, C.gold]         ;
+const RANK_COL = [C.bone, C.steel, C.gold, C.red];
 
 function equipGear(c       , vaultIdx        ) {
   const id = S.vault[vaultIdx];
