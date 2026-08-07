@@ -2,7 +2,7 @@ import * as PIXI from 'pixi.js';
 import { C, VIEW_W, VIEW_H, MONSTERS, HERO_CLASSES, THEMES, TRAPS, RAIDS, AFFIXES, AURAS, LEVEL_MULT, UPGRADE_COST, XP_PER_LEVEL, TEXTURES, HERO_LV_MULT, SYNERGY, synergyOf, kindById, registerKinds, unregisterKind, isCustomKind, isEliteKind } from './data.js';
 import { GEARS, GEAR_SLOTS, GEAR_CAP, MELT_MANA, REFORGE_MANA, FRAMES, RUNES, TEMPERS, FORGED_CAP, craftCost, craftKind, craftName, frameById, runeById, runesFor, temperById, planValid, registerForged, gearById, gearEff, gearSet,                                                               } from './gear.js';
                                                                                         
-import { createBattle, stepBattle, ROOM_W, affixText } from './battle.js';
+import { createBattle, stepBattle, ROOM_W, affixText, interval } from './battle.js';
                                                                       
 import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, AFFIX_BUDGET, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, clampAffixDraft, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
                                                                                                                           
@@ -3959,8 +3959,10 @@ function updateBattleVisuals(dt        ) {
     if (!s) return;
     const wx = u.room * ROOM_W + u.x;
     const lunge = u.lungeT > 0 ? Math.round(Math.sin((1 - u.lungeT / 0.22) * Math.PI) * 4) : 0;
+    const actBob = u.lungeT > 0 ? Math.round(Math.sin((1 - u.lungeT / 0.22) * Math.PI) * 3) : 0;
     const dir = u.side === 'hero' ? 1 : -1;
-    const bobY = u.alive ? Math.round(Math.sin(b.time * 6 + u.homeX) * 1) : 0;
+    const idleBob = u.alive ? Math.round(Math.sin(b.time * 6 + u.homeX) * 1) : 0;
+    const bobY = idleBob - actBob;
     s.x = Math.round(wx + lunge * dir);
     s.y = Math.round(FLOOR_Y + u.y + bobY);
     s.visible = u.alive || u.deadT < 1.2;
@@ -3971,13 +3973,27 @@ function updateBattleVisuals(dt        ) {
     } else {
       s.alpha = 1;
       s.rotation = 0;
-      s.tint = u.flashT > 0 ? 0xffffff : 0xffffff;
-      if (u.flashT > 0) s.tint = C.white;
-      if (u.poisonT > 0) s.tint = 0xbfe08a;
+      if (u.flashT > 0) s.tint = C.red;
+      else if (u.burnT > 0) s.tint = 0xff8844;
+      else if (u.poisonT > 0) s.tint = 0x77b255;
+      else if (u.stunT > 0 || u.charmT > 0 || u.silenced) s.tint = 0x9b5de5;
       else if (u.slowT > 0) s.tint = 0xa8d0ff;
       else s.tint = 0xffffff;
     }
     if (!u.alive) return;
+    // 状态图标：减速/束缚/魅惑/沉默
+    const iconY = FLOOR_Y + u.y - 40;
+    if (u.slowT > 0) {
+      battleGfx.circle(wx - 4, iconY, 2).fill(C.blue);
+      battleGfx.circle(wx - 6, iconY - 2, 1.5).fill(C.blue);
+    }
+    if (u.stunT > 0) {
+      battleGfx.circle(wx + 4, iconY, 2).fill(C.purple);
+      battleGfx.rect(wx + 2, iconY - 3, 4, 1).fill(C.purple);
+    }
+    if (u.charmT > 0 || u.silenced) {
+      battleGfx.circle(wx, iconY - 5, 2).fill(C.purple);
+    }
     // 统领脚下的光环圈：兵种"在谁的加持下"必须一眼可见
     if (u.legend) {
       const pulse = 0.5 + 0.5 * Math.sin(b.time * 3);
@@ -4048,6 +4064,46 @@ function updateBattleVisuals(dt        ) {
   drawBattleHud();
 }
 
+function drawBattleTimeline(b        , g               , parent                ) {
+  if (b.phase !== 'fight') return;
+  const units = [];
+  for (const h of b.heroes) {
+    if (h.alive && h.room === b.roomIndex && h.stunT <= 0 && h.disarmT <= 0) units.push({ u: h, side: 'hero' });
+  }
+  for (const m of b.rooms[b.roomIndex].mons) {
+    if (m.alive && m.stunT <= 0) units.push({ u: m, side: 'mon' });
+  }
+  units.sort((a, z) => a.u.cd - z.u.cd);
+  const max = Math.min(units.length, 8);
+  if (!max) return;
+  const slotW = 26;
+  const startX = VIEW_W - 8 - max * slotW;
+  const y = 198;
+  g.rect(startX - 4, y - 2, max * slotW + 6, 28).fill({ color: C.ink, alpha: 0.75 }).stroke({ width: 1, color: C.wallLit, alignment: 0 });
+  label(parent, '行动顺序', startX - 4, y - 13, 10, C.stoneLit);
+  for (let i = 0; i < max; i++) {
+    const item = units[i];
+    const u = item.u;
+    const x = startX + (max - 1 - i) * slotW;
+    const col = item.side === 'hero' ? C.red : C.green;
+    const isNext = i === 0;
+    g.rect(x, y, 22, 22).fill(C.wall).stroke({ width: isNext ? 2 : 1, color: isNext ? C.gold : col, alignment: 0 });
+    const icon = txt(u.name[0] ?? '?', 10, isNext ? C.gold : C.bone);
+    icon.x = Math.round(x + 11 - icon.width / 2);
+    icon.y = Math.round(y + 4);
+    parent.addChild(icon);
+    // cd 条
+    const intervalVal = interval(u, b);
+    const cdP = Math.max(0, Math.min(1, 1 - u.cd / intervalVal));
+    g.rect(x + 2, y + 18, 18, 2).fill(C.ink);
+    if (cdP > 0) g.rect(x + 2, y + 18, Math.round(18 * cdP), 2).fill(col);
+    // 状态小点
+    if (u.slowT > 0) g.circle(x + 18, y + 5, 2).fill(C.blue);
+    if (u.stunT > 0 || u.charmT > 0 || u.silenced) g.circle(x + 18, y + 10, 2).fill(C.purple);
+    if (u.poisonT > 0 || u.burnT > 0) g.circle(x + 18, y + 15, 2).fill(C.green);
+  }
+}
+
 function drawBattleHud() {
   const b = battle ;
   const interactive = screen === 'battle';
@@ -4077,6 +4133,8 @@ function drawBattleHud() {
     button(hudGfx, hudLayer, hits, 384, 2, 42, 18, paused ? '继续' : '暂停', () => { paused = !paused; }, { size: 12 });
     button(hudGfx, hudLayer, hits, 430, 2, 42, 18, `${speed}×`, () => { speed = speed === 1 ? 2 : 1; }, { size: 12 });
   }
+  // 行动时间轴：本房所有可行动单位按 cd 排序，右到左为行动先后
+  drawBattleTimeline(b, hudGfx, hudLayer);
   // 最近日志两行（底部压暗条保证可读）
   const logs = b.log.slice(-2);
   if (logs.length) hudGfx.rect(0, 230, VIEW_W, 40).fill({ color: C.ink, alpha: 0.85 });

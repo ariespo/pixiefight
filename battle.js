@@ -304,6 +304,47 @@ function log(b        , text        , tone                 ) {
   b.log.push({ room: b.roomIndex, t: b.time, text, tone });
 }
 
+function impactText(dmg        , tgt      )          {
+  const ratio = dmg / Math.max(1, tgt.maxHp);
+  if (ratio >= 0.55) return '造成了毁灭性伤害';
+  if (ratio >= 0.3) return '造成了重创';
+  if (ratio >= 0.12) return '造成了可观伤害';
+  if (ratio >= 0.04) return '只是轻伤';
+  return '几乎没造成伤害';
+}
+
+function reactionText(tgt      , rng           )          {
+  const r = tgt.hp / Math.max(1, tgt.maxHp);
+  const hero = tgt.side === 'hero';
+  const pools = hero ? {
+    high: ['哈哈，根本不痛', '就这点本事？', '软弱无力'],
+    mid: ['可恶…', '还能撑住', '小伤而已'],
+    low: ['呃啊！', '好痛…', '该死…'],
+    crit: ['难道我就会在这里…', '不、不可能…', '还没…结束…'],
+  } : {
+    high: ['哼，软弱', '再来啊', '不够看'],
+    mid: ['嘶…有点意思', '不过如此', '有点疼'],
+    low: ['吼！', '该死…', '你会后悔的'],
+    crit: ['不…我的地牢…', '我…倒下…', '不可能…'],
+  };
+  const pool = r > 0.7 ? pools.high : r > 0.4 ? pools.mid : r > 0.15 ? pools.low : pools.crit;
+  return pool[Math.floor(rng() * pool.length)];
+}
+
+function logHit(b        , src      , tgt      , dmg        , action        , heavy         , rng           ) {
+  if (!tgt.alive) return;
+  const tone = src.side === 'mon' ? 'good' : 'bad';
+  if (dmg <= 0) {
+    log(b, `${tgt.name}闪避了${src.name}的${action}`, tone);
+    return;
+  }
+  const imp = impactText(dmg, tgt);
+  log(b, `${src.name}对${tgt.name}${action}，造成${dmg}点伤害（${imp}）`, tone);
+  if (dmg / Math.max(1, tgt.maxHp) >= 0.05 || tgt.hp / Math.max(1, tgt.maxHp) < 0.35) {
+    log(b, `　${tgt.name}：${reactionText(tgt, rng ?? b.rng)}`, tone);
+  }
+}
+
 function enterRoom(b        ) {
   const room = b.rooms[b.roomIndex];
   b.heroes.forEach((h) => {
@@ -412,7 +453,7 @@ const aliveHeroes = (b        ) => b.heroes.filter((h) => h.alive);
 // 镜厅：勇者一侧的"法术类"输出与治疗被削弱（普攻不受影响，否则等于全局减伤）
 const mirrorMult = (b        ) => (b.rooms[b.roomIndex]?.theme === 'mirror' ? 0.8 : 1);
 
-function interval(u      , b         ) {
+export function interval(u      , b         ) {
   const slow = u.slowT > 0 ? 1 - u.slowAmt : 1;
   const aura = b && auraOf(b, u) === 'haste' ? 1 + 0.2 * auraPow(b, u.room) : 1;
   const rally = u.rallyT > 0 ? 1.35 : 1;
@@ -854,16 +895,23 @@ function basicAttack(b        , u      ) {
   if (u.champUid) u.__battleAttacks++;
   const mult = u.side === 'hero' ? b.moraleMult * u.atkCut : atkMult(b, u);
   if (u.side === 'hero') barbBite(b, u);
-  if (u.side !== 'mon' || !u.eff) { damage(b, u, tgt, u.atk * mult, false); return; }
+  if (u.side !== 'mon' || !u.eff) {
+    const before = tgt.hp + tgt.shield;
+    damage(b, u, tgt, u.atk * mult, false);
+    logHit(b, u, tgt, before - (tgt.hp + tgt.shield), '发动攻击', false, b.rng);
+    return;
+  }
   const eff = u.eff;
   const pierce = eff.onHit === 'pierceDef' ? 0.25 : 0;
   let raw = u.atk;
   let heavy = false;
+  let action = '发动攻击';
   if (eff.onHit === 'charge' && !u.charged) {
     u.charged = true;
     raw *= 1.6;
     heavy = true;
     tgt.stunT = Math.max(tgt.stunT, 0.6);
+    action = '蓄力撞击';
     log(b, `${u.name}的蓄力撞击命中${tgt.name}`, 'good');
   }
   // 狡猾：普攻有概率造成 1.5 倍伤害
@@ -875,7 +923,9 @@ function basicAttack(b        , u      ) {
   if (eff.execute && tgt.side === 'hero' && tgt.hp < tgt.maxHp * eff.execute) { raw *= 2; heavy = true; }
   const before = tgt.hp + tgt.shield;
   damage(b, u, tgt, raw * mult, heavy, pierce);
-  onHitEffect(b, u, tgt, before - (tgt.hp + tgt.shield));
+  const dealt = before - (tgt.hp + tgt.shield);
+  if (dealt > 0) logHit(b, u, tgt, dealt, action, heavy, b.rng);
+  onHitEffect(b, u, tgt, dealt);
 }
 
 function monSkill(b        , u      ) {
@@ -885,6 +935,7 @@ function monSkill(b        , u      ) {
   b.events.push({ k: 'cast', room: b.roomIndex, x: u.x, y: u.y, color: 0x9b5de5 });
   const eff = u.eff;
   const name = eff?.skillName ?? '技能';
+  const action = `使用${name}`;
   // 淬毒词缀：给"这次技能实际打到的人"上毒，靠打前/打后血量差判定，不必逐技能改写
   const venom = eff?.venomSkill ?? 0;
   const before = venom ? b.heroes.map((h) => h.hp + h.shield) : null;
@@ -897,20 +948,38 @@ function monSkill(b        , u      ) {
     }
     case 'multi': {
       const t = monTarget(b, u);
-      if (t) { damage(b, u, t, u.atk * 0.75 * boost, false); damage(b, u, t, u.atk * 0.75 * boost, false); log(b, `${name}：${u.name}连击${t.name}`, 'good'); }
+      if (t) {
+        for (let i = 0; i < 2; i++) {
+          const bf = t.hp + t.shield;
+          damage(b, u, t, u.atk * 0.75 * boost, false);
+          logHit(b, u, t, bf - (t.hp + t.shield), action, false, b.rng);
+        }
+        log(b, `${name}：${u.name}连击${t.name}`, 'good');
+      }
       u.skillCd = 6 * cdMult;
       break;
     }
     case 'pierce': {
       const hs = aliveHeroes(b);
       const t = [...hs].reverse().find((h) => h.row === 1) || hs[hs.length - 1];
-      if (t) { damage(b, u, t, u.atk * 1.4 * boost, false, 0.5); log(b, `${name}命中后排${t.name}`, 'good'); }
+      if (t) {
+        const bf = t.hp + t.shield;
+        damage(b, u, t, u.atk * 1.4 * boost, false, 0.5);
+        logHit(b, u, t, bf - (t.hp + t.shield), action, false, b.rng);
+        log(b, `${name}命中后排${t.name}`, 'good');
+      }
       u.skillCd = 7 * cdMult;
       break;
     }
     case 'harass': {
       const t = monTarget(b, u);
-      if (t) { t.skillCd += 2 * boost; damage(b, u, t, u.atk * 0.9, false); log(b, `${name}：${t.name}技能延后`, 'good'); }
+      if (t) {
+        t.skillCd += 2 * boost;
+        const bf = t.hp + t.shield;
+        damage(b, u, t, u.atk * 0.9, false);
+        logHit(b, u, t, bf - (t.hp + t.shield), action, false, b.rng);
+        log(b, `${name}：${t.name}技能延后`, 'good');
+      }
       u.skillCd = 5 * cdMult;
       break;
     }
@@ -937,7 +1006,9 @@ function monSkill(b        , u      ) {
     }
     case 'aoe': {
       aliveHeroes(b).forEach((h) => {
+        const bf = h.hp + h.shield;
         damage(b, u, h, u.atk * 0.9 * boost, true);
+        logHit(b, u, h, bf - (h.hp + h.shield), action, true, b.rng);
         if (u.eff?.passive === 'brute' && u.lv >= 5) h.stunT = Math.max(h.stunT, 1);
       });
       log(b, `${name}：${u.name}重击全体勇者`, 'good');
@@ -950,7 +1021,9 @@ function monSkill(b        , u      ) {
       const t = back ?? hs[hs.length - 1];
       if (t) {
         yankHero(b, back ?? null);
+        const bf = t.hp + t.shield;
         damage(b, u, t, u.atk * 0.8 * boost, false);
+        logHit(b, u, t, bf - (t.hp + t.shield), action, false, b.rng);
         log(b, `${name}：${u.name}把${t.name}拖了过来`, 'good');
       }
       u.skillCd = 7 * cdMult;
@@ -978,7 +1051,12 @@ function monSkill(b        , u      ) {
     }
     case 'bore': {
       const t = monTarget(b, u);
-      if (t) { damage(b, u, t, u.atk * 2.2 * boost, true, 1); log(b, `${name}：钻穿${t.name}的护甲`, 'good'); }
+      if (t) {
+        const bf = t.hp + t.shield;
+        damage(b, u, t, u.atk * 2.2 * boost, true, 1);
+        logHit(b, u, t, bf - (t.hp + t.shield), action, true, b.rng);
+        log(b, `${name}：钻穿${t.name}的护甲`, 'good');
+      }
       u.skillCd = 8 * cdMult;
       break;
     }
@@ -987,7 +1065,9 @@ function monSkill(b        , u      ) {
       let fin = 0;
       for (const h of aliveHeroes(b)) {
         const low = h.hp < h.maxHp * 0.35;
+        const bf = h.hp + h.shield;
         damage(b, u, h, u.atk * (low ? 1.4 : 0.7) * boost, low);
+        logHit(b, u, h, bf - (h.hp + h.shield), action, low, b.rng);
         if (low) fin++;
       }
       b.events.push({ k: 'shake', amount: 3 });
@@ -1000,7 +1080,9 @@ function monSkill(b        , u      ) {
       const back = aliveHeroes(b).filter((h) => h.row === 1);
       const targets = back.length ? back : aliveHeroes(b);
       for (const h of targets) {
+        const bf = h.hp + h.shield;
         damage(b, u, h, u.atk * 1.1 * boost, true);
+        logHit(b, u, h, bf - (h.hp + h.shield), action, true, b.rng);
         if (h.alive) h.stunT = Math.max(h.stunT, 0.8);
       }
       b.events.push({ k: 'shake', amount: 3 });
@@ -1011,7 +1093,9 @@ function monSkill(b        , u      ) {
     case 'lash': {
       const hs = aliveHeroes(b).slice(0, 3);
       for (const h of hs) {
+        const bf = h.hp + h.shield;
         damage(b, u, h, u.atk * 0.6 * boost, false);
+        logHit(b, u, h, bf - (h.hp + h.shield), action, false, b.rng);
         if (h.alive) { h.slowT = Math.max(h.slowT, 4); h.slowAmt = Math.max(h.slowAmt, 0.25); }
       }
       log(b, `${name}：鞭子连抽${hs.length}人并拖慢他们`, 'good');
@@ -1044,7 +1128,12 @@ function monSkill(b        , u      ) {
     // 敕令：全场伤害 + 本房加攻（统领/权杖共用，等价于"打一下再督战"）
     case 'decree': {
       let hit = 0;
-      for (const h of aliveHeroes(b)) { damage(b, u, h, u.atk * 1.0 * boost, false); hit++; }
+      for (const h of aliveHeroes(b)) {
+        const bf = h.hp + h.shield;
+        damage(b, u, h, u.atk * 1.0 * boost, false);
+        logHit(b, u, h, bf - (h.hp + h.shield), action, false, b.rng);
+        hit++;
+      }
       for (const m of room.mons) if (m.alive) m.rallyT = Math.max(m.rallyT, 6);
       b.events.push({ k: 'cast', room: b.roomIndex, x: u.x, y: u.y, color: 0xe6b84a });
       log(b, `${name}：钟声压过${hit}名勇者，本房守军攻势上扬6秒`, 'good');
@@ -1053,7 +1142,12 @@ function monSkill(b        , u      ) {
     }
     // 熔喷：全场重击 + 长时间点燃（burn 不吃圣水，是对治疗队的针对手段）
     case 'eruption': {
-      for (const h of aliveHeroes(b)) { damage(b, u, h, u.atk * 1.3 * boost, true); if (h.alive) applyBurn(h, 7, 8); }
+      for (const h of aliveHeroes(b)) {
+        const bf = h.hp + h.shield;
+        damage(b, u, h, u.atk * 1.3 * boost, true);
+        logHit(b, u, h, bf - (h.hp + h.shield), action, true, b.rng);
+        if (h.alive) applyBurn(h, 7, 8);
+      }
       b.events.push({ k: 'cast', room: b.roomIndex, x: u.x, y: u.y, color: 0xd95763 });
       b.events.push({ k: 'shake', amount: 4 });
       log(b, `${name}：岩浆喷了满屋，火要烧上8秒`, 'good');
@@ -1066,12 +1160,14 @@ function monSkill(b        , u      ) {
       let slain = 0;
       for (const h of aliveHeroes(b)) {
         const low = h.hp + h.shield <= h.maxHp * 0.45;
+        const bf = h.hp + h.shield;
         if (low) {
           damage(b, u, h, h.hp + h.shield + h.def * 3 + 999, true);
           if (!h.alive) slain++;
         } else {
           damage(b, u, h, u.atk * 0.9 * boost, false);
         }
+        logHit(b, u, h, bf - (h.hp + h.shield), action, low, b.rng);
       }
       b.events.push({ k: 'cast', room: b.roomIndex, x: u.x, y: u.y, color: 0x9b5de5 });
       log(b, slain ? `${name}：${slain}名残血勇者被直接收走` : `${name}：镰影扫过全场`, 'good');
@@ -1081,7 +1177,9 @@ function monSkill(b        , u      ) {
     case 'inject': {
       const t = monTarget(b, u);
       if (t) {
+        const bf = t.hp + t.shield;
         damage(b, u, t, u.atk * 2.4 * boost, true);
+        logHit(b, u, t, bf - (t.hp + t.shield), action, true, b.rng);
         if (t.alive) { t.healCutT = Math.max(t.healCutT, 5); t.healCutPct = 0; }
         log(b, `${name}：${t.name}被注入毒液，5秒内无法被治疗`, 'good');
       }
@@ -1097,7 +1195,12 @@ function monSkill(b        , u      ) {
     }
     case 'breath': {
       // 骨焰吐息：全体重击 + 点燃
-      aliveHeroes(b).forEach((h) => { damage(b, u, h, u.atk * 0.95 * boost, true); if (h.alive) applyBurn(h, 5 * boost, 6); });
+      aliveHeroes(b).forEach((h) => {
+        const bf = h.hp + h.shield;
+        damage(b, u, h, u.atk * 0.95 * boost, true);
+        logHit(b, u, h, bf - (h.hp + h.shield), action, true, b.rng);
+        if (h.alive) applyBurn(h, 5 * boost, 6);
+      });
       b.events.push({ k: 'shake', amount: 4 });
       log(b, `${name}：全体勇者被骨焰灼烧`, 'good');
       u.skillCd = 9 * cdMult;
@@ -1109,7 +1212,9 @@ function monSkill(b        , u      ) {
         const hs = aliveHeroes(b);
         if (!hs.length) break;
         const t = hs[Math.floor(b.rng() * hs.length)];
+        const bf = t.hp + t.shield;
         damage(b, u, t, u.atk * 0.6 * boost, i === 3);
+        logHit(b, u, t, bf - (t.hp + t.shield), action, i === 3, b.rng);
       }
       log(b, `${name}：无数拳头砸进勇者队列`, 'good');
       u.skillCd = 8 * cdMult;
@@ -1119,9 +1224,10 @@ function monSkill(b        , u      ) {
       // 死灵之握：抽全体勇者的血，回同房兵种
       let drained = 0;
       aliveHeroes(b).forEach((h) => {
-        const before = h.hp + h.shield;
+        const bf = h.hp + h.shield;
         damage(b, u, h, u.atk * 0.7 * boost, false);
-        drained += Math.max(0, before - (h.hp + h.shield));
+        drained += Math.max(0, bf - (h.hp + h.shield));
+        logHit(b, u, h, bf - (h.hp + h.shield), action, false, b.rng);
       });
       const heal = Math.round(drained * 0.5);
       if (heal > 0) {
@@ -1140,7 +1246,9 @@ function monSkill(b        , u      ) {
       const t = monTarget(b, u);
       if (t) {
         t.stunT = Math.max(t.stunT, 2);
+        const bf = t.hp + t.shield;
         damage(b, u, t, u.atk * 1.1 * boost, true);
+        logHit(b, u, t, bf - (t.hp + t.shield), action, true, b.rng);
         log(b, `${name}：${t.name}被石化2秒`, 'good');
       }
       u.skillCd = 6 * cdMult;
@@ -1221,27 +1329,44 @@ function heroSkill(b        , u      ) {
       return;
     }
     b.events.push({ k: 'cast', room: b.roomIndex, x: u.x, y: u.y, color: 0xd95763 });
-    aliveMons(b).forEach((m) => damage(b, u, m, u.atk * 1.1 * b.moraleMult * mirrorMult(b), true));
+    aliveMons(b).forEach((m) => {
+      const bf = m.hp + m.shield;
+      damage(b, u, m, u.atk * 1.1 * b.moraleMult * mirrorMult(b), true);
+      logHit(b, u, m, bf - (m.hp + m.shield), '使用火球术', true, b.rng);
+    });
     log(b, mirrorMult(b) < 1 ? `镜厅削弱了法师的火球` : `法师火球轰击全房怪物`, 'bad');
     u.skillCd = 6;
     return;
   }
   if (u.kind === 'knight' || u.kind === 'captain') {
     const t = heroTarget(b, u);
-    if (t) damage(b, u, t, u.atk * 1.6 * b.moraleMult, true);
+    if (t) {
+      const bf = t.hp + t.shield;
+      damage(b, u, t, u.atk * 1.6 * b.moraleMult, true);
+      logHit(b, u, t, bf - (t.hp + t.shield), u.kind === 'captain' ? '使用圣裁' : '使用重斩', true, b.rng);
+    }
     u.skillCd = u.kind === 'captain' ? 4 : 7;
     return;
   }
   if (u.kind === 'archer') {
     const mons = aliveMons(b);
     const t = mons.find((mm) => mm.row === 1) || mons[0];
-    if (t) { damage(b, u, t, u.atk * 1.5 * b.moraleMult, false, 0.5); log(b, `弓手瞄准后排${t.name}`, 'bad'); }
+    if (t) {
+      const bf = t.hp + t.shield;
+      damage(b, u, t, u.atk * 1.5 * b.moraleMult, false, 0.5);
+      logHit(b, u, t, bf - (t.hp + t.shield), '使用穿云箭', false, b.rng);
+      log(b, `弓手瞄准后排${t.name}`, 'bad');
+    }
     u.skillCd = 6;
     return;
   }
   if (u.kind === 'rogue') {
     const t = heroTarget(b, u);
-    if (t) damage(b, u, t, u.atk * 1.3 * b.moraleMult, false);
+    if (t) {
+      const bf = t.hp + t.shield;
+      damage(b, u, t, u.atk * 1.3 * b.moraleMult, false);
+      logHit(b, u, t, bf - (t.hp + t.shield), '使用背刺', false, b.rng);
+    }
     u.skillCd = 5;
     return;
   }
@@ -1259,7 +1384,11 @@ function heroSkill(b        , u      ) {
     const self = Math.max(1, Math.round(u.maxHp * 0.08));
     u.hp = Math.max(1, u.hp - self);
     u.flashT = 0.12;
-    if (t) damage(b, u, t, u.atk * 1.9 * b.moraleMult, true);
+    if (t) {
+      const bf = t.hp + t.shield;
+      damage(b, u, t, u.atk * 1.9 * b.moraleMult, true);
+      logHit(b, u, t, bf - (t.hp + t.shield), '使用血怒斩', true, b.rng);
+    }
     log(b, `狂战士自伤${self}换出血怒斩`, 'bad');
     u.skillCd = 6;
     return;
@@ -1270,7 +1399,9 @@ function heroSkill(b        , u      ) {
     const t = mons.find((mm) => mm.row === 1) || mons[0];
     if (t) {
       t.marked = 1.25;
+      const bf = t.hp + t.shield;
       damage(b, u, t, u.atk * 1.35 * b.moraleMult, false, 0.35);
+      logHit(b, u, t, bf - (t.hp + t.shield), '使用猎标', false, b.rng);
       log(b, `游侠标记${t.name}：受到伤害提升`, 'bad');
     }
     u.skillCd = 6;
@@ -1300,7 +1431,11 @@ function heroSkill(b        , u      ) {
   }
   if (u.kind === 'inquisitor') {
     const t = heroTarget(b, u);
-    if (t) damage(b, u, t, u.atk * 1.5 * b.moraleMult, true);
+    if (t) {
+      const bf = t.hp + t.shield;
+      damage(b, u, t, u.atk * 1.5 * b.moraleMult, true);
+      logHit(b, u, t, bf - (t.hp + t.shield), '使用审判', true, b.rng);
+    }
     u.skillCd = 5;
     return;
   }
@@ -1309,8 +1444,15 @@ function heroSkill(b        , u      ) {
     const t = heroTarget(b, u);
     const pierce = u.phase >= 2 ? 1 : 0.3;
     if (t) {
+      const bf1 = t.hp + t.shield;
       damage(b, u, t, u.atk * 1.3 * b.moraleMult, true, pierce);
-      if (u.phase >= 1 && t.alive) damage(b, u, t, u.atk * 0.9 * b.moraleMult, false, pierce);
+      const dealt1 = bf1 - (t.hp + t.shield);
+      if (dealt1 > 0) logHit(b, u, t, dealt1, '使用连斩', true, b.rng);
+      if (u.phase >= 1 && t.alive) {
+        const bf2 = t.hp + t.shield;
+        damage(b, u, t, u.atk * 0.9 * b.moraleMult, false, pierce);
+        logHit(b, u, t, bf2 - (t.hp + t.shield), '追加一斩', false, b.rng);
+      }
     }
     u.skillCd = 4;
     return;
