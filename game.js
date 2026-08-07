@@ -316,17 +316,38 @@ const overlay = new PIXI.Container();
 const hits = new Hits();
 let viewScale = 1;
 
+const loadingEl   = document.getElementById('loading');
+const loadingText = document.getElementById('loading-text');
+const loadingFill = document.getElementById('loading-fill');
+
+function setLoading(percent, label) {
+  const pct = Math.max(0, Math.min(100, Math.round(percent)));
+  if (loadingFill) loadingFill.style.width = `${pct}%`;
+  if (loadingText) loadingText.textContent = label ?? `Loading ${pct}%`;
+}
+
+function hideLoading() {
+  if (!loadingEl) return;
+  loadingEl.classList.add('hidden');
+  setTimeout(() => loadingEl.remove(), 350);
+}
+
 async function boot() {
   const host = document.getElementById('app') ;
   await app.init({ background: C.bg, resizeTo: host, antialias: false, roundPixels: true });
   host.appendChild(app.canvas);
   app.canvas.style.imageRendering = 'pixelated';
 
+  const totalTasks = 1 + TEXTURES.length;
+  let doneTasks = 0;
+
   try {
     const f = new FontFace(FONT, `url('assets/lib/fusion-pixel/FusionPixel-12px-zh_hans.woff2')`);
     await f.load();
     document.fonts.add(f);
   } catch { /* 字体缺失时退回系统字体 */ }
+  doneTasks += 1;
+  setLoading((doneTasks / totalTasks) * 100);
 
   for (const name of TEXTURES) {
     try {
@@ -334,7 +355,11 @@ async function boot() {
       t.source.scaleMode = 'nearest';
       TEX[name] = t;
     } catch { /* 缺图用白块占位，不阻断 */ }
+    doneTasks += 1;
+    setLoading((doneTasks / totalTasks) * 100);
   }
+
+  hideLoading();
 
   app.stage.addChild(backdrop, root);
   root.addChild(battleLayer, uiLayer, modalLayer, overlay);
