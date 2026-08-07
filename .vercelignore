@@ -1,0 +1,4 @@
+.claude/
+.playwright-mcp/
+.vercel/
+/*.png
