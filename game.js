@@ -292,6 +292,7 @@ let sel                                                                         
 let heroSel                = null;          // 当前查看的英雄 uid
 let heroTab                       = 'roster';
 let heroView                             = 'stat';   // 名册右侧详情的三个视图
+let champTitlePage                       = 0;          // 称号列表分页
 let gearSlotSel           = 'crown';                 // 装备页当前编辑的槽
 let reportIdx = 0;
 let battle                = null;
@@ -3013,6 +3014,40 @@ function drawChampStat(g, c) {
   button(g, uiLayer, hits, 446, 200, 34, 15, '遣退', () => dismissChamp(c), { size: 10, border: C.red, color: C.red });
 }
 
+function drawChampTitleList(g, c, x, y, w, h) {
+  label(uiLayer, '称号', x, y, 12, C.gold);
+  const unlocked = unlockedTitles(c);
+  if (!unlocked.length) {
+    label(uiLayer, '暂无称号', x, y + 16, 12, C.stoneLit);
+    return;
+  }
+  const pageSize = 4;
+  const maxPage = Math.max(0, Math.ceil(unlocked.length / pageSize) - 1);
+  champTitlePage = Math.min(champTitlePage, maxPage);
+  const start = champTitlePage * pageSize;
+  const page = unlocked.slice(start, start + pageSize);
+  let ty = y + 16;
+  for (const id of page) {
+    const t = titleById(id);
+    const active = c.activeTitle === id;
+    button(g, uiLayer, hits, x, ty, w, 14, cut(t.name, 8), () => {
+      c.activeTitle = id; champTitlePage = 0; playSfx('tab'); persist(); render();
+    }, { size: 10, fill: active ? C.goldDark : C.ink, border: active ? C.gold : C.stoneLit, color: active ? C.white : C.steel });
+    if (active) {
+      wrapText(uiLayer, cut(`${t.desc}｜${titleEffectText(t)}`, 30), x + 4, ty + 14, w - 8, 10, C.bone);
+      ty += 28;
+    } else {
+      ty += 16;
+    }
+  }
+  if (maxPage > 0) {
+    button(g, uiLayer, hits, x, ty + 2, w / 2 - 2, 12, '◀', () => { champTitlePage = Math.max(0, champTitlePage - 1); playSfx('tab'); render(); },
+      { size: 10, enabled: champTitlePage > 0, border: C.stoneLit, color: C.stoneLit });
+    button(g, uiLayer, hits, x + w / 2 + 2, ty + 2, w / 2 - 2, 12, '▶', () => { champTitlePage = Math.min(maxPage, champTitlePage + 1); playSfx('tab'); render(); },
+      { size: 10, enabled: champTitlePage < maxPage, border: C.stoneLit, color: C.stoneLit });
+  }
+}
+
 function drawChampInfo(g, c) {
   const chem = chemistry(S.champs, seatedChampUids());
   const st = statOf(c, chem.map);
@@ -3057,7 +3092,7 @@ function drawChampInfo(g, c) {
   }
 
   // 右列：称号（Task 4 补充分页/展开）
-  label(uiLayer, '称号', 320, my + 8, 12, C.gold);
+  drawChampTitleList(g, c, 320, my + 8, 140, 116);
 }
 
 function drawChampDetail(g, c) {
@@ -4246,7 +4281,7 @@ window.__debug = {
     S.champs.push(c); S.champPot[c.uid] = 1; persist(); render(); return c.uid;
   },
   devSeat: (room        , uid        ) => { seatChamp(room, uid); return S.rooms[room].leader; },
-  heroSelect: (uid        ) => { heroSel = uid; heroTab = 'roster'; render(); },
+  heroSelect: (uid        ) => { heroSel = uid; heroTab = 'roster'; champTitlePage = 0; render(); },
   heroTabSet: (t                      ) => { heroTab = t; render(); },
   devChampXp: (uid        , xp        ) => { const c = champById(uid); if (c) c.xp += xp; persist(); render(); },
   devLevelChamp: (uid        ) => { const c = champById(uid); if (c) levelChamp(c); return c ? c.lv : 0; },
