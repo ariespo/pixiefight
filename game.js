@@ -2902,6 +2902,79 @@ function effText(e        )         {
   return out.join('・');
 }
 
+function traitColor(t        ) {
+  const r = TRAITS[t]?.rarity ?? 'common';
+  switch (r) {
+    case 'legend': return C.gold;
+    case 'epic':   return C.purple;
+    case 'rare':   return C.blue;
+    case 'curse':  return C.red;
+    default:       return C.bone;
+  }
+}
+
+function titleEffectText(t        ) {
+  const parts = [];
+  if (t.stats?.hp)       parts.push(`生命 ${Math.round((t.stats.hp - 1) * 100)}%`);
+  if (t.stats?.atk)      parts.push(`攻击 ${Math.round((t.stats.atk - 1) * 100)}%`);
+  if (t.stats?.def)      parts.push(`防御 +${t.stats.def}`);
+  if (t.stats?.spd)      parts.push(`攻速 ${Math.round((t.stats.spd - 1) * 100)}%`);
+  if (t.stats?.hpRegen)  parts.push(`回血 +${t.stats.hpRegen}`);
+  if (t.stats?.thorns)   parts.push(`反伤 ${Math.round(t.stats.thorns * 100)}%`);
+  if (t.stats?.reviveHp) parts.push(`复活生命 ${Math.round(t.stats.reviveHp * 100)}%`);
+  return parts.join('，') || '无数值加成';
+}
+
+function effDetailText(e        ) {
+  const out = [];
+  if (e.thorns)        out.push(`反伤 ${Math.round(e.thorns * 100)}%`);
+  if (e.splash)        out.push(`溅射 ${Math.round(e.splash * 100)}%`);
+  if (e.lifestealPct)  out.push(`吸血 ${Math.round(e.lifestealPct * 100)}%`);
+  if (e.hpRegen)       out.push(`回血 ${e.hpRegen}/秒`);
+  if (e.execute)       out.push(`残血 ${Math.round(e.execute * 100)}% 斩杀`);
+  if (e.markHit)       out.push(`普攻叠易伤 ${Math.round(e.markHit * 100)}%`);
+  if (e.cunning)       out.push(`普攻 ${Math.round(e.cunning * 100)}% 暴击，倍率 ${e.cunningMult ?? 1.5}`);
+  if (e.skillCdMult && e.skillCdMult !== 1)
+                       out.push(`技能冷却 ${Math.round(e.skillCdMult * 100)}%`);
+  if (e.skillDmg && e.skillDmg !== 1)
+                       out.push(`技能伤害 ${Math.round(e.skillDmg * 100)}%`);
+  if (e.dmgToHero && e.dmgToHero !== 1)
+                       out.push(`对勇者伤害 ${Math.round(e.dmgToHero * 100)}%`);
+  if (e.frenzy)        out.push('越打越快');
+  if (e.reach)         out.push('普攻直击后排');
+  if (e.anchorHold)    out.push('嘲讽近战勇者');
+  if (e.rageAura && e.rageAura !== 1)
+                       out.push(`同房攻击 +${Math.round((e.rageAura - 1) * 100)}%`);
+  if (e.bulwarkAura && e.bulwarkAura !== 1)
+                       out.push(`同房减伤 ${Math.round((1 - e.bulwarkAura) * 100)}%`);
+  if (e.allyAtk && e.allyAtk !== 1)
+                       out.push(`同房攻击 +${Math.round((e.allyAtk - 1) * 100)}%`);
+  if (e.allySpd && e.allySpd !== 1)
+                       out.push(`同房攻速 +${Math.round((e.allySpd - 1) * 100)}%`);
+  if (e.allyHp && e.allyHp !== 1)
+                       out.push(`同房生命 +${Math.round((e.allyHp - 1) * 100)}%`);
+  if (e.allyDef)       out.push(`同房防御 +${e.allyDef}`);
+  if (e.undyingTrait)  out.push(`不灭：首次倒下以 ${Math.round(e.undyingTrait * 100)}% 生命复活`);
+  if (e.divineFavor)   out.push(`神恩：致死伤害 ${Math.round(e.divineFavor * 100)}% 概率保留 1 点生命`);
+  if (e.passive === 'revive')
+                       out.push(`不朽：首次倒下复活${e.reviveAlly ? '并拉起同伴' : ''}`);
+  if (e.reviveHp)      out.push(`复活生命 +${Math.round(e.reviveHp * 100)}%`);
+  if (e.vengeful)      out.push(`倒下反弹 ${Math.round(e.vengeful * 100)}% 攻击伤害`);
+  if (e.deathBurst)    out.push(`亡语：全场勇者受 ${e.deathBurst} 伤害`);
+  if (e.bloodthirsty)  out.push(`击杀回血 ${Math.round(e.bloodthirsty * 100)}%`);
+  if (e.soulDevour)    out.push('噬魂：每击倒勇者永久 +1 攻击');
+  if (e.onHit === 'sunder')      out.push('普攻破防 3');
+  if (e.onHit === 'weaken')      out.push('普攻减速');
+  if (e.onHit === 'delay')       out.push('普攻延迟技能冷却');
+  if (e.burnHit)       out.push(`普攻点燃 ${e.burnHit}`);
+  if (e.venomHit)      out.push(`普攻中毒 ${e.venomHit}`);
+  if (e.chillHit)      out.push(`普攻减速 ${Math.round(e.chillHit * 100)}%`);
+  if (e.stunHit)       out.push(`普攻眩晕概率 ${Math.round(e.stunHit * 100)}%`);
+  if (e.manaEcho)      out.push(`战后产魔 ${e.manaEcho}`);
+  if (e.boneEcho)      out.push(`战后产骨 ${e.boneEcho}`);
+  return out;
+}
+
 function drawChampDetail(g               , c       ) {
   panelF(g, uiLayer, 'gold', 166, 58, 310, 176, C.wall);
   const pend = pendingTier(c);
