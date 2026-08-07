@@ -329,6 +329,7 @@ let heroSel                = null;          // 当前查看的英雄 uid
 let heroTab                       = 'roster';
 let heroView                             = 'stat';   // 名册右侧详情的三个视图
 let champTitlePage                       = 0;          // 称号列表分页
+let champTitleExpand                     = '';         // 详情页当前展开的称号 id
 let gearSlotSel           = 'crown';                 // 装备页当前编辑的槽
 let monDetailMode = false;                             // 已招募魔物卡片默认/详情切换
 let lastSelInstUid        = null;                      // 用于切换魔物实例时重置详情模式
@@ -1133,7 +1134,8 @@ function drawSmithRunes(g               , fr                                   )
 function drawSmithTempers(g               ) {
   const sm = smith ;
   label(modalLayer, '淬火给整件一条偏向，多半带代价', 27, 60, 12, C.stoneLit);
-  TEMPERS.forEach((t, i) => {
+  const pp = paged('smith-temper', TEMPERS, 6);
+  pp.view.forEach((t, i) => {
     const y = 78 + i * 17;
     const on = sm.plan.temper === t.id;
     g.rect(24, y, 260, 16).fill(on ? C.purpleDark : C.wall).stroke({ width: 1, color: on ? C.purple : C.ink, alignment: 0 });
@@ -1142,6 +1144,7 @@ function drawSmithTempers(g               ) {
     label(modalLayer, t.mana ? `${t.mana}魔` : '免费', 250, y + 1, 12, on ? C.gold : C.stoneLit);
     hits.add(24, y, 260, 16, () => smithSetTemper(t.id));
   });
+  pager(g, 'smith-temper', pp.pages, 120, 182, 68);
 }
 
 // ---------- 造件工坊（LLM DIY 部件） ----------
@@ -3130,31 +3133,31 @@ function drawChampTitleList(g, c, x, y, w, h) {
   const activeId = c.activeTitle;
   const activeIdx = activeId ? unlocked.indexOf(activeId) : -1;
 
-  // Measure the active title's real expanded height (if unlocked) so pageSize is based on
-  // the actual vertical budget instead of a fixed 44 px estimate.
-  let activeH = 0;
-  if (activeIdx >= 0) {
-    const t = titleById(activeId);
+  // 展开某称号时显示效果与激活按钮；默认展开当前激活称号（如果无手动展开）
+  let expandId = '';
+  if (champTitleExpand && unlocked.includes(champTitleExpand)) expandId = champTitleExpand;
+  else if (activeIdx >= 0) expandId = activeId;
+
+  function expandedH(id        ) {
+    const t = titleById(id);
     const tmp = new PIXI.Text({
       text: cut(`${t.desc}｜${titleEffectText(t)}`, 28),
       style: { fontFamily: FONT, fontSize: 10, fill: C.bone, lineHeight: 13, wordWrap: true, wordWrapWidth: w - 8, breakWords: true }
     });
-    activeH = 14 + Math.min(tmp.height, 26) + 4;
+    const hh = 14 + Math.min(tmp.height, 26) + 4;
     tmp.destroy();
+    return hh;
   }
 
-  // Does a page of `size` titles on `pageIdx` fit inside the available height?
   function pageFits(size, pageIdx) {
     const start = pageIdx * size;
     const page = unlocked.slice(start, start + size);
-    const hasActive = activeIdx >= start && activeIdx < start + size;
+    const hasExpand = expandId && page.includes(expandId);
     const needPg = Math.ceil(unlocked.length / size) > 1 ? pgH : 0;
-    const used = headerH + (page.length - (hasActive ? 1 : 0)) * normalRowH + (hasActive ? activeH : 0) + needPg;
+    const used = headerH + (page.length - (hasExpand ? 1 : 0)) * normalRowH + (hasExpand ? expandedH(expandId) : 0) + needPg;
     return used <= h;
   }
 
-  // Start with the maximum number of plain rows that fit, then shrink if the active
-  // title on the current page needs the extra expanded height.
   let pageSize = Math.max(1, Math.floor((h - headerH - pgH) / normalRowH));
   let maxPage = Math.max(0, Math.ceil(unlocked.length / pageSize) - 1);
   champTitlePage = Math.min(champTitlePage, maxPage);
@@ -3165,9 +3168,13 @@ function drawChampTitleList(g, c, x, y, w, h) {
     champTitlePage = Math.min(champTitlePage, maxPage);
   }
 
-  // If even a single-title page with the expanded active title does not fit,
-  // render the active title as a normal row so the panel never overflows.
-  const activeFitsExpanded = pageFits(pageSize, champTitlePage);
+  // 若展开项不在当前页，跳转过去并重新约束
+  if (expandId) {
+    const targetPage = Math.floor(unlocked.indexOf(expandId) / pageSize);
+    if (targetPage !== champTitlePage && targetPage <= maxPage) champTitlePage = targetPage;
+  }
+
+  const expandFits = pageFits(pageSize, champTitlePage);
 
   const start = champTitlePage * pageSize;
   const page = unlocked.slice(start, start + pageSize);
@@ -3175,10 +3182,19 @@ function drawChampTitleList(g, c, x, y, w, h) {
   for (const id of page) {
     const t = titleById(id);
     const active = c.activeTitle === id;
-    button(g, uiLayer, hits, x, ty, w, 14, cut(t.name, 8), () => {
-      c.activeTitle = id; playSfx('tab'); persist(); render();
+    const expanded = expandFits && expandId === id;
+    // 行按钮：点击展开/收起详情；展开时右侧留激活按钮位
+    const btnW = expanded && !active ? w - 34 : w;
+    button(g, uiLayer, hits, x, ty, btnW, 14, cut(t.name, 8), () => {
+      champTitleExpand = champTitleExpand === id ? '' : id;
+      playSfx('tab'); render();
     }, { size: 10, fill: active ? C.goldDark : C.ink, border: active ? C.gold : C.stoneLit, color: active ? C.white : C.steel });
-    if (active && activeFitsExpanded) {
+    if (expanded && !active) {
+      button(g, uiLayer, hits, x + btnW + 2, ty, 32, 14, '激活', () => {
+        c.activeTitle = id; playSfx('tab'); persist(); render();
+      }, { size: 10, fill: C.purpleDark, border: C.purple, color: C.white });
+    }
+    if (expanded) {
       const tw = wrapText(uiLayer, cut(`${t.desc}｜${titleEffectText(t)}`, 28), x + 4, ty + 14, w - 8, 10, C.bone);
       ty += 14 + Math.min(tw.height, 26) + 4;
     } else {
@@ -3186,9 +3202,9 @@ function drawChampTitleList(g, c, x, y, w, h) {
     }
   }
   if (maxPage > 0) {
-    button(g, uiLayer, hits, x, ty + 2, w / 2 - 2, 12, '◀', () => { champTitlePage = Math.max(0, champTitlePage - 1); playSfx('tab'); render(); },
+    button(g, uiLayer, hits, x, ty + 2, w / 2 - 2, 12, '◀', () => { champTitlePage = Math.max(0, champTitlePage - 1); champTitleExpand = ''; playSfx('tab'); render(); },
       { size: 10, enabled: champTitlePage > 0, border: C.stoneLit, color: C.stoneLit });
-    button(g, uiLayer, hits, x + w / 2 + 2, ty + 2, w / 2 - 2, 12, '▶', () => { champTitlePage = Math.min(maxPage, champTitlePage + 1); playSfx('tab'); render(); },
+    button(g, uiLayer, hits, x + w / 2 + 2, ty + 2, w / 2 - 2, 12, '▶', () => { champTitlePage = Math.min(maxPage, champTitlePage + 1); champTitleExpand = ''; playSfx('tab'); render(); },
       { size: 10, enabled: champTitlePage < maxPage, border: C.stoneLit, color: C.stoneLit });
   }
 }
@@ -4428,7 +4444,7 @@ window.__debug = {
     S.champs.push(c); S.champPot[c.uid] = 1; persist(); render(); return c.uid;
   },
   devSeat: (room        , uid        ) => { seatChamp(room, uid); return S.rooms[room].leader; },
-  heroSelect: (uid        ) => { heroSel = uid; heroTab = 'roster'; champTitlePage = 0; render(); },
+  heroSelect: (uid        ) => { heroSel = uid; heroTab = 'roster'; champTitlePage = 0; champTitleExpand = ''; render(); },
   heroTabSet: (t                      ) => { heroTab = t; render(); },
   devChampXp: (uid        , xp        ) => { const c = champById(uid); if (c) c.xp += xp; persist(); render(); },
   devLevelChamp: (uid        ) => { const c = champById(uid); if (c) levelChamp(c); return c ? c.lv : 0; },
