@@ -2249,13 +2249,13 @@ function drawSidePanel(g               ) {
 
     // 技能详情弹出卡片
     if (monSkillTip === inst.uid) {
-      const tipX = 332, tipY = 80, tipW = 156, tipH = 120;
+      const tipX = 180, tipY = 80, tipW = 140, tipH = 120;
       g.rect(tipX, tipY, tipW, tipH).fill(C.wall).stroke({ width: 1, color: C.purple, alignment: 0 });
       label(uiLayer, `技能・${k.skill}`, tipX + 6, tipY + 6, 12, C.purple);
       wrapText(uiLayer, k.skillDesc, tipX + 6, tipY + 24, tipW - 12, 11, C.bone);
+      hits.add(tipX, tipY, tipW, tipH, () => { /* 点卡片本身不穿透 */ });
       button(g, uiLayer, hits, tipX + tipW - 28, tipY + 4, 22, 12, '×', () => { monSkillTip = null; playSfx('tab'); render(); },
         { size: 10, border: C.red, color: C.red });
-      hits.add(tipX, tipY, tipW, tipH, () => { /* 点卡片本身不穿透 */ });
     }
     const gcount = (inst.graft ?? []).length;
     if (isCustomKind(inst.kind)) {
@@ -2343,13 +2343,13 @@ function drawSidePanel(g               ) {
 
     // 技能详情弹出卡片
     if (monKindSkillTip === sel.id) {
-      const tipX = 332, tipY = 70, tipW = 156, tipH = 120;
+      const tipX = 180, tipY = 80, tipW = 140, tipH = 120;
       g.rect(tipX, tipY, tipW, tipH).fill(C.wall).stroke({ width: 1, color: C.purple, alignment: 0 });
       label(uiLayer, `技能・${k.skill}`, tipX + 6, tipY + 6, 12, C.purple);
       wrapText(uiLayer, k.skillDesc, tipX + 6, tipY + 24, tipW - 12, 11, C.bone);
+      hits.add(tipX, tipY, tipW, tipH, () => { /* 点卡片本身不穿透 */ });
       button(g, uiLayer, hits, tipX + tipW - 28, tipY + 4, 22, 12, '×', () => { monKindSkillTip = null; playSfx('tab'); render(); },
         { size: 10, border: C.red, color: C.red });
-      hits.add(tipX, tipY, tipW, tipH, () => { /* 点卡片本身不穿透 */ });
     }
     return;
   }
