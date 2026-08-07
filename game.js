@@ -332,7 +332,10 @@ let champTitlePage                       = 0;          // 称号列表分页
 let champTitleExpand                     = '';         // 详情页当前展开的称号 id
 let gearSlotSel           = 'crown';                 // 装备页当前编辑的槽
 let monDetailMode = false;                             // 已招募魔物卡片默认/详情切换
+let monSkillTip = null;                                // 已招募魔物默认卡片上弹出的技能详情 uid
+let monKindSkillTip = null;                            // 可招募魔物详情上弹出的技能详情 id
 let lastSelInstUid        = null;                      // 用于切换魔物实例时重置详情模式
+let lastSelMonKind        = null;                      // 用于切换可招募魔物时重置技能弹窗
 let reportIdx = 0;
 let battle                = null;
 let speed = 1;
@@ -2203,6 +2206,7 @@ function drawSidePanel(g               ) {
     if (lastSelInstUid !== sel.uid) {
       lastSelInstUid = sel.uid;
       monDetailMode = false;
+      monSkillTip = null;
     }
     const inst = instById(sel.uid);
     if (!inst) { sel = null; return; }
@@ -2223,24 +2227,36 @@ function drawSidePanel(g               ) {
     label(uiLayer, `防御 ${Math.round(k.def * mult)}  速度 ${k.spd.toFixed(1)}`, 340, 114, 12, C.bone);
     const at = roomOf(inst.uid);
     label(uiLayer, at < 0 ? '驻守：空闲' : `驻守：${at + 1}房`, 340, 128, 12, at < 0 ? C.stoneLit : C.gold);
-    label(uiLayer, `技能 ${k.skill}`, 340, 142, 12, C.purple);
-    const skillT = wrapText(uiLayer, k.skillDesc, 340, 161, 130, 12, C.stoneLit);
-    const skillH = Math.min(skillT.height, 22);
-    const nextY = 161 + skillH + 6;
+    // 技能名可点击，点击弹出详情小卡片
+    button(g, uiLayer, hits, 340, 142, 130, 14, `技能 ${k.skill}`, () => {
+      monSkillTip = monSkillTip === inst.uid ? null : inst.uid;
+      playSfx('tab'); render();
+    }, { size: 12, fill: C.ink, border: C.purple, color: C.purple });
     if (inst.lv < 5) {
       const need = XP_PER_LEVEL[inst.lv - 1];
-      bar(uiGfx, 340, nextY, 130, 6, inst.xp / need, C.green);
-      label(uiLayer, `经验 ${inst.xp}/${need}`, 340, nextY + 6, 12, C.bone);
+      bar(uiGfx, 340, 164, 130, 6, inst.xp / need, C.green);
+      label(uiLayer, `经验 ${inst.xp}/${need}`, 340, 170, 12, C.bone);
       const cost = UPGRADE_COST[inst.lv - 1];
       const can = inst.xp >= need && S.bone >= cost;
-      button(g, uiLayer, hits, 340, nextY + 18, 130, 15, `升级 ${cost}骨币`, () => {
+      button(g, uiLayer, hits, 340, 182, 130, 15, `升级 ${cost}骨币`, () => {
         inst.xp -= need; inst.lv++; S.bone -= cost; playSfx('buy'); persist(); say(`${k.name} 升到 Lv${inst.lv}`); render();
       }, { size: 12, enabled: can, fill: C.greenDark, border: C.green, color: C.white });
     } else {
-      label(uiLayer, '已达满级', 340, nextY + 6, 12, C.gold);
+      label(uiLayer, '已达满级', 340, 170, 12, C.gold);
     }
     button(g, uiLayer, hits, 340, 224, 40, 16, '详情', () => { monDetailMode = true; playSfx('tab'); render(); },
       { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
+
+    // 技能详情弹出卡片
+    if (monSkillTip === inst.uid) {
+      const tipX = 332, tipY = 80, tipW = 156, tipH = 120;
+      g.rect(tipX, tipY, tipW, tipH).fill(C.wall).stroke({ width: 1, color: C.purple, alignment: 0 });
+      label(uiLayer, `技能・${k.skill}`, tipX + 6, tipY + 6, 12, C.purple);
+      wrapText(uiLayer, k.skillDesc, tipX + 6, tipY + 24, tipW - 12, 11, C.bone);
+      button(g, uiLayer, hits, tipX + tipW - 28, tipY + 4, 22, 12, '×', () => { monSkillTip = null; playSfx('tab'); render(); },
+        { size: 10, border: C.red, color: C.red });
+      hits.add(tipX, tipY, tipW, tipH, () => { /* 点卡片本身不穿透 */ });
+    }
     const gcount = (inst.graft ?? []).length;
     if (isCustomKind(inst.kind)) {
       button(g, uiLayer, hits, 382, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
@@ -2304,19 +2320,37 @@ function drawSidePanel(g               ) {
     }
   }
   if (sel.kind === 'monkind') {
+    if (lastSelMonKind !== sel.id) {
+      lastSelMonKind = sel.id;
+      monKindSkillTip = null;
+    }
     const k = monKind(sel.id);
     labelC(uiLayer, k.name, 405, 44, 12, isCustomKind(k.id) ? C.purple : C.white);
     uiLayer.addChild(sprite(k.tex, 405, 94, 36));
     label(uiLayer, `生命 ${k.hp}  攻击 ${k.atk}`, 340, 98, 12, C.bone);
     label(uiLayer, `防御 ${k.def}  速度 ${k.spd.toFixed(1)}`, 340, 117, 12, C.bone);
     label(uiLayer, `站位 ${k.row === 'front' ? '前排' : k.row === 'back' ? '后排' : '任意'}`, 340, 136, 12, C.bone);
-    label(uiLayer, `技能 ${k.skill}`, 340, 155, 12, C.purple);
-    const skillT = wrapText(uiLayer, k.skillDesc, 340, 174, 130, 12, C.stoneLit);
-    const skillH = Math.min(skillT.height, 30);
-    const btnY = 174 + skillH + 10;
-    button(g, uiLayer, hits, 340, btnY, 130, 18, `${isCustomKind(k.id) ? '再缝一只' : '招募'} ${k.cost}骨币`,
+
+    // 技能名可点击，点击弹出详情小卡片
+    button(g, uiLayer, hits, 340, 155, 130, 14, `技能 ${k.skill}`, () => {
+      monKindSkillTip = monKindSkillTip === sel.id ? null : sel.id;
+      playSfx('tab'); render();
+    }, { size: 12, fill: C.ink, border: C.purple, color: C.purple });
+
+    button(g, uiLayer, hits, 340, 176, 130, 18, `${isCustomKind(k.id) ? '再缝一只' : '招募'} ${k.cost}骨币`,
       () => recruit(k.id),
       { size: 12, enabled: S.bone >= k.cost, fill: C.greenDark, border: C.green, color: C.white });
+
+    // 技能详情弹出卡片
+    if (monKindSkillTip === sel.id) {
+      const tipX = 332, tipY = 70, tipW = 156, tipH = 120;
+      g.rect(tipX, tipY, tipW, tipH).fill(C.wall).stroke({ width: 1, color: C.purple, alignment: 0 });
+      label(uiLayer, `技能・${k.skill}`, tipX + 6, tipY + 6, 12, C.purple);
+      wrapText(uiLayer, k.skillDesc, tipX + 6, tipY + 24, tipW - 12, 11, C.bone);
+      button(g, uiLayer, hits, tipX + tipW - 28, tipY + 4, 22, 12, '×', () => { monKindSkillTip = null; playSfx('tab'); render(); },
+        { size: 10, border: C.red, color: C.red });
+      hits.add(tipX, tipY, tipW, tipH, () => { /* 点卡片本身不穿透 */ });
+    }
     return;
   }
   if (sel.kind === 'shop') {
