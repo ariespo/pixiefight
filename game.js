@@ -295,6 +295,7 @@ let heroView                             = 'stat';   // 名册右侧详情的三
 let champTitlePage                       = 0;          // 称号列表分页
 let gearSlotSel           = 'crown';                 // 装备页当前编辑的槽
 let monDetailMode = false;                             // 已招募魔物卡片默认/详情切换
+let lastSelInstUid        = null;                      // 用于切换魔物实例时重置详情模式
 let reportIdx = 0;
 let battle                = null;
 let speed = 1;
@@ -2141,6 +2142,10 @@ function drawSidePanel(g               ) {
     return;
   }
   if (sel.kind === 'inst') {
+    if (lastSelInstUid !== sel.uid) {
+      lastSelInstUid = sel.uid;
+      monDetailMode = false;
+    }
     const inst = instById(sel.uid);
     if (!inst) { sel = null; return; }
     const k = instKind(inst);
@@ -2174,14 +2179,14 @@ function drawSidePanel(g               ) {
     } else {
       label(uiLayer, '已达满级', 340, 192, 12, C.gold);
     }
-    button(g, uiLayer, hits, 340, 224, 62, 16, '详情', () => { monDetailMode = true; playSfx('tab'); render(); },
+    button(g, uiLayer, hits, 340, 224, 40, 16, '详情', () => { monDetailMode = true; playSfx('tab'); render(); },
       { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
     const gcount = (inst.graft ?? []).length;
     if (isCustomKind(inst.kind)) {
-      button(g, uiLayer, hits, 406, 224, 46, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
-      button(g, uiLayer, hits, 456, 224, 34, 16, '拆', () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
+      button(g, uiLayer, hits, 382, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
+      button(g, uiLayer, hits, 432, 224, 38, 16, '拆', () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
     } else {
-      button(g, uiLayer, hits, 406, 224, 84, 16, `遣散+${Math.round(k.cost * 0.5)}`, () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
+      button(g, uiLayer, hits, 382, 224, 88, 16, `遣散+${Math.round(k.cost * 0.5)}`, () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
     }
   }
 
@@ -2194,28 +2199,48 @@ function drawSidePanel(g               ) {
     const at = roomOf(inst.uid);
     label(uiLayer, at < 0 ? '驻守：空闲' : `驻守：${at + 1}房`, 340, 94, 12, at < 0 ? C.stoneLit : C.gold);
     label(uiLayer, `技能 ${k.skill}`, 340, 108, 12, C.purple);
-    wrapText(uiLayer, k.skillDesc, 340, 122, 130, 11, C.stoneLit);
+
+    const MAX_SKILL_H = 40;
+    let skillText = wrapText(uiLayer, k.skillDesc, 340, 122, 130, 11, C.stoneLit);
+    if (skillText.height > MAX_SKILL_H) {
+      uiLayer.removeChild(skillText);
+      skillText = wrapText(uiLayer, cut(k.skillDesc, 48), 340, 122, 130, 11, C.stoneLit);
+    }
+    let dy = 122 + Math.min(skillText.height, MAX_SKILL_H) + 6;
+
     const instAfs = selectedAffixes(k.affixes);
-    let dy = 156;
-    if (instAfs.length) {
-      label(uiLayer, '词缀', 340, dy, 12, C.gold); dy += 14;
+    if (instAfs.length && dy < 154) {
+      label(uiLayer, '词缀', 340, dy, 12, C.gold);
+      dy += 14;
       for (const a of instAfs) {
-        wrapText(uiLayer, `${a.name}：${cut(a.desc, 26)}`, 340, dy, 130, 11, C.bone);
-        dy += 13;
+        if (dy > 164) break;
+        const afText = wrapText(uiLayer, `${a.name}：${cut(a.desc, 22)}`, 340, dy, 130, 11, C.bone);
+        dy += Math.min(afText.height, 24) + 4;
       }
     }
-    label(uiLayer, `被动：${inst.lv < 5 ? 'Lv5 解锁' : k.passive}`, 340, dy, 12, C.gold);
-    if (inst.lv >= 5) {
-      wrapText(uiLayer, cut(k.passiveDesc ?? k.passive, 30), 340, dy + 14, 130, 11, C.stoneLit);
+
+    if (dy < 188) {
+      label(uiLayer, `被动：${inst.lv < 5 ? `Lv5 解锁・${k.passive}` : k.passive}`, 340, dy, 12, C.gold);
+      if (inst.lv >= 5 && dy < 192) {
+        const psText = wrapText(uiLayer, cut(k.passiveDesc ?? k.passive, 40), 340, dy + 14, 130, 11, C.stoneLit);
+        dy += 14 + Math.min(psText.height, 26) + 4;
+      } else {
+        dy += 14;
+      }
     }
-    const gcount = (inst.graft ?? []).length;
-    button(g, uiLayer, hits, 340, 224, 80, 16, '返回', () => { monDetailMode = false; playSfx('tab'); render(); },
+
+    if (isCustomKind(inst.kind) && dy < 206) {
+      const gcount = (inst.graft ?? []).length;
+      label(uiLayer, `改造 ${gcount}/${GRAFT_CAP}件・重组 1次`, 340, dy, 10, C.steel);
+    }
+
+    button(g, uiLayer, hits, 340, 224, 40, 16, '返回', () => { monDetailMode = false; playSfx('tab'); render(); },
       { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
     if (isCustomKind(inst.kind)) {
-      button(g, uiLayer, hits, 424, 224, 42, 16, '重组', () => openStitch(inst.uid), { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
-      button(g, uiLayer, hits, 470, 224, 34, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
+      button(g, uiLayer, hits, 382, 224, 38, 16, '重组', () => openStitch(inst.uid), { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
+      button(g, uiLayer, hits, 422, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
     } else {
-      button(g, uiLayer, hits, 424, 224, 80, 16, `遣散+${Math.round(k.cost * 0.5)}`, () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
+      button(g, uiLayer, hits, 382, 224, 88, 16, `遣散+${Math.round(k.cost * 0.5)}`, () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
     }
   }
   if (sel.kind === 'monkind') {
@@ -3060,23 +3085,28 @@ function drawChampTitleList(g, c, x, y, w, h) {
     label(uiLayer, '暂无称号', x, y + 16, 12, C.stoneLit);
     return;
   }
-  const pageSize = 4;
+  const headerH = 16;
+  const normalRowH = 16;
+  const activeRowH = 44; // button 14 + capped text ~26 + spacing 4
+  const pgH = 14;
+  // Reserve vertical budget for one expanded active row per page so pagination never leaves the panel.
+  const pageSize = Math.max(1, Math.floor((h - headerH - activeRowH - pgH) / normalRowH) + 1);
   const maxPage = Math.max(0, Math.ceil(unlocked.length / pageSize) - 1);
   champTitlePage = Math.min(champTitlePage, maxPage);
   const start = champTitlePage * pageSize;
   const page = unlocked.slice(start, start + pageSize);
-  let ty = y + 16;
+  let ty = y + headerH;
   for (const id of page) {
     const t = titleById(id);
     const active = c.activeTitle === id;
     button(g, uiLayer, hits, x, ty, w, 14, cut(t.name, 8), () => {
-      c.activeTitle = id; champTitlePage = 0; playSfx('tab'); persist(); render();
+      c.activeTitle = id; playSfx('tab'); persist(); render();
     }, { size: 10, fill: active ? C.goldDark : C.ink, border: active ? C.gold : C.stoneLit, color: active ? C.white : C.steel });
     if (active) {
-      wrapText(uiLayer, cut(`${t.desc}｜${titleEffectText(t)}`, 30), x + 4, ty + 14, w - 8, 10, C.bone);
-      ty += 28;
+      const tw = wrapText(uiLayer, cut(`${t.desc}｜${titleEffectText(t)}`, 28), x + 4, ty + 14, w - 8, 10, C.bone);
+      ty += 14 + Math.min(tw.height, 26) + 4;
     } else {
-      ty += 16;
+      ty += normalRowH;
     }
   }
   if (maxPage > 0) {
@@ -3131,7 +3161,9 @@ function drawChampInfo(g, c) {
   }
 
   // 右列：称号（Task 4 补充分页/展开）
-  drawChampTitleList(g, c, 320, my + 8, 140, 116);
+  const titleY = my + 8;
+  const titleH = Math.max(40, 234 - titleY - 2);
+  drawChampTitleList(g, c, 320, titleY, 140, titleH);
 }
 
 function drawChampDetail(g, c) {
