@@ -4,7 +4,7 @@ import { GEARS, GEAR_SLOTS, GEAR_CAP, MELT_MANA, REFORGE_MANA, FRAMES, RUNES, TE
                                                                                         
 import { createBattle, stepBattle, ROOM_W, affixText, actionProgress } from './battle.js';
                                                                       
-import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, AFFIX_BUDGET, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, clampAffixDraft, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
+import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, AFFIX_BUDGET, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, clampAffixDraft, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, legendaryPartCount, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
                                                                                                                           
 import { getBackend, hasBackend, llmStatus, loadCfg, loadMode, requestAffix, requestPart, restoreBackend, saveCfg, saveMode, setBackend, requestScene as llmScene } from './llm.js';
                                         
@@ -54,7 +54,7 @@ const SAVE_KEY = 'yqh-save-v2';
 
 function freshSave()       {
   return {
-    bone: 95, mana: 18, raidNo: 1, uidNext: 1,
+    bone: 95, mana: 18, relic: 0, raidNo: 1, uidNext: 1,
     monsters: [],
     rooms: [0, 1, 2, 3].map(() => ({ theme: 'stone'           , trap: 'none'          , front: null, back: null, leader: null, flank: null })),
     themes: ['stone'], traps: ['none'],
@@ -200,6 +200,7 @@ function sanitizeSave() {
   S.vault = S.vault.filter((id) => typeof id === 'string' && gearById(id)).slice(0, GEAR_CAP);
   if (S.champs.length > CHAMP_CAP) S.champs.length = CHAMP_CAP;
   if (!Array.isArray(S.diy)) S.diy = [];
+  S.relic = Math.max(0, Math.round(Number(S.relic) || 0));
   if (typeof S.diyNext !== 'number') S.diyNext = 1;
   if (!Array.isArray(S.diyAf)) S.diyAf = [];
   if (typeof S.diyAfNext !== 'number') S.diyAfNext = 1;
@@ -264,12 +265,23 @@ function importSave() {
 // ---------- 派生数据 ----------
 const sealMax = () => 100 + S.sealLv * 25;
 const trapPower = () => 1 + S.trapLv * 0.25;
-const monKind = (id        ) => kindById(id) ?? MONSTERS[0];
+const monKind = (id        ) => ensureKindTex(graftKind(kindById(id) ?? MONSTERS[0]));
 const allKinds = () => [...MONSTERS.filter((m) => !m.legend), ...S.customs.map((d) => deriveKind(d))];
 const eliteOpen = (k                       ) => S.raidNo >= (k.eliteMin ?? 1) || S.overtime;
 const instById = (uid               ) => (uid == null ? undefined : S.monsters.find((m) => m.uid === uid));
 // 一只具体怪物的最终形态 = 基础种类 + 它自己的改造件
-const instKind = (inst             ) => graftKind(monKind(inst.kind), inst.graft);
+const instKind = (inst             ) => ensureKindTex(graftKind(monKind(inst.kind), inst.graft));
+
+function markMaxLevel(s, maxed) {
+  if (!maxed || !s) return s;
+  const fx = new PIXI.Graphics();
+  const w = Math.max(7, Math.round(s.width * 0.22));
+  fx.moveTo(0, -w).lineTo(2, -2).lineTo(w, 0).lineTo(2, 2).lineTo(0, w).lineTo(-2, 2).lineTo(-w, 0).lineTo(-2, -2).fill(C.gold);
+  fx.x = Math.round(s.width * 0.28); fx.y = -Math.round(s.height * 0.72);
+  s.addChild(fx);
+  s.__maxFx = fx;
+  return s;
+}
                                                      
 const SLOT_NAME                          = { leader: '统领', front: '前排', back: '后排', flank: '侧翼' };
 function roomOf(uid        ) {
@@ -454,8 +466,7 @@ const CST_GRID = 24;
 
 const staleTex                       = [];
 
-function buildCustomTex(d           ) {
-  const key = `tex-${d.id}`;
+function buildPartsTex(key, parts) {
   const cont = new PIXI.Container();
   // 部件素材本身朝右，拼接体要和其它怪物一样朝左：整组镜像一次。
   // 逐件 flip 会把臂/头挪到身体另一侧，拼出错位怪。
@@ -466,7 +477,7 @@ function buildCustomTex(d           ) {
   const order            = ['legs', 'core', 'arm', 'head'];
   const INV = 1 / 8;
   for (const cat of order) {
-    const p = partById(d.parts[cat]);
+    const p = partById(parts[cat]);
     if (!p) continue;
     const tex = TEX[p.tex];
     if (!tex) continue;
@@ -489,6 +500,15 @@ function buildCustomTex(d           ) {
     if (old && old !== rt && 'destroy' in old) staleTex.push(old                      );
   } catch { /* 烘焙失败时保留白块占位，不阻断 */ }
   cont.destroy({ children: true });
+}
+
+function buildCustomTex(d           ) {
+  buildPartsTex(`tex-${d.id}`, d.parts);
+}
+
+function ensureKindTex(k) {
+  if (k?.parts && !TEX[k.tex]) buildPartsTex(k.tex, k.parts);
+  return k;
 }
 
 let bdTile                           = null;
@@ -715,7 +735,7 @@ let graft               = null;
 function openGraft(uid        ) {
   const inst = instById(uid);
   if (!inst) return;
-  graft = { uid, cat: 'core', picks: [...(inst.graft ?? [])] };
+  graft = { uid, cat: 'core', picks: [...(inst.graft ?? [])], preview: null };
   stitch = null;
   forge = null;
   smith = null;
@@ -723,6 +743,13 @@ function openGraft(uid        ) {
   render();
 }
 function closeGraft() { graft = null; playSfx('tab'); render(); }
+
+function previewGraftPart(id        ) {
+  const gf = graft ;
+  gf.preview = id;
+  playSfx('tab');
+  render();
+}
 
 function togglePick(id        ) {
   const gf = graft ;
@@ -746,9 +773,11 @@ function confirmGraft() {
   const cost = graftCostOf(cur, gf.picks);
   const pulled = cur.filter((id) => !gf.picks.includes(id)).length;
   const mana = cost.mana + pulled * GRAFT_PULL_MANA;
-  if (S.bone < cost.bone || S.mana < mana) { say('资源不足'); return; }
+  const relic = gf.picks.filter((id) => partById(id)?.legendary && !cur.includes(id)).length;
+  if (S.bone < cost.bone || S.mana < mana || S.relic < relic) { say(relic && S.relic < relic ? '英雄遗物不足' : '资源不足'); return; }
   S.bone -= cost.bone;
   S.mana -= mana;
+  S.relic -= relic;
   inst.graft = gf.picks.length ? [...gf.picks] : undefined;
   // 站位可能被改造改变（比如装了蝠翼变后排）：站错位就先请下场
   const k = instKind(inst);
@@ -784,7 +813,7 @@ function drawGraft() {
     const x = 20 + i * 44;
     g.rect(x, 34, 42, 18).fill(on ? C.purpleDark : C.ink).stroke({ width: 1, color: on ? C.purple : C.stoneLit, alignment: 0 });
     labelC(modalLayer, c.name, x + 21, 37, 12, on ? C.white : C.bone);
-    hits.add(x, 34, 42, 18, () => { gf.cat = c.cat; playSfx('tab'); render(); });
+    hits.add(x, 34, 42, 18, () => { gf.cat = c.cat; gf.preview = null; playSfx('tab'); render(); });
   });
 
   // 部件列表（两列，与缝合工坊同一套翻页）
@@ -795,20 +824,20 @@ function drawGraft() {
     const y = 56 + (i % 8) * 16;
     const open = partOpen(p);
     const on = gf.picks.includes(p.id);
-    g.rect(cx, y, 84, 14).fill(on ? C.wallLit : C.ink)
-      .stroke({ width: 1, color: on ? C.gold : p.diy ? C.purpleDark : open ? C.stoneLit : C.wall, alignment: 0 });
+    const preview = gf.preview === p.id;
+    g.rect(cx, y, 84, 14).fill(on ? C.wallLit : preview ? C.purpleDark : C.ink)
+      .stroke({ width: 1, color: preview ? C.gold : on ? C.purple : p.diy ? C.purpleDark : open ? C.stoneLit : C.wall, alignment: 0 });
     if (open && TEX[p.tex]) modalLayer.addChild(sprite(p.tex, cx + 8, y + 13, 12));
     label(modalLayer, cut(p.name, 3), cx + 16, y, 12, on ? C.white : p.diy ? C.purple : open ? C.bone : C.wallLit);
     label(modalLayer, open ? `${Math.round(p.bone * 1.2)}` : `${p.unlockRaid}轮`, cx + 64, y, 12, open ? C.gold : C.wallLit);
-    if (open) hits.add(cx, y, 84, 14, () => togglePick(p.id));
+    if (open) hits.add(cx, y, 84, 14, () => previewGraftPart(p.id));
   });
-  pager(g, `graft-${gf.cat}`, pp.pages, 20, 186, 84);
+  pager(g, `graft-${gf.cat}`, pp.pages, 20, 186, 156, '部件 ', modalLayer);
 
   // 右：改造前后对照 —— 玩家要的就是"这一改值不值"
   panelF(g, modalLayer, 'inset', 200, 34, 268, 146, C.ink);
-  modalLayer.addChild(sprite(base.tex, 232, 96, 40));
   label(modalLayer, cut(now.name, 8), 206, 38, 12, C.purple);
-  label(modalLayer, `Lv${inst.lv}（等级与经验保留）`, 206, 100, 12, C.stoneLit);
+  label(modalLayer, `Lv${inst.lv}`, 206, 56, 12, C.stoneLit);
   const rows                             = [
     ['生命', base.hp, now.hp], ['攻击', base.atk, now.atk],
     ['防御', base.def, now.def],
@@ -822,17 +851,26 @@ function drawGraft() {
   label(modalLayer, `速度 ${base.spd.toFixed(2)}`, 396, 54, 12, C.bone);
   label(modalLayer, now.spd === base.spd ? '—' : `→ ${now.spd.toFixed(2)}`, 396, 69, 12, now.spd > base.spd ? C.green : C.red);
   label(modalLayer, `站位 ${now.row === 'front' ? '前排' : now.row === 'back' ? '后排' : '任意'}`, 396, 84, 12, now.row === base.row ? C.stoneLit : C.gold);
-  label(modalLayer, cut(`技能・${now.skill}`, 16), 206, 118, 12, C.purple);
-  boundedText(modalLayer, now.skillDesc, 206, 133, 254, 26, 12, C.stoneLit);
-  label(modalLayer, cut(gf.picks.length ? `移植：${gf.picks.map((id) => partById(id)?.name ?? '').join('、')}` : '尚未选择移植件', 30), 206, 164, 12, gf.picks.length ? C.gold : C.stoneLit);
+  const previewPart = partById(gf.preview ?? '');
+  label(modalLayer, cut(`技能・${now.skill}`, 16), 206, 102, 12, C.purple);
+  boundedText(modalLayer, now.skillDesc, 206, 117, 254, 24, 11, C.stoneLit);
+  if (previewPart) {
+    label(modalLayer, `${previewPart.name}${gf.picks.includes(previewPart.id) ? '・已选用' : '・预览'}`, 206, 140, 11, C.gold);
+    boundedText(modalLayer, previewPart.desc, 206, 153, 184, 24, 9, C.bone);
+    button(g, modalLayer, hits, 396, 146, 64, 24, gf.picks.includes(previewPart.id) ? '取消选用' : '确认选用',
+      () => togglePick(previewPart.id), { size: 10, fill: C.purpleDark, border: C.purple, color: C.white });
+  } else {
+    label(modalLayer, '先点部件名称预览效果，再确认选用', 206, 151, 11, C.stoneLit);
+  }
 
   // 底部：花费与确认
   const cur = inst.graft ?? [];
   const cost = graftCostOf(cur, gf.picks);
   const pulled = cur.filter((id) => !gf.picks.includes(id)).length;
   const mana = cost.mana + pulled * GRAFT_PULL_MANA;
-  const can = (cost.bone > 0 || mana > 0) && S.bone >= cost.bone && S.mana >= mana;
-  label(modalLayer, `移植 ${cost.bone}骨 + ${mana}魔${pulled ? `（含摘除${pulled}件）` : ''}`, 20, 206, 12, can ? C.gold : C.red);
+  const relic = gf.picks.filter((id) => partById(id)?.legendary && !cur.includes(id)).length;
+  const can = (cost.bone > 0 || mana > 0 || relic > 0) && S.bone >= cost.bone && S.mana >= mana && S.relic >= relic;
+  label(modalLayer, `移植 ${cost.bone}骨 + ${mana}魔${relic ? ` + ${relic}遗物` : ''}${pulled ? `（摘${pulled}）` : ''}`, 20, 206, 12, can ? C.gold : C.red);
   label(modalLayer, `最多 ${GRAFT_CAP} 件・每件 ${GRAFT_MANA} 魔・摘除 ${GRAFT_PULL_MANA} 魔`, 20, 222, 12, C.stoneLit);
   button(g, modalLayer, hits, 372, 204, 96, 20, '动手改造', () => confirmGraft(),
     { size: 12, enabled: can, fill: C.purpleDark, border: C.purple, color: C.white });
@@ -1549,13 +1587,15 @@ function drawStitch() {
   const payBone = st.editUid != null ? Math.max(0, cost - oldCost) : cost;
   const capFull = st.editUid == null && S.customs.length >= CUSTOM_CAP;
   const slotFull = st.editUid == null && S.monsters.length >= 10;
-  const can = S.bone >= payBone && S.mana >= manaCost && !capFull && !slotFull;
-  label(modalLayer, st.editUid != null ? `重组 ${payBone}骨+${manaCost}魔` : `造价 ${cost}骨+${manaCost}魔`, 200, 168, 12, can ? C.gold : C.red);
+  const relicCost = st.editUid != null ? Math.max(0, legendaryPartCount(st.parts) - legendaryPartCount(editBaseParts ?? st.parts)) : legendaryPartCount(st.parts);
+  const can = S.bone >= payBone && S.mana >= manaCost && S.relic >= relicCost && !capFull && !slotFull;
+  label(modalLayer, `${st.editUid != null ? `重组 ${payBone}` : `造价 ${cost}`}骨+${manaCost}魔${relicCost ? `+${relicCost}遗物` : ''}`, 200, 168, 12, can ? C.gold : C.red);
   let note = '';
   if (capFull) note = `图纸已满（${CUSTOM_CAP}）`;
   else if (slotFull) note = '怪物栅已满（10）';
   else if (S.bone < payBone) note = '骨币不足';
   else if (S.mana < manaCost) note = '魔质不足';
+  else if (S.relic < relicCost) note = '英雄遗物不足';
   if (note) label(modalLayer, note, 200, 184, 12, C.red);
   button(g, modalLayer, hits, 380, 216, 88, 20, st.editUid != null ? '重组' : '缝合！', () => confirmStitch(), {
     size: 12, enabled: can, fill: C.purpleDark, border: C.purple, color: C.white,
@@ -1833,7 +1873,10 @@ function confirmStitch() {
     ? Math.max(0, afMana - affixMana(editBaseAffixes ?? st.affixes))
     : STITCH_MANA + afMana;
   const payBone = st.editUid != null ? Math.max(0, cost - boneCost(editBaseParts ?? st.parts)) : cost;
-  if (S.bone < payBone || S.mana < manaCost) { say('资源不足'); return; }
+  const relicCost = st.editUid != null
+    ? Math.max(0, legendaryPartCount(st.parts) - legendaryPartCount(editBaseParts ?? st.parts))
+    : legendaryPartCount(st.parts);
+  if (S.bone < payBone || S.mana < manaCost || S.relic < relicCost) { say(relicCost && S.relic < relicCost ? '英雄遗物不足' : '资源不足'); return; }
   const name = (st.name || autoName(st.parts, Date.now(), st.affixes)).slice(0, 8);
   if (st.editUid != null) {
     const inst = instById(st.editUid);
@@ -1841,6 +1884,7 @@ function confirmStitch() {
     if (!def) { closeStitch(); return; }
     S.bone -= payBone;
     S.mana -= manaCost;
+    S.relic -= relicCost;
     def.parts = { ...st.parts };
     def.affixes = { ...st.affixes };
     def.name = name;
@@ -1856,6 +1900,7 @@ function confirmStitch() {
   if (S.monsters.length >= 10) { say('怪物栅已满（10）'); return; }
   S.bone -= cost;
   S.mana -= manaCost;
+  S.relic -= relicCost;
   const def            = { id: `cst${S.cstNext++}`, name, parts: { ...st.parts }, affixes: { ...st.affixes } };
   S.customs.push(def);
   syncCustoms();
@@ -2083,13 +2128,13 @@ function slotBox(g               , x        , y        , w        , h        , u
   const inst = which === 'leader' ? undefined : instById(uid);
   if (ch) {
     const k = monKind(ch.race);
-    uiLayer.addChild(sprite(k.tex, x + w / 2, y + h - 11 + bounce, 32));
+    uiLayer.addChild(markMaxLevel(sprite(k.tex, x + w / 2, y + h - 11 + bounce, 32), ch.lv >= CHAMP_LV_CAP));
     const ft = fatigueTier(ch.fatigue);
     labelC(uiLayer, `Lv${ch.lv}`, x + w / 2, y + h - 13, 12, ft.bad || ch.wounds ? C.red : C.gold);
     for (let i2 = 0; i2 < (ch.wounds || 0); i2++) g.rect(x + w - 5 - i2 * 4, y + 3, 3, 3).fill(C.red);
   } else if (inst) {
     const k = instKind(inst);
-    uiLayer.addChild(sprite(k.tex, x + w / 2, y + h - 11 + bounce, 25));
+    uiLayer.addChild(markMaxLevel(sprite(k.tex, x + w / 2, y + h - 11 + bounce, 25), inst.lv >= 5));
     labelC(uiLayer, `Lv${inst.lv}`, x + w / 2, y + h - 13, 12, C.bone);
   } else {
     labelC(uiLayer, locked ? '锁' : name, x + w / 2, y + h / 2 - 7, 12, which === 'leader' ? C.goldDark : C.stoneLit);
@@ -2142,7 +2187,7 @@ function drawSidePanel(g               ) {
         const ft = fatigueTier(c.fatigue);
         // 一行式：名字/等级/状态同基线，20px 行里两行必压字（点阵盒 15px）
         g.rect(340, y, 130, 20).fill(here ? C.wallLit : C.ink).stroke({ width: 1, color: here ? C.gold : C.goldDark, alignment: 0 });
-        uiLayer.addChild(sprite(monKind(c.race).tex, 348, y + 19, 16));
+        uiLayer.addChild(markMaxLevel(sprite(monKind(c.race).tex, 348, y + 19, 16), c.lv >= CHAMP_LV_CAP));
         label(uiLayer, cut(c.name.split('·')[0], 4), 358, y + 3, 12, here ? C.white : C.gold);
         label(uiLayer, `${c.lv}`, 410, y + 3, 12, C.bone);
         label(uiLayer, ft.bad ? ft.text.slice(0, 2) : at < 0 ? '待' : `${at + 1}房`, 432, y + 3, 12, ft.bad ? C.red : at < 0 ? C.green : C.gold);
@@ -2166,7 +2211,7 @@ function drawSidePanel(g               ) {
       const at = roomOf(inst.uid);
       const here = at === room && S.rooms[room][which] === inst.uid;
       g.rect(340, y, 130, 18).fill(here ? C.wallLit : C.ink).stroke({ width: 1, color: C.stoneLit, alignment: 0 });
-      const s = sprite(k.tex, 348, y + 17, 15);
+      const s = markMaxLevel(sprite(k.tex, 348, y + 17, 15), inst.lv >= 5);
       uiLayer.addChild(s);
       label(uiLayer, `${cut(k.name, 4)} Lv${inst.lv}`, 360, y + 3, 12, here ? C.white : C.bone);
       const tagCol = at < 0 ? C.green : here ? C.gold : C.red;
@@ -2246,7 +2291,7 @@ function drawSidePanel(g               ) {
 
   function drawMonInstCard(g, inst, k) {
     labelC(uiLayer, cut(`${k.name} Lv${inst.lv}`, 11), 405, 46, 12, C.white);
-    uiLayer.addChild(sprite(k.tex, 405, 96, 36));
+    uiLayer.addChild(markMaxLevel(sprite(k.tex, 405, 96, 36), inst.lv >= 5));
     const mult = LEVEL_MULT[inst.lv - 1];
     label(uiLayer, `生命 ${Math.round(k.hp * mult)}  攻击 ${Math.round(k.atk * mult)}`, 340, 100, 12, C.bone);
     label(uiLayer, `防御 ${Math.round(k.def * mult)}  速度 ${k.spd.toFixed(1)}`, 340, 114, 12, C.bone);
@@ -2295,7 +2340,6 @@ function drawSidePanel(g               ) {
   function drawMonInstDetail(g, inst, k) {
     const gcount = (inst.graft ?? []).length;
     labelC(uiLayer, cut(`${k.name} Lv${inst.lv}`, 11), 405, 46, 12, C.white);
-    uiLayer.addChild(sprite(k.tex, 405, 78, 32));
     const mult = LEVEL_MULT[inst.lv - 1];
     label(uiLayer, `生命 ${Math.round(k.hp * mult)}  攻击 ${Math.round(k.atk * mult)}`, 340, 66, 12, C.bone);
     label(uiLayer, `防御 ${Math.round(k.def * mult)}  速度 ${k.spd.toFixed(1)}`, 340, 80, 12, C.bone);
@@ -2346,7 +2390,6 @@ function drawSidePanel(g               ) {
     }
     const k = monKind(sel.id);
     labelC(uiLayer, k.name, 405, 44, 12, isCustomKind(k.id) ? C.purple : C.white);
-    uiLayer.addChild(sprite(k.tex, 405, 94, 36));
     label(uiLayer, `生命 ${k.hp}  攻击 ${k.atk}`, 340, 98, 12, C.bone);
     label(uiLayer, `防御 ${k.def}  速度 ${k.spd.toFixed(1)}`, 340, 117, 12, C.bone);
     label(uiLayer, `站位 ${k.row === 'front' ? '前排' : k.row === 'back' ? '后排' : '任意'}`, 340, 136, 12, C.bone);
@@ -3061,7 +3104,7 @@ function drawRoster(g               ) {
     const at = roomOfChamp(c.uid);
     const ft = fatigueTier(c.fatigue);
     g.rect(8, y, 150, 26).fill(on ? C.wallLit : C.ink).stroke({ width: 1, color: on ? C.gold : C.goldDark, alignment: 0 });
-    uiLayer.addChild(sprite(monKind(c.race).tex, 20, y + 25, 24));
+    uiLayer.addChild(markMaxLevel(sprite(monKind(c.race).tex, 20, y + 25, 24), c.lv >= CHAMP_LV_CAP));
     const nm = c.name.split('·')[0];
     label(uiLayer, nm.length > 4 ? `${nm.slice(0, 4)}…` : nm, 34, y + 6, 12, on ? C.white : C.gold);
     label(uiLayer, `${c.lv}`, 86, y + 6, 12, C.bone);
@@ -3250,7 +3293,6 @@ function drawChampInfo(g, c) {
   const st = statOf(c, chem.map);
   const ti = activeTitleOf(c);
   label(uiLayer, cut(`${c.name}${ti ? `・${ti.name}` : ''}`, 12), 174, 64, 12, C.gold);
-  uiLayer.addChild(sprite(monKind(c.race).tex, 446, 84, 32));
 
   // 左列：基础属性
   label(uiLayer, '基础属性', 174, 80, 12, C.gold);
@@ -3261,7 +3303,9 @@ function drawChampInfo(g, c) {
   label(uiLayer, `受伤 ${Math.round(st.dmgTakenMult * 100)}%`, 250, 96, 12, C.bone);
   label(uiLayer, `经验 ${Math.round(st.xpMult * 100)}%`, 250, 112, 12, C.bone);
   label(uiLayer, `冷却 ${Math.round(st.eff.skillCdMult * 100)}%`, 250, 128, 12, C.bone);
-  label(uiLayer, cut(auraText(st.auraId, st.auraPow), 16), 250, 144, 12, C.gold);
+  const auraFull = auraText(st.auraId, st.auraPow);
+  const auraBlock = boundedText(uiLayer, auraFull, 250, 144, 66, 15, 10, C.gold);
+  if (auraBlock.truncated) hits.add(248, 142, 70, 18, () => openDetailPopup('英雄被动', auraFull, C.gold));
 
   // 左列：特质
   let ty = 162;
@@ -3409,7 +3453,6 @@ function drawChampGear(g               , c       ) {
       uiLayer.addChild(sprite(cur.tex, 313, y + 17, 18));
       label(uiLayer, cut(cur.name, 5), 196, y + 1, 12, RANK_COL[cur.rank]);
       const desc = boundedText(uiLayer, cur.desc, 178, y + 18, 112, 14, 10, C.steel);
-      hits.add(176, y + 16, 116, 15, () => openGearDetail(cur));
       button(g, uiLayer, hits, 292, y + 1, 24, 13, '详', () => openGearDetail(cur),
         { size: 10, border: desc.truncated ? C.gold : C.stoneLit, color: desc.truncated ? C.gold : C.stoneLit });
     } else {
@@ -3421,8 +3464,9 @@ function drawChampGear(g               , c       ) {
   // 卸下 / 重铸 / 锻造台
   const curSel = gearById(eq[gearSlotSel] ?? '');
   const summary = curSel ? curSel.desc : set ? `${set.name}：${set.desc}` : `仓库 ${S.vault.length}/${GEAR_CAP}・自制 ${S.forged.length}/${FORGED_CAP}`;
-  const summaryBlock = boundedText(uiLayer, summary, 174, 187, 150, 24, 10, curSel ? C.steel : set ? C.gold : C.stoneLit);
-  if (curSel && summaryBlock.truncated) hits.add(174, 186, 150, 26, () => openGearDetail(curSel));
+  boundedText(uiLayer, summary, 174, 187, 116, 24, 10, curSel ? C.steel : set ? C.gold : C.stoneLit);
+  if (curSel) button(g, uiLayer, hits, 292, 190, 30, 16, '详情', () => openGearDetail(curSel),
+    { size: 10, border: C.goldDark, color: C.gold });
   button(g, uiLayer, hits, 174, 214, 46, 15, '卸下', () => unequipGear(c, gearSlotSel),
     { size: 12, enabled: !!curSel, border: C.red, color: curSel ? C.white : C.stoneLit });
   const rf = curSel ? REFORGE_MANA : 0;
@@ -3448,9 +3492,10 @@ function drawChampGear(g               , c       ) {
       button(g, uiLayer, hits, 424, y + 1, 44, 13, `熔${MELT_MANA[it.k.rank]}`, () => meltGear(it.idx),
         { size: 12, border: C.purple, color: C.purple });
     }
-    boundedText(uiLayer, it.k.desc, 336, y + 18, 132, 13, 10, C.stoneLit);
+    boundedText(uiLayer, it.k.desc, 336, y + 18, 94, 13, 10, C.stoneLit);
     hits.add(332, y, 66, 16, () => equipGear(c, it.idx));
-    hits.add(332, y + 17, 140, 15, () => openGearDetail(it.k));
+    button(g, uiLayer, hits, 432, y + 17, 36, 13, '详情', () => openGearDetail(it.k),
+      { size: 10, border: C.goldDark, color: C.gold });
     y += 34;
   }
   pager(g, `vault-${gearSlotSel}`, pv.pages, 332, 214, 140);
@@ -3585,7 +3630,7 @@ function pageMob(g               ) {
     const selected = sel?.kind === 'inst' && sel.uid === inst.uid;
     const ready = inst.lv < 5 && inst.xp >= XP_PER_LEVEL[inst.lv - 1];
     g.rect(168, y2, 160, 18).fill(selected ? C.wallLit : C.wall).stroke({ width: 1, color: selected ? C.gold : C.ink, alignment: 0 });
-    uiLayer.addChild(sprite(k.tex, 178, y2 + 17, 16));
+    uiLayer.addChild(markMaxLevel(sprite(k.tex, 178, y2 + 17, 16), inst.lv >= 5));
     label(uiLayer, `${cut(k.name, 4)} Lv${inst.lv}`, 190, y2 + 2, 12,
       isCustomKind(inst.kind) ? C.purple : isEliteKind(inst.kind) ? C.gold : C.bone);
     const at = roomOf(inst.uid);
@@ -3631,7 +3676,7 @@ function shopItems()             {
 }
 
 function pageShop(g               ) {
-  label(uiLayer, '工坊：解锁与强化（消耗魔质）', 10, 40, 12, C.white);
+  label(uiLayer, `工坊：解锁与强化・英雄遗物 ${S.relic}`, 10, 40, 12, C.white);
   // 叙事者（LLM）接入：三档模式 + 造件入口
   const mode = loadMode();
   const MODES                                  = [
@@ -3673,6 +3718,11 @@ function pageShop(g               ) {
     hits.add(x, y, 158, 20, () => { sel = { kind: 'shop', id: it.id }; playSfx('tab'); render(); });
   });
   pager(g, 'shop', ps.pages, 6, 146, 158, '解锁 ');
+  button(g, uiLayer, hits, 170, 146, 158, 18, '熔铸遗物 5000骨+5000魔', () => {
+    if (S.bone < 5000 || S.mana < 5000) { say('熔铸英雄遗物需要5000骨币与5000魔质'); return; }
+    S.bone -= 5000; S.mana -= 5000; S.relic += 1;
+    playSfx('buy'); persist(); say('英雄遗物熔铸完成'); render();
+  }, { size: 10, enabled: S.bone >= 5000 && S.mana >= 5000, fill: C.purpleDark, border: C.gold, color: C.gold });
   drawSidePanel(g);
 }
 
@@ -3788,6 +3838,9 @@ function initBattleLayers() {
 function startBattle() {
   if (screen !== 'manage') return;
   if (stitch) closeStitch();
+  // 战斗逻辑只携带纹理 key；开战前先烘焙固定怪物/精英怪物的四部位组合与当前改造外观。
+  for (const m of S.monsters) instKind(m);
+  for (const c of S.champs) monKind(c.race);
   const raid = currentRaid();
   battle = createBattle(raid, S.rooms, S.monsters,
     { sealMax: sealMax(), trapPower: trapPower(), mods: battleMods(), champs: champStatMap() });
@@ -3881,7 +3934,7 @@ function buildBattleScene() {
 function ensureSprite(u      ) {
   if (unitSprites.has(u)) return;
   // 角色源图已统一朝向，战斗绘制无需运行时翻转。
-  const s = sprite(u.tex, 0, 0, u.legend ? 40 : 30);
+  const s = markMaxLevel(sprite(u.tex, 0, 0, u.legend ? 40 : 30), u.side === 'hero' ? u.lv >= CHAMP_LV_CAP : u.lv >= 5);
   unitLayer.addChild(s);
   unitSprites.set(u, s);
 }
@@ -4020,6 +4073,7 @@ function updateBattleVisuals(dt        ) {
       else if (u.slowT > 0) s.tint = 0xa8d0ff;
       else s.tint = 0xffffff;
     }
+    if (s.__maxFx) s.__maxFx.alpha = 0.42 + Math.sin(b.time * 5 + u.homeX * 0.03) * 0.38;
     if (!u.alive) return;
     // 状态图标：减速/束缚/魅惑/沉默
     const iconY = FLOOR_Y + u.y - 40;
@@ -4220,6 +4274,7 @@ function finishBattle() {
   resultLayerBuilt = false;
   S.bone += r.bone;
   S.mana += r.mana;
+  S.relic += r.relicLoot ?? 0;
   for (const x of r.xp) {
     const inst = instById(x.uid);
     if (inst && inst.lv < 5) inst.xp += x.xp;
@@ -4326,7 +4381,8 @@ function buildResultOverlay() {
   if (champLines.length) labelC(overlay, champLines.join('  '), 240, y, 12, C.gold);
   y += 19;
   const loot = (r.loot ?? []).map((id) => gearById(id)?.name ?? '').filter(Boolean);
-  labelC(overlay, loot.length ? `缴获：${cut(loot.join('、'), 20)}` : '无缴获（需击倒勇者）', 240, y, 12, loot.length ? C.purple : C.stoneLit);
+  const lootLine = `${loot.length ? `缴获：${cut(loot.join('、'), 16)}` : '无装备缴获'}${r.relicLoot ? '・英雄遗物×1' : ''}`;
+  labelC(overlay, lootLine, 240, y, 12, loot.length || r.relicLoot ? C.purple : C.stoneLit);
   const isFinal = r.win && !S.overtime && b.raid.no === 12;
   button(g, overlay, hits, 100, 196, 130, 28, r.win ? (isFinal ? '观看结局' : '继续') : '重试本轮', () => afterResult(), { fill: C.greenDark, border: C.green, color: C.white });
   button(g, overlay, hits, 250, 196, 130, 28, '返回经营', () => { backToManage(); }, { fill: C.wallLit, border: C.bone });
@@ -4563,6 +4619,7 @@ window.__debug = {
   giveResources: (b        , m        ) => { S.bone += b; S.mana += m; render(); },
   forceRaid: (n        ) => { S.raidNo = n; persist(); render(); },
   devRecruit: (kind        ) => { const inst              = { uid: S.uidNext++, kind, lv: 1, xp: 0 }; S.monsters.push(inst); render(); return inst.uid; },
+  devAssign: (room, slot, uid) => { assign(room, slot, uid); return S.rooms[room]?.[slot] ?? null; },
   devPlace: (room        , which         , uid        ) => { S.rooms[room][which] = uid; persist(); render(); },
   devLeader: (room        , uid               ) => { S.rooms[room].leader = uid; if (uid == null) S.rooms[room].flank = null; persist(); render(); },
   devSelKind: (id        ) => { sel = { kind: 'monkind', id }; render(); },
@@ -4604,8 +4661,9 @@ window.__debug = {
   affixList: (cat         ) => PART_AFFIXES.filter((a) => a.cat === cat).map((a) => ({ id: a.id, name: a.name, mana: a.mana, diy: !!a.diy })),
   setLlm: (m                       ) => { saveMode(m); restoreBackend(); render(); return loadMode(); },
   // 改造台自测钩子
-  get graft() { return graft ? { uid: graft.uid, cat: graft.cat, picks: [...graft.picks] } : null; },
+  get graft() { return graft ? { uid: graft.uid, cat: graft.cat, picks: [...graft.picks], preview: graft.preview } : null; },
   graftOpen: (uid        ) => { openGraft(uid); return graft != null; },
+  graftPreview: (id        ) => { if (!graft) return null; previewGraftPart(id); return graft.preview; },
   graftPick: (id        ) => { if (!graft) return null; togglePick(id); return [...graft.picks]; },
   graftCat: (c         ) => { if (graft) { graft.cat = c; render(); } },
   graftGo: () => { if (!graft) return null; confirmGraft(); return true; },
@@ -4629,6 +4687,7 @@ window.__debug = {
   titlePreview: (uid, id) => { const c = champById(uid); if (c && unlockedTitles(c).includes(id)) { heroSel = uid; heroView = 'title'; champTitleExpand = id; render(); } return champTitleExpand; },
   titleActivate: (uid, id) => { const c = champById(uid); if (c && unlockedTitles(c).includes(id)) { c.activeTitle = id; champTitleExpand = id; persist(); render(); } return c?.activeTitle ?? null; },
   get vault() { return [...S.vault]; },
+  get relic() { return S.relic; },
   gearOf: (uid        ) => ({ ...(champById(uid)?.gear ?? {}) }),
   champStatOf: (uid        ) => { const c = champById(uid); return c ? statOf(c) : null; },
   devLoot: (id        ) => { if (gearById(id)) { S.vault.push(id); persist(); render(); } return S.vault.length; },
@@ -4763,7 +4822,7 @@ window.__debug = {
     }
     return out;
   },
-  get partList() { return PARTS.map((p) => ({ id: p.id, cat: p.cat, name: p.name, bone: p.bone, unlockRaid: p.unlockRaid, diy: !!p.diy, tex: p.tex })); },
+  get partList() { return PARTS.map((p) => ({ id: p.id, cat: p.cat, name: p.name, bone: p.bone, unlockRaid: p.unlockRaid, diy: !!p.diy, legendary: !!p.legendary, tex: p.tex })); },
   get powerMenu() { return POWER_MENU.map((p) => ({ id: p.id, name: p.name, cost: p.cost, cats: p.cats })); },
   get storyScenes() { return SCENES.map((x) => ({ id: x.id, once: !!x.once, chained: !!x.chained, kind: x.input ? 'input' : 'choice' })); },
 };

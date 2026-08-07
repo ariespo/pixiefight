@@ -104,6 +104,25 @@ export const GEARS             = [
     desc: '普攻溅射 20%', mod: { eff: { splash: 0.2 } } },
   { id: 'hand-whet', name: '磨石护手', slot: 'hand', tex: 'gear-axe', rank: 0,
     desc: '攻速 +8%', mod: { spd: 1.08 } },
+  // 扩充缴获池：每槽新增三件，并加入极低概率的神话档，避免后期反复看到同一批战利品。
+  { id: 'crown-bishop', name: '逆礼主教冠', slot: 'crown', tex: 'gear-crown', rank: 3,
+    desc: '光环 +60%，技能冷却 -20%，受伤 +8%', mod: { aura: 1.6, cd: 0.8, dmgTaken: 1.08 } },
+  { id: 'crown-gallows', name: '绞架花环', slot: 'crown', tex: 'gear-mask', rank: 2,
+    desc: '同房攻速 +16%，战后经验 +18%', mod: { xp: 1.18, eff: { allySpd: 1.16 } } },
+  { id: 'crown-ash', name: '灰烬额带', slot: 'crown', tex: 'gear-robe', rank: 1,
+    desc: '疲劳增长 -16%，每秒回复 1', mod: { fatigue: 0.84, eff: { hpRegen: 1 } } },
+  { id: 'body-saint', name: '空圣骸甲', slot: 'body', tex: 'gear-plate', rank: 3,
+    desc: '生命 +38%，受伤 -18%，攻速 -12%', mod: { hp: 1.38, dmgTaken: 0.82, spd: 0.88 } },
+  { id: 'body-mirror', name: '碎镜法衣', slot: 'body', tex: 'gear-robe', rank: 2,
+    desc: '反弹 28% 伤害，防御 +3，生命 -8%', mod: { hp: 0.92, def: 3, eff: { thorns: 0.28 } } },
+  { id: 'body-carrion', name: '食腐斗篷', slot: 'body', tex: 'gear-robe', rank: 1,
+    desc: '击杀回血 8%，生命 +8%', mod: { hp: 1.08, eff: { bloodthirsty: 0.08 } } },
+  { id: 'hand-eclipse', name: '蚀日刑刃', slot: 'hand', tex: 'gear-axe', rank: 3,
+    desc: '攻击 +42%，残血处决，攻速 -10%', mod: { atk: 1.42, spd: 0.9, eff: { execute: 0.38 } } },
+  { id: 'hand-bell', name: '丧钟权杖', slot: 'hand', tex: 'gear-lantern', rank: 2,
+    desc: '技能伤害 +25%，冷却 -12%', mod: { cd: 0.88, eff: { skillDmg: 1.25 } } },
+  { id: 'hand-needle', name: '告解长针', slot: 'hand', tex: 'gear-fang', rank: 1,
+    desc: '普攻中毒 5，攻击 +8%', mod: { atk: 1.08, eff: { venomHit: 5 } } },
 ];
 
 // 自制装备的运行时注册表：读档时把图纸派生成 GearKind 塞进来，
@@ -119,7 +138,7 @@ export function registerForged(list              ) {
 export const forgedKinds = () => FORGED.slice();
 export const gearById = (id        )                       =>
   GEARS.find((g) => g.id === id) ?? FORGED.find((g) => g.id === id);
-export const GEAR_CAP = 12;            // 仓库上限，满了掉落会被顶掉（提示玩家熔掉）
+export const GEAR_CAP = 18;            // 扩充掉落池后同步增加仓库容量
 export const MELT_MANA = [4, 7, 12, 18];   // 熔掉一件返还的魔质，按档（白/蓝/金/红）
 export const REFORGE_MANA = 20;        // 重铸：把一件装备换成同槽同档的另一件
 
@@ -132,9 +151,10 @@ export function rollLoot(kills        , maxLv        , rng              )       
   for (let i = 0; i < n; i++) {
     const r = rng();
     // 勇者等级越高，金装机会越大；档次概率随 maxLv 平滑上移
-    const goldP = Math.min(0.22, 0.03 + maxLv * 0.016);
+    const mythicP = maxLv >= 8 ? Math.min(0.035, (maxLv - 7) * 0.006) : 0;
+    const goldP = mythicP + Math.min(0.22, 0.03 + maxLv * 0.016);
     const blueP = goldP + Math.min(0.45, 0.2 + maxLv * 0.02);
-    const rank = r < goldP ? 2 : r < blueP ? 1 : 0;
+    const rank = r < mythicP ? 3 : r < goldP ? 2 : r < blueP ? 1 : 0;
     const pool = GEARS.filter((g) => g.rank === rank);   // 只掉固定件；自制装备只能自己打
     out.push(pool[Math.floor(rng() * pool.length)].id);
   }

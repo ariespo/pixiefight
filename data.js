@@ -251,7 +251,8 @@ const ELITE_MIN                         = { lich: 2, bonedragon: 3, hundredarm: 
 export const ELITES                = LEGENDS.map((l) => ({
   ...l,
   id: `elite-${l.id}`,
-  name: `精英${l.name.length > 3 ? l.name.slice(0, 2) : l.name}`,
+  // 精英身份由金色边框与解锁轮次表达，名字保持物种本名，避免列表里反复堆“精英”前缀。
+  name: `${l.name.length > 3 ? l.name.slice(0, 2) : l.name}`,
   cost: Math.round(l.cost * 0.72),
   hp: Math.round(l.hp * 0.92),
   // 统领的攻击数值本来是"靠光环带兵"的低值；精英没有光环，必须自己打得动，

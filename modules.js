@@ -146,6 +146,29 @@ PARTS.push(
     eff: { entry: 'webEntry', dodge: 0.18 } },
 );
 
+// 传奇部件：每个部位两件。造价之外还要消耗一份「英雄遗物」，遗物由工坊熔铸或战胜勇者时低概率缴获。
+PARTS.push(
+  { id: 'legend-hellheart', cat: 'core', name: '狱心核', tex: 'part-core-magma', bone: 180, hp: 190, atk: 34, def: 9, spd: 0, unlockRaid: 1, word: '狱', legendary: true,
+    desc: '传奇被动·狱心：反弹25%伤害，每秒回复7点生命', eff: { passive: 'coreMagma', thorns: 0.25, hpRegen: 7 } },
+  { id: 'legend-starvoid', cat: 'core', name: '星渊核', tex: 'part-core-void', bone: 170, hp: 160, atk: 42, def: 7, spd: 0.12, unlockRaid: 1, word: '星', legendary: true,
+    desc: '传奇被动·星渊：技能冷却-25%，同房怪物受伤-12%', eff: { passive: 'voidCore', skillCdMult: 0.75, bulwarkAura: 0.88 } },
+  { id: 'legend-doomface', cat: 'head', name: '末日面', tex: 'part-head-diadem', bone: 120, hp: 22, atk: 34, def: 5, spd: 0.08, unlockRaid: 1, word: '末', legendary: true,
+    desc: '传奇普攻：叠加12%易伤并延后目标技能', eff: { onHit: 'delay', markHit: 0.12 } },
+  { id: 'legend-moonmaw', cat: 'head', name: '蚀月颚', tex: 'part-head-maw', bone: 125, hp: 28, atk: 38, def: 4, spd: 0.14, unlockRaid: 1, word: '蚀', legendary: true,
+    desc: '传奇普攻：造成吸血并溅射邻近目标', eff: { onHit: 'lifesteal', lifestealPct: 0.3, splash: 0.5 } },
+  { id: 'legend-gravehand', cat: 'arm', name: '葬世臂', tex: 'part-arm-reaper', bone: 155, hp: 12, atk: 48, def: 3, spd: 0.06, unlockRaid: 1, word: '葬', legendary: true,
+    desc: '传奇技能·收魂：重创全体勇者并处决残血目标' },
+  { id: 'legend-sunfist', cat: 'arm', name: '黑日拳', tex: 'part-arm-magmafist', bone: 160, hp: 18, atk: 52, def: 4, spd: -0.08, unlockRaid: 1, word: '日', legendary: true,
+    desc: '传奇技能·熔喷：全体重击并施加长时间燃烧' },
+  { id: 'legend-nightwing', cat: 'legs', name: '永夜翼', tex: 'part-legs-wing', bone: 115, hp: 30, atk: 12, def: 4, spd: 0.42, unlockRaid: 1, word: '夜', legendary: true,
+    desc: '传奇足部：后排站位，22%闪避且可直击后排', eff: { dodge: 0.22, reach: true } },
+  { id: 'legend-thronelegs', cat: 'legs', name: '冥王辇', tex: 'part-legs-palanquin', bone: 130, hp: 52, atk: 14, def: 8, spd: -0.08, unlockRaid: 1, word: '冥', legendary: true,
+    desc: '传奇足部：任意站位，入场为本房守军升起护盾', eff: { entry: 'courtEntry', dmgTakenMult: 0.9 } },
+);
+
+export const LEGENDARY_PARTS = () => PARTS.filter((p) => p.legendary);
+export const legendaryPartCount = (parts) => Object.values(parts ?? {}).filter((id) => partById(id)?.legendary).length;
+
                      
              
                
@@ -339,6 +362,8 @@ const SKILL_BY_ARM                                                           = {
   sceptre: { skill: 'decree', name: '敕令' },
   magmafist: { skill: 'eruption', name: '熔喷' },
   reaper: { skill: 'broodcall', name: '收魂' },
+  'legend-gravehand': { skill: 'broodcall', name: '收魂' },
+  'legend-sunfist': { skill: 'eruption', name: '熔喷' },
 };
 const ONHIT_BY_HEAD                                  = {
   skull: 'weaken', eye: 'pierceDef', maw: 'lifesteal', horn: 'charge',
@@ -346,6 +371,7 @@ const ONHIT_BY_HEAD                                  = {
   beak: 'plague', crown: 'command', swarm: 'bite', thorn: 'barb', choir: 'wail', frost: 'freeze',
   wolf: 'lifesteal', oracle: 'delay', ramhorn: 'charge', leech: 'plague',
   diadem: 'command', bell: 'tithe', eightfold: 'ensnare',
+  'legend-doomface': 'delay', 'legend-moonmaw': 'lifesteal',
 };
 // 头部件除 onHit 之外的附带机制
 const HEAD_EXTRA                                  = {
@@ -361,6 +387,7 @@ const PASSIVE_BY_CORE                                    = {
   plague: 'plagueCore', cage: 'cage', void: 'voidCore', hive: 'hive', clock: 'clock', tomb: 'tomb',
   marrow: 'regen', glassheart: 'crystal', stormcore: 'clock', abysscore: 'voidCore',
   throne: 'sovereign', magma: 'coreMagma', brood: 'coreBrood',
+  'legend-hellheart': 'coreMagma', 'legend-starvoid': 'voidCore',
 };
 // 核心件除被动之外的附带机制
 const CORE_EXTRA                                  = {
@@ -389,6 +416,8 @@ const LEGS_EXTRA                                  = {
   palanquin: { entry: 'courtEntry' },
   molten: { entry: 'moltenEntry', deathBurst: 30 },
   broodleg: { entry: 'webEntry', dodge: 0.18 },
+  'legend-nightwing': { dodge: 0.22, reach: true },
+  'legend-thronelegs': { entry: 'courtEntry', dmgTakenMult: 0.9 },
 };
 
 // 拼接体的最终数值/文案全部由部件派生：改部件表即改全部已造怪物，存档只存部件选择。
@@ -649,6 +678,40 @@ export const GRAFT_CAP = 2;
 export const GRAFT_MANA = 10;        // 每次移植的魔质
 export const GRAFT_PULL_MANA = 6;    // 摘除一件的魔质
 
+// 固定怪物也使用四部位蓝图。它们继续保留原 id 与原始数值，保证旧存档和平衡不变；
+// 改造时只替换对应部位的外观与职责，所以玩家能在所有固定/精英怪物身上看到真正的拼接结果。
+const NATIVE_PARTS = {
+  slime: { core: 'jelly', head: 'skull', arm: 'claw', legs: 'stump' },
+  goblin: { core: 'bone', head: 'maw', arm: 'claw', legs: 'hoof' },
+  archer: { core: 'bone', head: 'skull', arm: 'bow', legs: 'stilt' },
+  bat: { core: 'fungus', head: 'maw', arm: 'whip', legs: 'wing' },
+  shaman: { core: 'fungus', head: 'eye', arm: 'staff', legs: 'root' },
+  ogre: { core: 'rock', head: 'horn', arm: 'club', legs: 'stump' },
+  bonedragon: { core: 'tomb', head: 'frost', arm: 'censer', legs: 'wing' },
+  hundredarm: { core: 'throne', head: 'crown', arm: 'banner', legs: 'anchor' },
+  lich: { core: 'tomb', head: 'lantern', arm: 'reaper', legs: 'cloud' },
+  beholder: { core: 'crystal', head: 'eightfold', arm: 'staff', legs: 'tentacle' },
+  mindflayer: { core: 'void', head: 'tongue', arm: 'chain', legs: 'tentacle' },
+  plaguelord: { core: 'plague', head: 'bell', arm: 'sceptre', legs: 'palanquin' },
+  magmagolem: { core: 'magma', head: 'horn', arm: 'magmafist', legs: 'molten' },
+  broodqueen: { core: 'brood', head: 'eightfold', arm: 'reliquary', legs: 'broodleg' },
+};
+export function nativePartsFor(id) {
+  const baseId = id.startsWith('elite-') ? id.slice(6) : id;
+  const p = NATIVE_PARTS[baseId];
+  return p ? { ...p } : undefined;
+}
+
+function visualParts(k, ids) {
+  const out = k.parts ? { ...k.parts } : nativePartsFor(k.id);
+  if (!out) return undefined;
+  for (const id of ids ?? []) {
+    const p = partById(id);
+    if (p) out[p.cat] = p.id;
+  }
+  return out;
+}
+
 export function graftBone(ids          ) {
   // 移植比新造贵两成：改造的价值是"保留等级与经验"，得付溢价
   return Math.round(ids.reduce((n, id) => n + (partById(id)?.bone ?? 0), 0) * 1.2);
@@ -660,7 +723,8 @@ export function graftCostOf(cur          , next          ) {
 
 // 已改造单位的最终数值：基础 kind + 移植件
 export function graftKind(k             , ids                      )              {
-  if (!ids || !ids.length) return k;
+  const parts = visualParts(k, ids);
+  if (!ids || !ids.length) return parts ? { ...k, parts, nativeParts: !!nativePartsFor(k.id), tex: `tex-parts-${k.id}` } : k;
   const ps = ids.map(partById).filter(Boolean)          ;
   if (!ps.length) return k;
   const eff         = { ...k.eff };
@@ -702,7 +766,8 @@ export function graftKind(k             , ids                      )            
     name: `${ps.map((p) => p.word).join('')}${k.name}`,
     hp, atk, def, spd, row, skill, skillDesc, eff,
     desc: `${k.desc} 已移植：${ps.map((p) => p.name).join('、')}。`,
-    graft: ids,
+    graft: ids, parts, nativeParts: !!nativePartsFor(k.id),
+    tex: parts ? `tex-parts-${k.id}-${ids.slice().sort().join('-')}` : k.tex,
   };
 }
 

@@ -359,6 +359,18 @@ const HERO_ROOM_LINES = [
   '照明往前送，我看不清门后。', '先确认退路，再准备破门。', '听见了吗？它们正在等我们。',
   '伤员站中间，前排跟我上。', '这间房交给我们，速战速决。', '不要分散火力，逐个击破。',
 ];
+const HERO_PARTY_BANTER = [
+  ['这地方闻起来像墓地。', '好消息，我们已经省了返程车费。'],
+  ['谁走前面？', '欠债最多的那个，死了账也比较好算。'],
+  ['墙上那是血吗？', '别舔。上次舔墙的人现在还在墙里。'],
+  ['如果我倒下，记得带我回去。', '当然，你的靴子还值两个银币。'],
+  ['这扇门后会有什么？', '按经验，是一份没有加班费的工作。'],
+  ['火把快灭了。', '省着点，葬礼还得用。'],
+  ['你听见磨刀声了吗？', '听见了，至少这里重视餐前准备。'],
+  ['这趟结束我就退休。', '大家进地牢时都这么说，地牢很爱听。'],
+  ['治疗药还剩多少？', '够救一个人，所以先决定谁最会写遗嘱。'],
+  ['别踩那块骨头。', '放心，它原来的主人已经踩不到了。'],
+];
 const MON_ROOM_LINES = [
   '门后就是我们的地盘，一步也别让。', '勇者来了，把灯灭掉。', '陷阱已经醒了，等他们再近一点。',
   '盯住治疗者，别让他念完咒语。', '守住这间房，后面还有同伴。', '它们的盔甲有缝，往关节打。',
@@ -395,6 +407,17 @@ function enterRoom(b        ) {
   const monSpeaker = room.leader?.alive ? room.leader : room.mons.find((m) => m.alive);
   log(b, `—— 第${b.roomIndex + 1}房交战：${room.mons.length ? `${room.mons.length}名守军列阵` : '房间无人驻守'} ——`, room.mons.length ? 'good' : 'bad');
   if (heroSpeaker) log(b, `　${heroSpeaker.name}：${HERO_ROOM_LINES[Math.floor(b.rng() * HERO_ROOM_LINES.length)]}`, 'bad');
+  const livingHeroes = b.heroes.filter((h) => h.alive);
+  if (livingHeroes.length > 1) {
+    const [lead, reply] = HERO_PARTY_BANTER[Math.floor(b.rng() * HERO_PARTY_BANTER.length)];
+    const a = livingHeroes[Math.floor(b.rng() * livingHeroes.length)];
+    const others = livingHeroes.filter((h) => h !== a);
+    const z = others[Math.floor(b.rng() * others.length)];
+    log(b, `　${a.name}：${lead}`, 'bad');
+    log(b, `　${z.name}：${reply}`, 'bad');
+    speak(b, a, lead, 'banter');
+    speak(b, z, reply, 'banter');
+  }
   if (monSpeaker) log(b, `　${monSpeaker.name}：${MON_ROOM_LINES[Math.floor(b.rng() * MON_ROOM_LINES.length)]}`, 'good');
   // 足部件的入场效果：进房瞬间结算一次
   for (const m of room.mons) {
@@ -1909,8 +1932,11 @@ function finish(b        ) {
   const maxLv = fallen.reduce((m, h) => Math.max(m, h.lv), 0);
   const loot = rollLoot(kills, maxLv, b.rng);
   for (const id of loot) log(b, `缴获：${gearById(id)?.name ?? id}`, 'good');
+  // 英雄遗物是传奇部件的稀有材料：至少击倒一名勇者才有机会，整队击倒时概率略高。
+  const relicLoot = kills > 0 && b.rng() < Math.min(0.14, 0.02 + kills * 0.018) ? 1 : 0;
+  if (relicLoot) log(b, '稀有缴获：英雄遗物', 'good');
   b.result = {
-    win, kills, total, seal, skulls, roomsHeld, bone, mana, loot,
+    win, kills, total, seal, skulls, roomsHeld, bone, mana, loot, relicLoot,
     xp: [...xpMap.entries()].map(([uid, xp]) => ({ uid, xp })),
     champXp: [...champXp.entries()].map(([uid, v]) => ({ uid, xp: v.xp, kills: v.kills, fell: v.fell })),
     champStats: [...champStats.entries()].map(([uid, v]) => ({ uid, ...v })),
