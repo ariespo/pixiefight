@@ -1,6 +1,8 @@
 # 英雄系统扩展实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+
+> **状态（2026-08-08）：已完成。** 特质与重随、五选一专精、称号系统、UI 集成、存档兼容和战后统计均已落地；计划复选框已按当前代码状态回填。
 
 **Goal:** 在现有英雄系统上扩展 10 个普通特质 + 5 个金色传奇特质、重随特质功能、每层 5 选 1 的专精分支、以及多维度可切换的称号系统。
 
@@ -38,7 +40,7 @@
 - Consumes: 无
 - Produces: `rerollTraits(c, rng)`, `REROLL_TRAIT_BONE`, `REROLL_TRAIT_MANA`
 
-- [ ] **Step 1: 在 `heroes.js` 扩展 `TRAITS`**
+- [x] **Step 1: 在 `heroes.js` 扩展 `TRAITS`**
 
 在现有 8 个特质后追加 10 个普通特质和 5 个金色传奇特质：
 
@@ -73,7 +75,7 @@ export const TRAITS = {
 };
 ```
 
-- [ ] **Step 2: 添加重随特质常量和函数**
+- [x] **Step 2: 添加重随特质常量和函数**
 
 在 `heroes.js` 中 TITLES 区域之前添加：
 
@@ -96,7 +98,7 @@ export function rerollTraits(c, rng) {
 }
 ```
 
-- [ ] **Step 3: 修改 `newChamp` 初始化统计字段**
+- [x] **Step 3: 修改 `newChamp` 初始化统计字段**
 
 ```js
 export function newChamp(uid, c) {
@@ -110,7 +112,7 @@ export function newChamp(uid, c) {
 }
 ```
 
-- [ ] **Step 4: 浏览器验证**
+- [x] **Step 4: 浏览器验证**
 
 运行本地服务器：
 ```bash
@@ -131,7 +133,7 @@ python -m http.server 5122
 - Consumes: 无
 - Produces: 扩展后的 `TALENTS`、`TALENT_TIERS`
 
-- [ ] **Step 1: 扩展 `TALENTS` 和 `TALENT_TIERS`**
+- [x] **Step 1: 扩展 `TALENTS` 和 `TALENT_TIERS`**
 
 将现有 12 个专精保留，每层从 3 选 1 扩展到 5 选 1：
 
@@ -170,7 +172,7 @@ export const TALENT_TIERS = [
 ];
 ```
 
-- [ ] **Step 2: 在 `champStats` 中应用新增专精效果**
+- [x] **Step 2: 在 `champStats` 中应用新增专精效果**
 
 在现有 `for (const t of c.talents)` 分支中追加新专精处理：
 
@@ -185,7 +187,7 @@ if (t === 't4ruin') { atk *= 1.30; hp *= 0.9; }
 if (t === 't4warden') { hp *= 1.25; def += 5; }
 ```
 
-- [ ] **Step 3: 浏览器验证**
+- [x] **Step 3: 浏览器验证**
 
 打开游戏，招募英雄并升级，确认：
 - 专精页每层显示 5 个选项。
@@ -203,7 +205,7 @@ if (t === 't4warden') { hp *= 1.25; def += 5; }
 - Consumes: 英雄对象 `c`（含 `battles`, `kills`, `stats`, `activeTitle`）
 - Produces: `TITLES`, `unlockedTitles(c)`, `titleById(id)`, `activeTitleOf(c)`
 
-- [ ] **Step 1: 替换 `TITLES` 为称号库**
+- [x] **Step 1: 替换 `TITLES` 为称号库**
 
 ```js
 export const TITLES = [
@@ -257,7 +259,7 @@ export const TITLES = [
 ];
 ```
 
-- [ ] **Step 2: 替换 `titleOf` / `nextTitle` 为新的称号查询函数**
+- [x] **Step 2: 替换 `titleOf` / `nextTitle` 为新的称号查询函数**
 
 ```js
 export function unlockedTitles(c) {
@@ -281,7 +283,7 @@ export function nextTitle(c) {
 }
 ```
 
-- [ ] **Step 3: 在 `champStats` 中应用称号加成**
+- [x] **Step 3: 在 `champStats` 中应用称号加成**
 
 在 `champStats` 末尾找到 `const ti = titleOf(c);` 处，改为：
 
@@ -299,7 +301,7 @@ if (ti?.stats) {
 }
 ```
 
-- [ ] **Step 4: 浏览器验证**
+- [x] **Step 4: 浏览器验证**
 
 通过 dev 工具或临时修改英雄数据，确认：
 - 参战 4 场解锁「守门人」。
@@ -318,7 +320,7 @@ if (ti?.stats) {
 - Consumes: `rerollTraits`, `REROLL_TRAIT_BONE`, `REROLL_TRAIT_MANA`, `activeTitleOf`, `titleById`, `unlockedTitles`
 - Produces: 重随按钮、称号面板、5 选 1 专精 UI
 
-- [ ] **Step 1: 导入新函数**
+- [x] **Step 1: 导入新函数**
 
 在 `game.js` 顶部 import 中追加：
 
@@ -327,7 +329,7 @@ REROLL_TRAIT_BONE, REROLL_TRAIT_MANA, rerollTraits,
 activeTitleOf, titleById, unlockedTitles,
 ```
 
-- [ ] **Step 2: 存档兼容性处理**
+- [x] **Step 2: 存档兼容性处理**
 
 在 `game.js` 的 sanitize 逻辑（约第 181 行）中，对每位英雄补充默认值：
 
@@ -336,7 +338,7 @@ c.activeTitle = c.activeTitle ?? '';
 c.stats = c.stats ?? {};
 ```
 
-- [ ] **Step 3: 在 `drawChampDetail` 添加重随特质按钮和称号显示**
+- [x] **Step 3: 在 `drawChampDetail` 添加重随特质按钮和称号显示**
 
 在名称显示行使用 `activeTitleOf`：
 
@@ -369,7 +371,7 @@ function rerollChampTraits(c) {
 }
 ```
 
-- [ ] **Step 4: 在 `drawChampDetail` 添加称号切换面板**
+- [x] **Step 4: 在 `drawChampDetail` 添加称号切换面板**
 
 在名称行或机制行下方新增称号条：
 
@@ -389,7 +391,7 @@ if (unlocked.length > 0) {
 }
 ```
 
-- [ ] **Step 5: 修改 `drawChampTalents` 为 5 选 1 并显示效果描述**
+- [x] **Step 5: 修改 `drawChampTalents` 为 5 选 1 并显示效果描述**
 
 将每层选项按钮从 3 个改为 5 个，宽度从 72 改为 44，X 起始位置调整：
 
@@ -410,7 +412,7 @@ if (own) {
 }
 ```
 
-- [ ] **Step 6: 浏览器验证**
+- [x] **Step 6: 浏览器验证**
 
 - 打开英雄详情页，确认重随特质按钮可点击、资源扣除正确。
 - 确认称号条显示已解锁称号，点击可切换。
@@ -427,7 +429,7 @@ if (own) {
 - Consumes: 英雄对象 `c.stats`
 - Produces: 更新后的 `c.stats` 字段
 
-- [ ] **Step 1: 在战后结算中更新 `stats` 字段**
+- [x] **Step 1: 在战后结算中更新 `stats` 字段**
 
 在 `battle.js` 战后逻辑中（搜索 `tickFatigue` 或战斗结束处理），对每位参战英雄更新：
 
@@ -446,7 +448,7 @@ for (const c of champs) {
 
 注意：如果 `battle.js` 目前没有记录这些战斗内统计，需要先在战斗过程中记录。若战斗系统未暴露这些细节，可以先用 `kills` 和 `battles` 维度验证称号系统，其他维度后续补充。
 
-- [ ] **Step 2: 更新 `game.js` 调试接口 `devKills`**
+- [x] **Step 2: 更新 `game.js` 调试接口 `devKills`**
 
 确保通过 dev 接口修改 kills/battles 后称号正确刷新：
 
@@ -457,7 +459,7 @@ devKills: (uid, k, b = 0) => {
 },
 ```
 
-- [ ] **Step 3: 最终浏览器验证**
+- [x] **Step 3: 最终浏览器验证**
 
 - 完成一场战斗，确认参战英雄 `battles` 增加，称号解锁。
 - 通过浏览器控制台调用 `devKills(uid, 200, 40)`，确认传奇称号「战争神话」解锁。

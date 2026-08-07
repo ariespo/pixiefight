@@ -7,6 +7,7 @@ export const TEX                               = {};
 
 let textRes = 3;
 const liveTexts              = [];
+const boundedTextRecords = [];
 
 export function setTextRes(r        ) {
   textRes = Math.max(1, Math.round(r));
@@ -19,6 +20,78 @@ export function txt(str        , size = 12, color = C.bone)            {
   t.roundPixels = true;
   liveTexts.push(t);
   return t;
+}
+
+// 固定尺寸卡片必须通过这个原语画长文本：先按真实 PIXI 字体度量换行，
+// 超出最大高度时二分截断并补省略号，避免“布局按限制高度走、文字却继续往下画”。
+export function boundedText(parent, str, x, y, w, maxHeight, size = 12, color = C.bone) {
+  const full = String(str ?? '');
+  const t = txt(full, size, color);
+  t.style.wordWrap = true;
+  t.style.wordWrapWidth = Math.max(1, w);
+  t.style.breakWords = true;
+  t.x = Math.round(x);
+  t.y = Math.round(y);
+  let truncated = false;
+  if (maxHeight > 0 && t.height > maxHeight) {
+    const chars = Array.from(full);
+    let lo = 0;
+    let hi = chars.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      t.text = `${chars.slice(0, mid).join('').replace(/[\s，。；：、]+$/u, '')}…`;
+      if (t.height <= maxHeight) lo = mid;
+      else hi = mid - 1;
+    }
+    t.text = `${chars.slice(0, lo).join('').replace(/[\s，。；：、]+$/u, '')}…`;
+    // 极窄区域也必须服从硬边界。
+    while (lo > 0 && t.height > maxHeight) {
+      lo--;
+      t.text = `${chars.slice(0, lo).join('').replace(/[\s，。；：、]+$/u, '')}…`;
+    }
+    if (t.height > maxHeight) t.text = '';
+    truncated = true;
+  }
+  parent.addChild(t);
+  boundedTextRecords.push({
+    text: full, displayed: t.text, x: t.x, y: t.y, width: w, maxHeight,
+    actualWidth: t.width, actualHeight: t.height, truncated,
+  });
+  return { text: t, height: Math.min(t.height, maxHeight || t.height), truncated };
+}
+
+export function paginateText(str, w, maxHeight, size = 12) {
+  const pages = [];
+  let rest = Array.from(String(str ?? ''));
+  const probe = new PIXI.Text({ text: '', style: {
+    fontFamily: FONT, fontSize: size, lineHeight: size + 3, wordWrap: true,
+    wordWrapWidth: Math.max(1, w), breakWords: true,
+  } });
+  while (rest.length) {
+    probe.text = rest.join('');
+    if (probe.height <= maxHeight) { pages.push(rest.join('')); break; }
+    let lo = 1, hi = rest.length;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      probe.text = rest.slice(0, mid).join('');
+      if (probe.height <= maxHeight) lo = mid;
+      else hi = mid - 1;
+    }
+    const take = Math.max(1, lo);
+    pages.push(rest.slice(0, take).join('').replace(/^\s+|\s+$/gu, ''));
+    rest = rest.slice(take);
+  }
+  probe.destroy();
+  return pages.length ? pages : [''];
+}
+
+export function resetBoundedTextAudit() { boundedTextRecords.length = 0; }
+export function boundedTextAudit() {
+  return {
+    records: boundedTextRecords.map((r) => ({ ...r })),
+    violations: boundedTextRecords.filter((r) => r.actualHeight > r.maxHeight + 0.01 || r.actualWidth > r.width + 1)
+      .map((r) => ({ ...r })),
+  };
 }
 
 export function label(parent                , str        , x        , y        , size = 12, color = C.bone) {

@@ -175,6 +175,7 @@ function makeMonUnit(inst             , row       , roomIdx        , mod        
     row, x: slotX, y: leaderSeat ? LEAD_Y : row === 0 ? 0 : BACK_Y,
     homeX: slotX,
     alive: true, cd: 0.6 + Math.random() * 0.3, skillCd: k.eff.skill === 'alt' ? 2.5 : 4,
+    skillCdMax: k.eff.skill === 'alt' ? 2.5 : 4,
     slowT: 0, slowAmt: 0, hasteAmt: 0, poisonT: 0, poisonDps: 0, burnT: 0, burnDps: 0, burstDone: false, stunT: 0, shield: 0,
     silenced: false, disarmT: 0, revived: false, killBoost: 0, charged: false,
     flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, phase: 0, room: roomIdx,
@@ -192,7 +193,7 @@ function makeChampUnit(st           , uid        , roomIdx        , mod         
     maxHp: hp, hp, atk: Math.max(1, Math.round(st.atk * mod.monAtkMult)), def: st.def,
     spd: Math.max(0.15, st.spd + mod.monSpdAdd),
     row: 0, x: MON_LEAD_X, y: LEAD_Y, homeX: MON_LEAD_X,
-    alive: true, cd: 0.6 + Math.random() * 0.3, skillCd: 4,
+    alive: true, cd: 0.6 + Math.random() * 0.3, skillCd: 4, skillCdMax: 4,
     slowT: 0, slowAmt: 0, hasteAmt: 0, poisonT: 0, poisonDps: 0, burnT: 0, burnDps: 0, burstDone: false, stunT: 0, shield: 0,
     silenced: false, disarmT: 0, revived: false, killBoost: 0, charged: false,
     flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, phase: 0, room: roomIdx,
@@ -213,7 +214,7 @@ function makeHeroUnit(cls        , lv        , idx        , total        , mod  
     side: 'hero', kind: c.id, name: c.name, tex: c.tex, lv,
     maxHp: hp, hp, atk: Math.max(1, Math.round(c.atk * mult * mod.heroAtkMult)), def: Math.round(c.def * mult), spd: c.spd,
     row, x: slot - 260, y: row === 0 ? 0 : BACK_Y, homeX: slot,
-    alive: true, cd: 0.8, skillCd: 3,
+    alive: true, cd: 0.8, skillCd: 3, skillCdMax: 3,
     slowT: 0, slowAmt: 0, hasteAmt: 0, poisonT: 0, poisonDps: 0, burnT: 0, burnDps: 0, burstDone: false, stunT: 0, shield: 0,
     silenced: false, disarmT: 0, revived: false, killBoost: 0, charged: false,
     flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, phase: 0, room: 0,
@@ -304,6 +305,11 @@ function log(b        , text        , tone                 ) {
   b.log.push({ room: b.roomIndex, t: b.time, text, tone });
 }
 
+function speak(b, u, text, kind = 'skill') {
+  if (!u || !u.alive || !text) return;
+  b.events.push({ k: 'speech', room: u.room, x: u.x, y: u.y, text, side: u.side, unit: u, kind });
+}
+
 function impactText(dmg        , tgt      )          {
   const ratio = dmg / Math.max(1, tgt.maxHp);
   if (ratio >= 0.55) return '造成了毁灭性伤害';
@@ -341,7 +347,9 @@ function logHit(b        , src      , tgt      , dmg        , action        , he
   const imp = impactText(dmg, tgt);
   log(b, `${src.name}对${tgt.name}${action}，造成${dmg}点伤害（${imp}）`, tone);
   if (dmg / Math.max(1, tgt.maxHp) >= 0.05 || tgt.hp / Math.max(1, tgt.maxHp) < 0.35) {
-    log(b, `　${tgt.name}：${reactionText(tgt, rng ?? b.rng)}`, tone);
+    const line = reactionText(tgt, rng ?? b.rng);
+    log(b, `　${tgt.name}：${line}`, tone);
+    speak(b, tgt, line, 'reaction');
   }
 }
 
@@ -461,6 +469,16 @@ export function interval(u      , b         ) {
     ? b.rooms[u.room].leader.eff.allySpd : 1;
   const spd = u.spd * slow * (1 + u.hasteAmt) * (1 + u.killBoost) * aura * rally * allySpd;
   return 1.6 / Math.max(0.15, spd);
+}
+
+// 共用行动条读取同一份战斗计时：0 在左端（马上行动），1 在右端（刚行动完）。
+export function actionProgress(u, b) {
+  const basic = Math.max(0, Math.min(1, u.cd / Math.max(0.01, interval(u, b))));
+  if (u.skillCd > (u.skillCdMax ?? 0)) u.skillCdMax = u.skillCd;
+  const room = b.rooms[b.roomIndex];
+  const skillBlocked = u.side === 'hero' ? room?.spellLock > 0 : !!u.silenced;
+  const skill = skillBlocked ? 1 : Math.max(0, Math.min(1, u.skillCd / Math.max(0.01, u.skillCdMax ?? u.skillCd ?? 1)));
+  return Math.min(basic, skill);
 }
 
 // 部件光环：只在"同房、活着、非自己"的携带者存在时生效（与统领光环是两条独立线）
@@ -936,6 +954,7 @@ function monSkill(b        , u      ) {
   const eff = u.eff;
   const name = eff?.skillName ?? '技能';
   const action = `使用${name}`;
+  speak(b, u, `${name}！`);
   // 淬毒词缀：给"这次技能实际打到的人"上毒，靠打前/打后血量差判定，不必逐技能改写
   const venom = eff?.venomSkill ?? 0;
   const before = venom ? b.heroes.map((h) => h.hp + h.shield) : null;
@@ -1302,6 +1321,12 @@ function healHero(b        , src      , t      , amt        ) {
 
 function heroSkill(b        , u      ) {
   const room = b.rooms[b.roomIndex];
+  const skillLines = {
+    cleric: '治愈术！', mage: '火球术！', knight: '重斩！', captain: '圣裁！', archer: '穿云箭！',
+    rogue: '背刺！', paladin: '护佑！', berserker: '血怒斩！', ranger: '猎标！', bard: '战歌！',
+    inquisitor: '审判！', swordmaster: '连斩！',
+  };
+  if (!u.silenced) speak(b, u, skillLines[u.kind] ?? '技能！');
   if (u.kind === 'cleric') {
     if (u.silenced) {
       u.silenced = false;

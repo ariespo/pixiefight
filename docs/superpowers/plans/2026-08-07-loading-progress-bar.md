@@ -1,6 +1,8 @@
 # 加载进度条实现计划
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+
+> **状态（2026-08-08）：已完成。** HTML/CSS 加载覆盖层、字体与贴图进度更新以及完成后隐藏逻辑均已落地；计划复选框已按当前代码状态回填。
 
 **Goal:** 为游戏初始加载阶段添加一个像素风格的 HTML/CSS 进度条覆盖层，并在 `game.js` 的 `boot()` 中根据资源加载进度实时更新。
 
@@ -28,7 +30,7 @@
 - Consumes: 无
 - Produces: `#loading`、`#loading-panel`、`#loading-text`、`#loading-bar`、`#loading-fill` DOM 元素与 `.hidden` 类
 
-- [ ] **Step 1: 在 `#app` 后插入加载覆盖层 HTML**
+- [x] **Step 1: 在 `#app` 后插入加载覆盖层 HTML**
 
 在 `<body>` 中，把下面的 DOM 放在 `<div id="app"></div>` 之后：
 
@@ -41,7 +43,7 @@
 </div>
 ```
 
-- [ ] **Step 2: 在 `<style>` 中添加进度条样式**
+- [x] **Step 2: 在 `<style>` 中添加进度条样式**
 
 在现有 `<style>` 块末尾追加：
 
@@ -89,11 +91,11 @@
 }
 ```
 
-- [ ] **Step 3: 浏览器验证覆盖层可见**
+- [x] **Step 3: 浏览器验证覆盖层可见**
 
 启动本地服务器，打开页面。在 `game.js` 未加载完成前，应能看到居中的 "Loading 0%" 与空进度条。
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add index.html
@@ -113,7 +115,7 @@ git commit -m "ui: add pixel-style loading overlay"
 - Consumes: `TEXTURES`（从 `data.js` 导入的贴图列表）
 - Produces: `setLoading(percent, label?)`、`hideLoading()`
 
-- [ ] **Step 1: 添加进度条更新辅助函数**
+- [x] **Step 1: 添加进度条更新辅助函数**
 
 在 `let viewScale = 1;` 之后、`async function boot()` 之前插入：
 
@@ -135,7 +137,7 @@ function hideLoading() {
 }
 ```
 
-- [ ] **Step 2: 修改 `boot()` 以更新进度**
+- [x] **Step 2: 修改 `boot()` 以更新进度**
 
 把 `boot()` 中的字体加载与贴图循环改成如下形式（其余代码保持不变）：
 
@@ -174,20 +176,20 @@ async function boot() {
 }
 ```
 
-- [ ] **Step 3: 运行语法检查**
+- [x] **Step 3: 运行语法检查**
 
 ```bash
 node --check game.js
 ```
 
-- [ ] **Step 4: 浏览器验证加载过程**
+- [x] **Step 4: 浏览器验证加载过程**
 
 打开游戏，确认：
 - 进度条从 0% 平滑增长到 100%。
 - 加载完成后进度条消失，游戏主界面正常显示。
 - 控制台无新报错。
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add game.js
