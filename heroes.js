@@ -1,6 +1,7 @@
 // 麾下英雄：五个传奇种族的「具体个体」。有名字、等级(1-10)、特质、专精、疲劳与履历。
 // 纯逻辑，不依赖 pixi —— 可以 node 直跑做数值平衡（.tmp/sim/champ*.mjs）。
 import { kindById, LEGENDS, AURAS,                          } from './data.js';
+import { graftKind } from './modules.js';
 import { gearEff, gearSet, mergeEff, NO_GEAR,                             } from './gear.js';
 
                                                                                                            
@@ -429,7 +430,8 @@ export function fatigueTier(f        ) {
 }
 
 export function champStats(c       , potentialMult = 1, chem          = NO_CHEM)            {
-  const k = kindById(c.race) ;
+  // 英雄与怪物共用四部位派生规则；培养加成叠在改造后的种族底模上。
+  const k = graftKind(kindById(c.race) , c.graft);
   const ge = gearEff(c.gear);
   const set = gearSet(c.gear);
   const wound = 1 - WOUND_MULT * Math.min(WOUND_CAP, c.wounds || 0);

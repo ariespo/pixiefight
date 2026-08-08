@@ -186,6 +186,17 @@ function sanitizeSave() {
     c.stats = c.stats ?? {};
     c.traits = (Array.isArray(c.traits) ? c.traits : []).filter((t) => t in TRAITS).slice(0, 2);
     c.talents = (Array.isArray(c.talents) ? c.talents : []).filter((t) => t in TALENTS).slice(0, talentSlots(c));
+    // 英雄可改造全身四部位；清除旧档中的无效件和重复部位。
+    if (Array.isArray(c.graft)) {
+      const seen = new Set();
+      const ok = c.graft.filter((id) => {
+        const p = typeof id === 'string' ? partById(id) : null;
+        if (!p || seen.has(p.cat)) return false;
+        seen.add(p.cat);
+        return true;
+      }).slice(0, 4);
+      if (ok.length) c.graft = ok; else delete c.graft;
+    } else delete c.graft;
     // 装备：旧档没有该字段；槽位与 id 都要有效，且同一件不能同时穿在两处
     const eq           = {};
     const raw = (c.gear && typeof c.gear === 'object' ? c.gear : {})                           ;
@@ -367,8 +378,12 @@ function roomOf(uid        ) {
 }
 // 传奇统领按袭击轮次逐个开放，避免第一轮就能砸出满编统领
 const champById = (uid                           ) => (uid == null ? undefined : S.champs.find((c) => c.uid === uid));
+const champKind = (c       ) => ensureKindTex(graftKind(monKind(c.race), c.graft));
 const chemMap = () => chemistry(S.champs, seatedChampUids()).map;
-const statOf = (c       , chem = chemMap()) => champStats(c, POT_MULT[S.champPot[c.uid] ?? 0], chemOf(chem, c.uid));
+const statOf = (c       , chem = chemMap()) => {
+  champKind(c);
+  return champStats(c, POT_MULT[S.champPot[c.uid] ?? 0], chemOf(chem, c.uid));
+};
 function champStatMap() {
   const chem = chemMap();
   const m                                                = {};
@@ -866,10 +881,10 @@ function drawDetailPopup() {
 ;                                                           
 let graft               = null;
 
-function openGraft(uid        ) {
-  const inst = instById(uid);
+function openGraft(uid        , target = 'monster') {
+  const inst = target === 'hero' ? champById(uid) : instById(uid);
   if (!inst) return;
-  graft = { uid, cat: 'core', picks: [...(inst.graft ?? [])], preview: null };
+  graft = { uid, target, cat: 'core', picks: [...(inst.graft ?? [])], preview: null };
   stitch = null;
   forge = null;
   smith = null;
@@ -893,7 +908,8 @@ function togglePick(id        ) {
   const cat = partById(id)?.cat;
   const same = gf.picks.findIndex((x) => partById(x)?.cat === cat);
   if (same >= 0) gf.picks.splice(same, 1);
-  if (gf.picks.length >= GRAFT_CAP) { say(`一只怪最多移植 ${GRAFT_CAP} 件`); return; }
+  const cap = gf.target === 'hero' ? 4 : GRAFT_CAP;
+  if (gf.picks.length >= cap) { say(gf.target === 'hero' ? '英雄四个部位都已改造' : `一只怪最多移植 ${GRAFT_CAP} 件`); return; }
   gf.picks.push(id);
   playSfx('place');
   render();
@@ -901,22 +917,25 @@ function togglePick(id        ) {
 
 function confirmGraft() {
   const gf = graft ;
-  const inst = instById(gf.uid);
+  const hero = gf.target === 'hero';
+  const inst = hero ? champById(gf.uid) : instById(gf.uid);
   if (!inst) { closeGraft(); return; }
+  const mult = hero ? 2 : 1;
   const cur = inst.graft ?? [];
-  const cost = graftCostOf(cur, gf.picks);
+  const rawCost = graftCostOf(cur, gf.picks);
+  const cost = { bone: rawCost.bone * mult, mana: rawCost.mana * mult };
   const pulled = cur.filter((id) => !gf.picks.includes(id)).length;
-  const mana = cost.mana + pulled * GRAFT_PULL_MANA;
-  const relic = gf.picks.filter((id) => partById(id)?.legendary && !cur.includes(id)).length;
+  const mana = cost.mana + pulled * GRAFT_PULL_MANA * mult;
+  const relic = gf.picks.filter((id) => partById(id)?.legendary && !cur.includes(id)).length * mult;
   if (S.bone < cost.bone || S.mana < mana || S.relic < relic) { say(relic && S.relic < relic ? '英雄遗物不足' : '资源不足'); return; }
   S.bone -= cost.bone;
   S.mana -= mana;
   S.relic -= relic;
   inst.graft = gf.picks.length ? [...gf.picks] : undefined;
   // 站位可能被改造改变（比如装了蝠翼变后排）：站错位就先请下场
-  const k = instKind(inst);
-  const at = roomOf(inst.uid);
-  if (at >= 0 && k.row !== 'any') {
+  const k = hero ? champKind(inst) : instKind(inst);
+  const at = hero ? -1 : roomOf(inst.uid);
+  if (!hero && at >= 0 && k.row !== 'any') {
     const r = S.rooms[at];
     if (r.front === inst.uid && k.row !== 'front') { r.front = null; say(`${k.name}改造后只能站后排，已撤下`); }
     if (r.back === inst.uid && k.row !== 'back') { r.back = null; say(`${k.name}改造后只能站前排，已撤下`); }
@@ -924,22 +943,25 @@ function confirmGraft() {
   }
   playSfx('buy');
   persist();
-  say(gf.picks.length ? `${k.name} 改造完成` : '已摘除全部移植件');
+  say(gf.picks.length ? (hero ? `${inst.name} 全身改造完成` : `${k.name} 改造完成`) : '已摘除全部移植件');
   closeGraft();
 }
 
 function drawGraft() {
   const gf = graft ;
-  const inst = instById(gf.uid);
+  const hero = gf.target === 'hero';
+  const inst = hero ? champById(gf.uid) : instById(gf.uid);
   const g = modalGfx;
   g.rect(0, 0, VIEW_W, VIEW_H).fill(C.bg);
   hits.add(0, 0, VIEW_W, VIEW_H, () => { /* 遮罩吃掉背后点击 */ });
   panelF(g, modalLayer, 'arcane', 12, 14, VIEW_W - 24, VIEW_H - 28, C.wall);
-  labelC(modalLayer, '改造台 · 移植部件', 240, 18, 12, C.white);
+  labelC(modalLayer, hero ? '英雄改造 · 全身四部位（消耗×2）' : '改造台 · 移植部件', 240, 18, 12, C.white);
   button(g, modalLayer, hits, VIEW_W - 44, 16, 28, 16, '✕', () => closeGraft(), { size: 12, border: C.red, color: C.red });
   if (!inst) return;
-  const base = monKind(inst.kind);
+  const base = monKind(hero ? inst.race : inst.kind);
   const now = graftKind(base, gf.picks.length ? gf.picks : undefined);
+  const baseStat = hero ? statOf({ ...inst, graft: undefined }) : base;
+  const nowStat = hero ? statOf({ ...inst, graft: gf.picks.length ? [...gf.picks] : undefined }) : now;
 
   // 左上：部位页签
   CATS.forEach((c, i) => {
@@ -963,7 +985,7 @@ function drawGraft() {
       .stroke({ width: 1, color: preview ? C.gold : on ? C.purple : p.diy ? C.purpleDark : open ? C.stoneLit : C.wall, alignment: 0 });
     if (open && TEX[p.tex]) modalLayer.addChild(sprite(p.tex, cx + 8, y + 13, 12));
     label(modalLayer, cut(p.name, 3), cx + 16, y, 12, on ? C.white : p.diy ? C.purple : open ? C.bone : C.wallLit);
-    label(modalLayer, open ? `${Math.round(p.bone * 1.2)}` : `${p.unlockRaid}轮`, cx + 64, y, 12, open ? C.gold : C.wallLit);
+    label(modalLayer, open ? `${Math.round(p.bone * 1.2) * (hero ? 2 : 1)}` : `${p.unlockRaid}轮`, cx + 64, y, 12, open ? C.gold : C.wallLit);
     if (open) hits.add(cx, y, 84, 14, () => previewGraftPart(p.id));
   });
   pager(g, `graft-${gf.cat}`, pp.pages, 20, 186, 156, '部件 ', modalLayer);
@@ -973,8 +995,8 @@ function drawGraft() {
   label(modalLayer, cut(now.name, 8), 206, 38, 12, C.purple);
   label(modalLayer, `Lv${inst.lv}`, 206, 56, 12, C.stoneLit);
   const rows                             = [
-    ['生命', base.hp, now.hp], ['攻击', base.atk, now.atk],
-    ['防御', base.def, now.def],
+    ['生命', baseStat.hp, nowStat.hp], ['攻击', baseStat.atk, nowStat.atk],
+    ['防御', baseStat.def, nowStat.def],
   ];
   let ry = 54;
   for (const [nm, a, bv] of rows) {
@@ -982,8 +1004,8 @@ function drawGraft() {
     label(modalLayer, bv === a ? '—' : `→ ${bv}`, 334, ry, 12, bv > a ? C.green : bv < a ? C.red : C.stoneLit);
     ry += 15;
   }
-  label(modalLayer, `速度 ${base.spd.toFixed(2)}`, 396, 54, 12, C.bone);
-  label(modalLayer, now.spd === base.spd ? '—' : `→ ${now.spd.toFixed(2)}`, 396, 69, 12, now.spd > base.spd ? C.green : C.red);
+  label(modalLayer, `速度 ${baseStat.spd.toFixed(2)}`, 396, 54, 12, C.bone);
+  label(modalLayer, nowStat.spd === baseStat.spd ? '—' : `→ ${nowStat.spd.toFixed(2)}`, 396, 69, 12, nowStat.spd > baseStat.spd ? C.green : C.red);
   label(modalLayer, `站位 ${now.row === 'front' ? '前排' : now.row === 'back' ? '后排' : '任意'}`, 396, 84, 12, now.row === base.row ? C.stoneLit : C.gold);
   const previewPart = partById(gf.preview ?? '');
   label(modalLayer, cut(`技能・${now.skill}`, 16), 206, 102, 12, C.purple);
@@ -999,13 +1021,15 @@ function drawGraft() {
 
   // 底部：花费与确认
   const cur = inst.graft ?? [];
-  const cost = graftCostOf(cur, gf.picks);
+  const mult = hero ? 2 : 1;
+  const rawCost = graftCostOf(cur, gf.picks);
+  const cost = { bone: rawCost.bone * mult, mana: rawCost.mana * mult };
   const pulled = cur.filter((id) => !gf.picks.includes(id)).length;
-  const mana = cost.mana + pulled * GRAFT_PULL_MANA;
-  const relic = gf.picks.filter((id) => partById(id)?.legendary && !cur.includes(id)).length;
+  const mana = cost.mana + pulled * GRAFT_PULL_MANA * mult;
+  const relic = gf.picks.filter((id) => partById(id)?.legendary && !cur.includes(id)).length * mult;
   const can = (cost.bone > 0 || mana > 0 || relic > 0) && S.bone >= cost.bone && S.mana >= mana && S.relic >= relic;
   label(modalLayer, `移植 ${cost.bone}骨 + ${mana}魔${relic ? ` + ${relic}遗物` : ''}${pulled ? `（摘${pulled}）` : ''}`, 20, 206, 12, can ? C.gold : C.red);
-  label(modalLayer, `最多 ${GRAFT_CAP} 件・每件 ${GRAFT_MANA} 魔・摘除 ${GRAFT_PULL_MANA} 魔`, 20, 222, 12, C.stoneLit);
+  label(modalLayer, hero ? `全身 4 部位・每件 ${GRAFT_MANA * 2} 魔・摘除 ${GRAFT_PULL_MANA * 2} 魔・遗物同样×2` : `最多 ${GRAFT_CAP} 件・每件 ${GRAFT_MANA} 魔・摘除 ${GRAFT_PULL_MANA} 魔`, 20, 222, 12, C.stoneLit);
   button(g, modalLayer, hits, 372, 204, 96, 20, '动手改造', () => confirmGraft(),
     { size: 12, enabled: can, fill: C.purpleDark, border: C.purple, color: C.white });
 }
@@ -1581,7 +1605,7 @@ function dropDiy(id        ) {
   if (!d) return;
   // 已被图纸引用的部件不能拆，否则拼接体会失去派生来源；改造装上去的同理
   if (S.customs.some((c) => Object.values(c.parts).includes(id))) { say('有缝合图纸正在用它'); return; }
-  if (S.monsters.some((m) => (m.graft ?? []).includes(id))) { say('有怪物身上改造着它'); return; }
+  if (S.monsters.some((m) => (m.graft ?? []).includes(id)) || S.champs.some((c) => (c.graft ?? []).includes(id))) { say('有单位身上改造着它'); return; }
   S.diy = S.diy.filter((x) => x.id !== id);
   S.mana += Math.round(draftCost(d.cat, d.draft).mana * 0.5);
   syncDiy();
@@ -1827,7 +1851,8 @@ function drawForgeBook(g               ) {
     ...S.diy.map((d) => {
       const p = partById(d.id);
       const usedBy = S.customs.filter((c) => Object.values(c.parts).includes(d.id)).length
-        + S.monsters.filter((m) => (m.graft ?? []).includes(d.id)).length;
+        + S.monsters.filter((m) => (m.graft ?? []).includes(d.id)).length
+        + S.champs.filter((c) => (c.graft ?? []).includes(d.id)).length;
       return {
         name: d.draft.name,
         tag: `部件・${CATS.find((c) => c.cat === d.cat) .name}・${p?.bone ?? 0}骨`,
@@ -2346,7 +2371,7 @@ function drawSidePanel(g               ) {
         const ft = fatigueTier(c.fatigue);
         // 一行式：名字/等级/状态同基线，20px 行里两行必压字（点阵盒 15px）
         g.rect(340, y, 130, 20).fill(here ? C.wallLit : C.ink).stroke({ width: 1, color: here ? C.gold : C.goldDark, alignment: 0 });
-        uiLayer.addChild(portraitEffect(sprite(monKind(c.race).tex, 348, y + 19, 16), c.lv >= CHAMP_LV_CAP, here, c.uid));
+        uiLayer.addChild(portraitEffect(sprite(champKind(c).tex, 348, y + 19, 16), c.lv >= CHAMP_LV_CAP, here, c.uid));
         label(uiLayer, cut(c.name.split('·')[0], 4), 358, y + 3, 12, here ? C.white : C.gold);
         label(uiLayer, `${c.lv}`, 410, y + 3, 12, C.bone);
         label(uiLayer, ft.bad ? ft.text.slice(0, 2) : at < 0 ? '待' : `${at + 1}房`, 432, y + 3, 12, ft.bad ? C.red : at < 0 ? C.green : C.gold);
@@ -3263,7 +3288,7 @@ function drawRoster(g               ) {
     const at = roomOfChamp(c.uid);
     const ft = fatigueTier(c.fatigue);
     g.rect(8, y, 150, 26).fill(on ? C.wallLit : C.ink).stroke({ width: 1, color: on ? C.gold : C.goldDark, alignment: 0 });
-    uiLayer.addChild(portraitEffect(sprite(monKind(c.race).tex, 20, y + 25, 24), c.lv >= CHAMP_LV_CAP, on, c.uid));
+    uiLayer.addChild(portraitEffect(sprite(champKind(c).tex, 20, y + 25, 24), c.lv >= CHAMP_LV_CAP, on, c.uid));
     const nm = c.name.split('·')[0];
     label(uiLayer, nm.length > 4 ? `${nm.slice(0, 4)}…` : nm, 34, y + 6, 12, on ? C.white : C.gold);
     label(uiLayer, `${c.lv}`, 86, y + 6, 12, C.bone);
@@ -3367,7 +3392,7 @@ function effDetailText(e        ) {
 function drawChampStat(g, c) {
   const ti = activeTitleOf(c);
   label(uiLayer, cut(`${c.name}${ti ? `・${ti.name}` : ''}`, 12), 174, 64, 12, C.gold);
-  label(uiLayer, `${monKind(c.race).name}・Lv${c.lv}/${CHAMP_LV_CAP}`, 174, 80, 12, C.bone);
+  label(uiLayer, `${champKind(c).name}・Lv${c.lv}/${CHAMP_LV_CAP}`, 174, 80, 12, C.bone);
   const pot = S.champPot[c.uid] ?? 0;
   label(uiLayer, `资质${POT_NAME[pot]}`, 174, 96, 12, C.bone);
   const ft = fatigueTier(c.fatigue);
@@ -3392,14 +3417,16 @@ function drawChampStat(g, c) {
   } else {
     label(uiLayer, '已达顶级 专精已满', 174, 176, 12, C.gold);
   }
-  button(g, uiLayer, hits, 174, 200, 130, 15, `重随特质 ${REROLL_TRAIT_BONE}骨+${REROLL_TRAIT_MANA}魔`, () => rerollChampTraits(c),
+  button(g, uiLayer, hits, 174, 195, 130, 15, `重随特质 ${REROLL_TRAIT_BONE}骨+${REROLL_TRAIT_MANA}魔`, () => rerollChampTraits(c),
     { size: 10, enabled: S.bone >= REROLL_TRAIT_BONE && S.mana >= REROLL_TRAIT_MANA, border: C.purple, color: C.white });
-  button(g, uiLayer, hits, 306, 200, 48, 15, `休整 ${REST_MANA}魔`, () => restChamp(c),
+  button(g, uiLayer, hits, 306, 195, 48, 15, `休整 ${REST_MANA}魔`, () => restChamp(c),
     { size: 10, enabled: c.fatigue > 0 && S.mana >= REST_MANA, border: C.steel, color: C.white });
-  button(g, uiLayer, hits, 356, 200, 50, 15, `疗伤 ${HEAL_MANA}魔`, () => healChamp(c),
+  button(g, uiLayer, hits, 356, 195, 50, 15, `疗伤 ${HEAL_MANA}魔`, () => healChamp(c),
     { size: 10, enabled: wd > 0 && S.mana >= HEAL_MANA, border: wd ? C.red : C.stoneLit, color: wd ? C.white : C.stoneLit });
-  button(g, uiLayer, hits, 408, 200, 36, 15, '同僚', () => sayChem(chem.lines), { size: 10, border: C.purple, color: C.purple });
-  button(g, uiLayer, hits, 446, 200, 34, 15, '遣退', () => dismissChamp(c), { size: 10, border: C.red, color: C.red });
+  button(g, uiLayer, hits, 174, 214, 70, 15, '同僚关系', () => sayChem(chem.lines), { size: 10, border: C.purple, color: C.purple });
+  button(g, uiLayer, hits, 246, 214, 100, 15, (c.graft ?? []).length ? `全身改造 ${(c.graft ?? []).length}/4` : '全身改造', () => openGraft(c.uid, 'hero'),
+    { size: 10, border: (c.graft ?? []).length ? C.gold : C.purple, color: (c.graft ?? []).length ? C.gold : C.white });
+  button(g, uiLayer, hits, 348, 214, 112, 15, '遣退英雄', () => dismissChamp(c), { size: 10, border: C.red, color: C.red });
 }
 
 function drawChampTitles(g, c) {
@@ -4004,7 +4031,7 @@ function startBattle() {
   if (stitch) closeStitch();
   // 战斗逻辑只携带纹理 key；开战前先烘焙固定怪物/精英怪物的四部位组合与当前改造外观。
   for (const m of S.monsters) instKind(m);
-  for (const c of S.champs) monKind(c.race);
+  for (const c of S.champs) champKind(c);
   const raid = currentRaid();
   battle = createBattle(raid, S.rooms, S.monsters,
     { sealMax: sealMax(), trapPower: trapPower(), mods: battleMods(), champs: champStatMap() });
@@ -4851,8 +4878,8 @@ window.__debug = {
   affixList: (cat         ) => PART_AFFIXES.filter((a) => a.cat === cat).map((a) => ({ id: a.id, name: a.name, mana: a.mana, diy: !!a.diy })),
   setLlm: (m                       ) => { saveMode(m); restoreBackend(); render(); return loadMode(); },
   // 改造台自测钩子
-  get graft() { return graft ? { uid: graft.uid, cat: graft.cat, picks: [...graft.picks], preview: graft.preview } : null; },
-  graftOpen: (uid        ) => { openGraft(uid); return graft != null; },
+  get graft() { return graft ? { uid: graft.uid, target: graft.target, cat: graft.cat, picks: [...graft.picks], preview: graft.preview } : null; },
+  graftOpen: (uid        , target = 'monster') => { openGraft(uid, target); return graft != null; },
   graftPreview: (id        ) => { if (!graft) return null; previewGraftPart(id); return graft.preview; },
   graftPick: (id        ) => { if (!graft) return null; togglePick(id); return [...graft.picks]; },
   graftCat: (c         ) => { if (graft) { graft.cat = c; render(); } },
@@ -4863,7 +4890,7 @@ window.__debug = {
     unitSprites.forEach((sp, u) => out.push({ name: u.name, tex: u.tex, side: u.side, sx: Math.sign(sp.scale.x), expected: 1 }));
     return out;
   },
-  auraOf: (room        ) => { const c = champById(S.rooms[room].leader); return c ? monKind(c.race).aura ?? null : null; },
+  auraOf: (room        ) => { const c = champById(S.rooms[room].leader); return c ? champKind(c).aura ?? null : null; },
   // 英雄名册（培养页自测用）
   get champs() {
     const chem = chemistry(S.champs, seatedChampUids());
