@@ -3561,6 +3561,9 @@ function drawChampGear(g               , c       ) {
     const on = gearSlotSel === sl.id;
     g.rect(174, y, 150, 32).fill(on ? C.wallLit : C.ink)
       .stroke({ width: 1, color: on ? C.gold : cur ? C.purple : C.stoneLit, alignment: 0 });
+    // The whole visible slot card selects the slot. Register this first so the
+    // explicit detail button drawn below keeps priority in Hits.test().
+    hits.add(174, y, 150, 32, () => { gearSlotSel = sl.id; playSfx('tab'); render(); });
     label(uiLayer, sl.name, 178, y + 1, 12, C.stoneLit);
     if (cur) {
       uiLayer.addChild(sprite(cur.tex, 313, y + 17, 18));
@@ -3572,7 +3575,6 @@ function drawChampGear(g               , c       ) {
       label(uiLayer, '空', 196, y + 1, 12, C.wallLit);
       label(uiLayer, '从右侧装上', 178, y + 18, 12, C.wallLit);
     }
-    hits.add(174, y, 116, 16, () => { gearSlotSel = sl.id; playSfx('tab'); render(); });
   });
   // 卸下 / 重铸 / 锻造台
   const curSel = gearById(eq[gearSlotSel] ?? '');
@@ -3596,6 +3598,9 @@ function drawChampGear(g               , c       ) {
   if (!pool.length) label(uiLayer, '（这一位没有存货）', 334, y, 12, C.wallLit);
   for (const it of pv.view) {
     g.rect(332, y, 140, 32).fill(C.ink).stroke({ width: 1, color: it.k.forged ? C.gold : RANK_COL[it.k.rank], alignment: 0 });
+    // Card body equips; action buttons are registered afterwards and therefore
+    // override this broad target instead of accidentally equipping underneath.
+    hits.add(332, y, 140, 32, () => equipGear(c, it.idx));
     uiLayer.addChild(sprite(it.k.tex, 342, y + 16, 16));
     label(uiLayer, cut(it.k.name, 4), 352, y + 1, 12, RANK_COL[it.k.rank]);
     if (it.k.forged) {
@@ -3606,7 +3611,6 @@ function drawChampGear(g               , c       ) {
         { size: 12, border: C.purple, color: C.purple });
     }
     boundedText(uiLayer, it.k.desc, 336, y + 18, 94, 13, 10, C.stoneLit);
-    hits.add(332, y, 66, 16, () => equipGear(c, it.idx));
     button(g, uiLayer, hits, 432, y + 17, 36, 13, '详情', () => openGearDetail(it.k),
       { size: 10, border: C.goldDark, color: C.gold });
     y += 34;
@@ -4824,7 +4828,7 @@ window.__debug = {
     c.gear[k.slot] = id; persist(); render(); return true;
   },
   synergyAt: (room        ) => synergyOf(S.rooms[room].theme, S.rooms[room].trap)?.name ?? null,
-  gearSlot: (sl          ) => { gearSlotSel = sl; render(); },
+  gearSlot: (sl          ) => { if (GEAR_SLOTS.some((x) => x.id === sl)) { gearSlotSel = sl; render(); } return gearSlotSel; },
   // 逻辑坐标 → 屏幕坐标（自测点按真实按钮用，含黑边偏移）
   toScreen: (x        , y        ) => {
     const rect = app.canvas.getBoundingClientRect();
