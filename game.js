@@ -272,15 +272,89 @@ const instById = (uid               ) => (uid == null ? undefined : S.monsters.f
 // 一只具体怪物的最终形态 = 基础种类 + 它自己的改造件
 const instKind = (inst             ) => ensureKindTex(graftKind(monKind(inst.kind), inst.graft));
 
-function markMaxLevel(s, maxed) {
-  if (!maxed || !s) return s;
-  const fx = new PIXI.Graphics();
-  const w = Math.max(7, Math.round(s.width * 0.22));
-  fx.moveTo(0, -w).lineTo(2, -2).lineTo(w, 0).lineTo(2, 2).lineTo(0, w).lineTo(-2, 2).lineTo(-w, 0).lineTo(-2, -2).fill(C.gold);
-  fx.x = Math.round(s.width * 0.28); fx.y = -Math.round(s.height * 0.72);
-  s.addChild(fx);
-  s.__maxFx = fx;
-  return s;
+// Reusable portrait feedback: max level uses an animated pixel bloom instead of
+// a badge; selection uses one restrained hop followed by a tiny idle hover.
+const uiPortraitFx = [];
+const battlePortraitFx = [];
+let portraitFxClock = 0;
+
+function portraitEffect(s, maxed = false, selected = false, seed = 0, registry = uiPortraitFx) {
+  if (!s || (!maxed && !selected)) return s;
+  const node = new PIXI.Container();
+  node.x = s.x; node.y = s.y;
+  s.x = 0; s.y = 0;
+  const h = Math.max(12, s.height);
+  const w = Math.max(10, Math.abs(s.width));
+  let aura = null, glow = null;
+  const motes = [];
+  if (maxed) {
+    aura = new PIXI.Graphics();
+    aura.ellipse(0, 0, Math.max(7, w * 0.47), Math.max(2, h * 0.09))
+      .fill({ color: C.gold, alpha: 0.18 })
+      .stroke({ width: 1, color: C.gold, alpha: 0.72 });
+    aura.blendMode = 'add';
+    node.addChild(aura);
+    glow = new PIXI.Sprite(s.texture);
+    glow.anchor.set(s.anchor.x, s.anchor.y);
+    glow.scale.set(s.scale.x * 1.09, s.scale.y * 1.09);
+    glow.tint = C.gold;
+    glow.alpha = 0.16;
+    glow.roundPixels = true;
+    glow.blendMode = 'add';
+    node.addChild(glow);
+  }
+  node.addChild(s);
+  if (maxed) {
+    for (let i = 0; i < 3; i++) {
+      const mote = new PIXI.Graphics();
+      const px = i === 1 ? 2 : 1;
+      mote.rect(0, 0, px, px).fill(i === 1 ? 0xfff1a8 : C.gold);
+      mote.blendMode = 'add';
+      node.addChild(mote);
+      motes.push({ node: mote, phase: i / 3, baseX: (i - 1) * w * 0.28 });
+    }
+  }
+  const rec = {
+    node, sprite: s, aura, glow, motes, maxed, selected, seed: (Number(seed) || 0) * 0.017,
+    age: 0, baseY: node.y, h, glowSX: glow?.scale.x ?? 1, glowSY: glow?.scale.y ?? 1,
+  };
+  node.__portraitFx = rec;
+  registry.push(rec);
+  return node;
+}
+
+function updatePortraitEffect(rec, dt, time, moveNode = true) {
+  if (!rec?.node || rec.node.destroyed) return;
+  rec.age += dt;
+  const t = time + rec.seed;
+  if (rec.maxed) {
+    const pulse = 0.5 + Math.sin(t * 3.2) * 0.5;
+    rec.aura.alpha = 0.42 + pulse * 0.34;
+    rec.aura.scale.set(0.94 + pulse * 0.09, 0.88 + pulse * 0.08);
+    rec.glow.alpha = 0.10 + pulse * 0.13;
+    const bloom = 1 + pulse * 0.018;
+    rec.glow.scale.set(rec.glowSX * bloom, rec.glowSY * bloom);
+    for (const m of rec.motes) {
+      const p = (t * 0.34 + m.phase) % 1;
+      m.node.x = Math.round(m.baseX + Math.sin(t * 2.1 + m.phase * 9) * 2);
+      m.node.y = Math.round(-4 - p * rec.h * 0.92);
+      m.node.alpha = Math.sin(p * Math.PI) * 0.78;
+    }
+  }
+  if (moveNode && rec.selected) {
+    const hop = rec.age < 0.42 ? -Math.sin((rec.age / 0.42) * Math.PI) * 3 : 0;
+    const hover = rec.age >= 0.42 ? -0.5 + Math.sin(t * 3.1) * 0.5 : 0;
+    rec.node.y = Math.round(rec.baseY + hop + hover);
+  }
+}
+
+function tickUiPortraitEffects(dt) {
+  portraitFxClock += dt;
+  for (let i = uiPortraitFx.length - 1; i >= 0; i--) {
+    const rec = uiPortraitFx[i];
+    if (!rec.node || rec.node.destroyed) uiPortraitFx.splice(i, 1);
+    else updatePortraitEffect(rec, dt, portraitFxClock, true);
+  }
 }
                                                      
 const SLOT_NAME                          = { leader: '统领', front: '前排', back: '后排', flank: '侧翼' };
@@ -687,6 +761,7 @@ function setTab(t     ) {
 
 // ---------- 经营界面渲染 ----------
 function clearUi() {
+  uiPortraitFx.length = 0;
   const kids = uiLayer.removeChildren();
   for (const k of kids) if (k !== uiGfx) k.destroy({ children: true });
   while (staleTex.length) { const t = staleTex.pop() ; try { t.destroy(true); } catch { /* 已释放 */ } }
@@ -2166,13 +2241,13 @@ function slotBox(g               , x        , y        , w        , h        , u
   const inst = which === 'leader' ? undefined : instById(uid);
   if (ch) {
     const k = monKind(ch.race);
-    uiLayer.addChild(markMaxLevel(sprite(k.tex, x + w / 2, y + h - 11 + bounce, 32), ch.lv >= CHAMP_LV_CAP));
+    uiLayer.addChild(portraitEffect(sprite(k.tex, x + w / 2, y + h - 11 + bounce, 32), ch.lv >= CHAMP_LV_CAP, selected, ch.uid));
     const ft = fatigueTier(ch.fatigue);
     labelC(uiLayer, `Lv${ch.lv}`, x + w / 2, y + h - 13, 12, ft.bad || ch.wounds ? C.red : C.gold);
     for (let i2 = 0; i2 < (ch.wounds || 0); i2++) g.rect(x + w - 5 - i2 * 4, y + 3, 3, 3).fill(C.red);
   } else if (inst) {
     const k = instKind(inst);
-    uiLayer.addChild(markMaxLevel(sprite(k.tex, x + w / 2, y + h - 11 + bounce, 25), inst.lv >= 5));
+    uiLayer.addChild(portraitEffect(sprite(k.tex, x + w / 2, y + h - 11 + bounce, 25), inst.lv >= 5, selected, inst.uid));
     labelC(uiLayer, `Lv${inst.lv}`, x + w / 2, y + h - 13, 12, C.bone);
   } else {
     labelC(uiLayer, locked ? '锁' : name, x + w / 2, y + h / 2 - 7, 12, which === 'leader' ? C.goldDark : C.stoneLit);
@@ -2225,7 +2300,7 @@ function drawSidePanel(g               ) {
         const ft = fatigueTier(c.fatigue);
         // 一行式：名字/等级/状态同基线，20px 行里两行必压字（点阵盒 15px）
         g.rect(340, y, 130, 20).fill(here ? C.wallLit : C.ink).stroke({ width: 1, color: here ? C.gold : C.goldDark, alignment: 0 });
-        uiLayer.addChild(markMaxLevel(sprite(monKind(c.race).tex, 348, y + 19, 16), c.lv >= CHAMP_LV_CAP));
+        uiLayer.addChild(portraitEffect(sprite(monKind(c.race).tex, 348, y + 19, 16), c.lv >= CHAMP_LV_CAP, here, c.uid));
         label(uiLayer, cut(c.name.split('·')[0], 4), 358, y + 3, 12, here ? C.white : C.gold);
         label(uiLayer, `${c.lv}`, 410, y + 3, 12, C.bone);
         label(uiLayer, ft.bad ? ft.text.slice(0, 2) : at < 0 ? '待' : `${at + 1}房`, 432, y + 3, 12, ft.bad ? C.red : at < 0 ? C.green : C.gold);
@@ -2249,7 +2324,7 @@ function drawSidePanel(g               ) {
       const at = roomOf(inst.uid);
       const here = at === room && S.rooms[room][which] === inst.uid;
       g.rect(340, y, 130, 18).fill(here ? C.wallLit : C.ink).stroke({ width: 1, color: C.stoneLit, alignment: 0 });
-      const s = markMaxLevel(sprite(k.tex, 348, y + 17, 15), inst.lv >= 5);
+      const s = portraitEffect(sprite(k.tex, 348, y + 17, 15), inst.lv >= 5, here, inst.uid);
       uiLayer.addChild(s);
       label(uiLayer, `${cut(k.name, 4)} Lv${inst.lv}`, 360, y + 3, 12, here ? C.white : C.bone);
       const tagCol = at < 0 ? C.green : here ? C.gold : C.red;
@@ -2329,7 +2404,7 @@ function drawSidePanel(g               ) {
 
   function drawMonInstCard(g, inst, k) {
     labelC(uiLayer, cut(`${k.name} Lv${inst.lv}`, 11), 405, 46, 12, C.white);
-    uiLayer.addChild(markMaxLevel(sprite(k.tex, 405, 96, 36), inst.lv >= 5));
+    uiLayer.addChild(portraitEffect(sprite(k.tex, 405, 96, 36), inst.lv >= 5, true, inst.uid));
     const mult = LEVEL_MULT[inst.lv - 1];
     label(uiLayer, `生命 ${Math.round(k.hp * mult)}  攻击 ${Math.round(k.atk * mult)}`, 340, 100, 12, C.bone);
     label(uiLayer, `防御 ${Math.round(k.def * mult)}  速度 ${k.spd.toFixed(1)}`, 340, 114, 12, C.bone);
@@ -3142,7 +3217,7 @@ function drawRoster(g               ) {
     const at = roomOfChamp(c.uid);
     const ft = fatigueTier(c.fatigue);
     g.rect(8, y, 150, 26).fill(on ? C.wallLit : C.ink).stroke({ width: 1, color: on ? C.gold : C.goldDark, alignment: 0 });
-    uiLayer.addChild(markMaxLevel(sprite(monKind(c.race).tex, 20, y + 25, 24), c.lv >= CHAMP_LV_CAP));
+    uiLayer.addChild(portraitEffect(sprite(monKind(c.race).tex, 20, y + 25, 24), c.lv >= CHAMP_LV_CAP, on, c.uid));
     const nm = c.name.split('·')[0];
     label(uiLayer, nm.length > 4 ? `${nm.slice(0, 4)}…` : nm, 34, y + 6, 12, on ? C.white : C.gold);
     label(uiLayer, `${c.lv}`, 86, y + 6, 12, C.bone);
@@ -3647,7 +3722,7 @@ function pageMob(g               ) {
     const open = !el || eliteOpen(k);
     g.rect(6, y, 152, 20).fill(selected ? C.wallLit : C.wall)
       .stroke({ width: 1, color: selected ? C.gold : cst ? C.purpleDark : el ? C.goldDark : C.ink, alignment: 0 });
-    uiLayer.addChild(sprite(k.tex, 18, y + 19, 18));
+    uiLayer.addChild(portraitEffect(sprite(k.tex, 18, y + 19, 18), false, selected, k.id.length * 13));
     label(uiLayer, cut(k.name, 4), 30, y + 4, 12, cst ? C.purple : el ? C.gold : C.bone);
     label(uiLayer, open ? `${k.cost}骨` : `第${k.eliteMin}轮`, 92, y + 4, 12,
       !open ? C.stoneLit : S.bone >= k.cost ? C.gold : C.redDark);
@@ -3668,7 +3743,7 @@ function pageMob(g               ) {
     const selected = sel?.kind === 'inst' && sel.uid === inst.uid;
     const ready = inst.lv < 5 && inst.xp >= XP_PER_LEVEL[inst.lv - 1];
     g.rect(168, y2, 160, 18).fill(selected ? C.wallLit : C.wall).stroke({ width: 1, color: selected ? C.gold : C.ink, alignment: 0 });
-    uiLayer.addChild(markMaxLevel(sprite(k.tex, 178, y2 + 17, 16), inst.lv >= 5));
+    uiLayer.addChild(portraitEffect(sprite(k.tex, 178, y2 + 17, 16), inst.lv >= 5, selected, inst.uid));
     label(uiLayer, `${cut(k.name, 4)} Lv${inst.lv}`, 190, y2 + 2, 12,
       isCustomKind(inst.kind) ? C.purple : isEliteKind(inst.kind) ? C.gold : C.bone);
     const at = roomOf(inst.uid);
@@ -3833,6 +3908,7 @@ const battleGfx = new PIXI.Graphics();
 const hudLayer = new PIXI.Container();
 const hudGfx = new PIXI.Graphics();
 const unitSprites = new Map                   ();
+const unitPortraitNodes = new Map();
                                                                                   
 let roomVis            = [];
 let sealQuarters                       = null;
@@ -3884,6 +3960,7 @@ function startBattle() {
     { sealMax: sealMax(), trapPower: trapPower(), mods: battleMods(), champs: champStatMap() });
   pendingResultRaid = raid.no;
   screen = 'battle';
+  uiPortraitFx.length = 0;
   speed = 1;
   paused = false;
   camX = camTargetX = -40;
@@ -3898,6 +3975,8 @@ function buildBattleScene() {
   for (const c of bgLayer.removeChildren()) c.destroy({ children: true });
   for (const c of unitLayer.removeChildren()) c.destroy({ children: true });
   unitSprites.clear();
+  unitPortraitNodes.clear();
+  battlePortraitFx.length = 0;
   clearSpeechBubbles();
   roomVis = [];
   battleLayer.visible = true;
@@ -3972,9 +4051,11 @@ function buildBattleScene() {
 function ensureSprite(u      ) {
   if (unitSprites.has(u)) return;
   // 角色源图已统一朝向，战斗绘制无需运行时翻转。
-  const s = markMaxLevel(sprite(u.tex, 0, 0, u.legend ? 40 : 30), u.side === 'hero' ? u.lv >= CHAMP_LV_CAP : u.lv >= 5);
-  unitLayer.addChild(s);
+  const s = sprite(u.tex, 0, 0, u.legend ? 40 : 30);
+  const node = portraitEffect(s, u.side === 'hero' ? u.lv >= CHAMP_LV_CAP : u.lv >= 5, false, u.homeX, battlePortraitFx);
+  unitLayer.addChild(node);
   unitSprites.set(u, s);
+  unitPortraitNodes.set(u, node);
 }
 
 function spawnParticles(x        , y        , n        , color        , spread = 40, layer = fxLayer) {
@@ -4088,22 +4169,23 @@ function updateBattleVisuals(dt        ) {
   const drawUnit = (u      ) => {
     const s = unitSprites.get(u);
     if (!s) return;
+    const node = unitPortraitNodes.get(u) ?? s;
     const wx = u.room * ROOM_W + u.x;
     const lunge = u.lungeT > 0 ? Math.round(Math.sin((1 - u.lungeT / 0.22) * Math.PI) * 4) : 0;
     const actBob = u.lungeT > 0 ? Math.round(Math.sin((1 - u.lungeT / 0.22) * Math.PI) * 3) : 0;
     const dir = u.side === 'hero' ? 1 : -1;
     const idleBob = u.alive ? Math.round(Math.sin(b.time * 6 + u.homeX) * 1) : 0;
     const bobY = idleBob - actBob;
-    s.x = Math.round(wx + lunge * dir);
-    s.y = Math.round(FLOOR_Y + u.y + bobY);
-    s.visible = u.alive || u.deadT < 1.2;
+    node.x = Math.round(wx + lunge * dir);
+    node.y = Math.round(FLOOR_Y + u.y + bobY);
+    node.visible = u.alive || u.deadT < 1.2;
     if (!u.alive) {
-      s.alpha = Math.max(0, 1 - u.deadT / 1.2);
-      s.rotation = Math.min(1.4, u.deadT * 2.5) * dir;
-      s.y = Math.round(FLOOR_Y + u.y + Math.min(8, u.deadT * 20));
+      node.alpha = Math.max(0, 1 - u.deadT / 1.2);
+      node.rotation = Math.min(1.4, u.deadT * 2.5) * dir;
+      node.y = Math.round(FLOOR_Y + u.y + Math.min(8, u.deadT * 20));
     } else {
-      s.alpha = 1;
-      s.rotation = 0;
+      node.alpha = 1;
+      node.rotation = 0;
       if (u.flashT > 0) s.tint = C.red;
       else if (u.burnT > 0) s.tint = 0xff8844;
       else if (u.poisonT > 0) s.tint = 0x77b255;
@@ -4111,7 +4193,7 @@ function updateBattleVisuals(dt        ) {
       else if (u.slowT > 0) s.tint = 0xa8d0ff;
       else s.tint = 0xffffff;
     }
-    if (s.__maxFx) s.__maxFx.alpha = 0.42 + Math.sin(b.time * 5 + u.homeX * 0.03) * 0.38;
+    if (node.__portraitFx) updatePortraitEffect(node.__portraitFx, dt, b.time, false);
     if (!u.alive) return;
     // 状态图标：减速/束缚/魅惑/沉默
     const iconY = FLOOR_Y + u.y - 40;
@@ -4147,11 +4229,12 @@ function updateBattleVisuals(dt        ) {
     if (i === b.roomIndex) continue;
     b.rooms[i].mons.forEach((m) => {
       const s = unitSprites.get(m);
-      if (s) s.visible = m.alive && i > b.roomIndex;
-      if (s && s.visible) {
-        s.x = Math.round(i * ROOM_W + m.x);
-        s.y = Math.round(FLOOR_Y + m.y);
-        s.alpha = 0.85;
+      const node = unitPortraitNodes.get(m) ?? s;
+      if (node) node.visible = m.alive && i > b.roomIndex;
+      if (node && node.visible) {
+        node.x = Math.round(i * ROOM_W + m.x);
+        node.y = Math.round(FLOOR_Y + m.y);
+        node.alpha = 0.85;
       }
     });
   }
@@ -4518,6 +4601,7 @@ function enterOvertime() {
 let endingBuilt = false;
 function tick(dt        ) {
   tickAudio();
+  if (screen === 'manage') tickUiPortraitEffects(dt);
   if (saveFlash > 0) {
     saveFlash -= dt;
     if (saveFlash <= 0 && screen === 'manage') render();
@@ -4628,6 +4712,10 @@ window.__debug = {
   get detail() { return detailPopup ? { ...detailPopup } : null; },
   openDetail: (title, body) => { openDetailPopup(title, body); return true; },
   uiBounds: () => boundedTextAudit(),
+  portraitFx: () => ({
+    ui: uiPortraitFx.filter((r) => !r.node.destroyed).map((r) => ({ maxed: r.maxed, selected: r.selected, y: r.node.y, baseY: r.baseY, glow: r.glow?.alpha ?? 0, motes: r.motes.length })),
+    battle: battlePortraitFx.filter((r) => !r.node.destroyed).map((r) => ({ maxed: r.maxed, glow: r.glow?.alpha ?? 0, motes: r.motes.length })),
+  }),
   get monsters() { return S.monsters.map((m) => ({ ...m, room: roomOf(m.uid) })); },
   get rooms() { return S.rooms; },
   get battle() {
