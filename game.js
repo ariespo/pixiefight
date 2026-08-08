@@ -774,8 +774,8 @@ function clearUi() {
 }
 
 function render() {
-  if (nameInput) nameInput.style.display = screen === 'manage' && (stitch || smith) && !portrait ? 'block' : 'none';
-  if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !portrait ? 'block' : 'none';
+  if (nameInput) nameInput.style.display = screen === 'manage' && (stitch || smith) && !detailPopup && !portrait ? 'block' : 'none';
+  if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !detailPopup && !portrait ? 'block' : 'none';
   const modalOpen = screen === 'manage' && (!!stitch || !!forge || !!graft || !!smith);
   modalLayer.visible = modalOpen || !!detailPopup;
   if (screen !== 'manage') { uiLayer.visible = false; if (storyInput) storyInput.style.display = 'none'; return; }
@@ -1664,8 +1664,16 @@ function drawStitch() {
   label(modalLayer, `技能・${k.skill}`, 308, 68, 12, C.purple);
   boundedText(modalLayer, k.skillDesc, 308, 83, 156, 28, 12, C.stoneLit);
   const afs = selectedAffixes(st.affixes);
+  const affixSummary = afs.map((a) => `${a.name}：${a.desc}`).join('；');
   label(modalLayer, afs.length ? `词缀 ${afs.map((a) => a.name).join('・')}` : '满级被动', 308, 116, 12, C.gold);
-  boundedText(modalLayer, afs.length ? afs.map((a) => `${a.name}：${a.desc}`).join('；') : k.passive, 308, 131, 156, 28, 12, C.stoneLit);
+  const stitchDesc = boundedText(modalLayer, afs.length ? affixSummary : k.passive, 308, 131, 118, 28, 10, C.stoneLit);
+  if (afs.length) {
+    button(g, modalLayer, hits, 430, 131, 34, 24, '详情', () => openDetailPopup('已选怪物词缀', affixSummary, C.purple),
+      { size: 10, fill: C.ink, border: stitchDesc.truncated ? C.gold : C.purple, color: C.white });
+    hits.add(308, 131, 118, 28, () => openDetailPopup('已选怪物词缀', affixSummary, C.purple));
+  } else if (stitchDesc.truncated) {
+    hits.add(308, 131, 156, 28, () => openDetailPopup('怪物满级被动', k.passive, C.gold));
+  }
 
   // 底部：命名与确认
   label(modalLayer, '名字', 62, 202, 12, C.bone);
@@ -2473,14 +2481,14 @@ function drawSidePanel(g               ) {
       dy = 194;
     }
 
-    const passiveBody = k.passiveDesc ?? k.passive;
-    const passiveTitle = `被动：${inst.lv < 5 ? `Lv5 解锁・${k.passive}` : k.passive}`;
-    button(g, uiLayer, hits, 340, dy, 130, 14, cut(passiveTitle, 13),
-      () => openDetailPopup(passiveTitle, passiveBody, C.gold),
-      { size: 11, fill: C.ink, border: C.goldDark, color: C.gold });
-    const passiveH = Math.max(0, 218 - (dy + 16));
-    if (inst.lv >= 5 && passiveH >= 13) boundedText(uiLayer, passiveBody, 340, dy + 16, 130, passiveH, 10, C.stoneLit);
-    dy = 218;
+    const passiveBody = k.passiveDesc ?? k.passive ?? '无被动说明';
+    const passiveTitle = inst.lv < 5 ? '被动・Lv5 解锁' : '被动';
+    const passiveH = Math.max(18, 222 - dy);
+    g.rect(340, dy, 130, passiveH).fill(C.ink).stroke({ width: 1, color: C.goldDark, alignment: 0 });
+    boundedText(uiLayer, `${passiveTitle}：${passiveBody}`, 344, dy + 2, 122, passiveH - 4, passiveH <= 30 ? 8 : 10,
+      inst.lv < 5 ? C.stoneLit : C.gold);
+    hits.add(340, dy, 130, passiveH, () => openDetailPopup(`${passiveTitle}・${k.name}`, passiveBody, C.gold));
+    dy = 222;
 
     if (gcount && dy < 218) {
       label(uiLayer, `已移植 ${gcount}/${GRAFT_CAP} 件`, 340, dy, 10, C.steel);
@@ -2516,6 +2524,13 @@ function drawSidePanel(g               ) {
     button(g, uiLayer, hits, 340, 176, 130, 18, `${isCustomKind(k.id) ? '再缝一只' : '招募'} ${k.cost}骨币`,
       () => recruit(k.id),
       { size: 12, enabled: S.bone >= k.cost, fill: C.greenDark, border: C.green, color: C.white });
+
+    const passiveBody = k.passiveDesc ?? k.passive ?? '无被动说明';
+    g.rect(340, 197, 130, 27).fill(C.ink).stroke({ width: 1, color: C.goldDark, alignment: 0 });
+    boundedText(uiLayer, `被动：${passiveBody}`, 344, 199, 94, 23, 8, C.gold);
+    hits.add(340, 197, 130, 27, () => openDetailPopup(`怪物被动・${k.name}`, passiveBody, C.gold));
+    button(g, uiLayer, hits, 442, 200, 26, 20, '详', () => openDetailPopup(`怪物被动・${k.name}`, passiveBody, C.gold),
+      { size: 10, fill: C.ink, border: C.goldDark, color: C.gold });
 
     // 技能详情弹出卡片
     if (monKindSkillTip === sel.id) {
