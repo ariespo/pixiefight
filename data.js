@@ -391,6 +391,10 @@ export const TEXTURES = [
   'mon-slime', 'mon-goblin', 'mon-archer', 'mon-bat', 'mon-shaman', 'mon-ogre',
   'mon-lich', 'mon-bonedragon', 'mon-hundredarm', 'mon-beholder', 'mon-mindflayer',
   'mon-plaguelord', 'mon-magmagolem', 'mon-broodqueen',
+  ...MONSTERS.filter((m) => !m.id.startsWith('elite-')).flatMap((m) => [
+    `part-native-${m.id}-core`, `part-native-${m.id}-head`,
+    `part-native-${m.id}-arm`, `part-native-${m.id}-legs`,
+  ]),
   'hero-knight', 'hero-archer', 'hero-cleric', 'hero-mage', 'hero-rogue', 'hero-captain',
   'hero-paladin', 'hero-berserker', 'hero-ranger', 'hero-bard', 'hero-inquisitor', 'hero-swordmaster',
   'tile-wall', 'tile-floor', 'prop-barrel', 'prop-bones', 'prop-shelf',

@@ -1,4 +1,5 @@
 // 怪物部件表与拼接派生。纯数据 + 纯函数，无 pixi 依赖（可用 node 直接跑平衡校验）。
+import { MONSTERS } from './data.js';
                                                      
 
                                                        
@@ -168,6 +169,59 @@ PARTS.push(
 
 export const LEGENDARY_PARTS = () => PARTS.filter((p) => p.legendary);
 export const legendaryPartCount = (parts) => Object.values(parts ?? {}).filter((id) => partById(id)?.legendary).length;
+
+// 每种固定怪物的专属四件。素材由原物种立绘无损分层，四层叠合会恢复传统完整形象；
+// 精英与英雄沿用同物种专属件，但依旧保留自己的基础数值和身份边框。
+const NATIVE_NAMES = {
+  slime: ['胶质躯核', '软泥头', '黏液臂', '流体足'],
+  goblin: ['哥布林躯', '哥布林头', '短刃臂', '赤脚'],
+  archer: ['骸骨胸', '骷髅头', '骨弓臂', '骸骨足'],
+  bat: ['蝠躯', '蝠首', '翼爪臂', '蝠爪足'],
+  shaman: ['菌袍', '菌冠头', '巫杖臂', '菌根足'],
+  ogre: ['食人魔躯', '食人魔头', '巨棒臂', '食人魔足'],
+  bonedragon: ['骨龙胸核', '骨龙头', '骨翼臂', '骨龙足'],
+  hundredarm: ['百臂巨躯', '百臂巨头', '百臂群腕', '巨人足'],
+  lich: ['巫妖袍', '巫妖头', '巫妖权杖', '巫妖足'],
+  beholder: ['眼魔躯核', '主眼头', '眼梗触臂', '浮游触足'],
+  mindflayer: ['灵吸怪袍', '灵吸怪头', '夺心触臂', '灵吸怪足'],
+  plaguelord: ['疫主祭袍', '疫主冠首', '丧钟权杖', '疫主足'],
+  magmagolem: ['熔岩炉心', '熔岩巨首', '熔岩巨臂', '熔岩巨足'],
+  broodqueen: ['孵母腹巢', '孵母头', '孵母螯肢', '孵母蛛足'],
+};
+const NATIVE_BIG = new Set(['plaguelord', 'magmagolem', 'broodqueen']);
+const NATIVE_PARTS = {};
+const NATIVE_CATS = ['core', 'head', 'arm', 'legs'];
+const STAT_SHARE = {
+  core: [0.7, 0.1, 0.5], head: [0.1, 0.25, 0.15],
+  arm: [0.05, 0.55, 0.1], legs: [0.15, 0.1, 0.25],
+};
+for (const m of MONSTERS.filter((x) => !x.id.startsWith('elite-'))) {
+  const ids = {};
+  NATIVE_CATS.forEach((cat, i) => {
+    const id = `native-${m.id}-${cat}`;
+    ids[cat] = id;
+    const [hpShare, atkShare, defShare] = STAT_SHARE[cat];
+    const eff = cat === 'core' ? { passive: m.eff?.passive }
+      : cat === 'head' ? { onHit: m.eff?.onHit }
+      : cat === 'arm' ? { skill: m.eff?.skill, skillName: m.eff?.skillName ?? m.skill }
+      : {};
+    const desc = cat === 'core' ? `满级被动·${m.passive}`
+      : cat === 'head' ? `${m.name}的专属头部，保留传统面部、冠饰与物种轮廓`
+      : cat === 'arm' ? `技能·${m.skill}：${m.skillDesc}`
+      : `${m.row === 'back' ? '后排' : m.row === 'front' ? '前排' : '任意'}站位，保留${m.name}的传统下肢轮廓`;
+    PARTS.push({
+      id, cat, name: NATIVE_NAMES[m.id][i], tex: `part-native-${m.id}-${cat}`,
+      bone: Math.max(8, Math.round(m.cost * 1.4 * [0.4, 0.18, 0.27, 0.15][i])),
+      hp: Math.round(m.hp * hpShare), atk: Math.round(m.atk * atkShare), def: Math.round(m.def * defShare),
+      spd: cat === 'legs' ? +(m.spd - 0.9).toFixed(2) : 0,
+      unlockRaid: m.legend ? Math.max(2, m.legendMin ?? 2) : 1,
+      word: m.name[0], desc, eff, row: cat === 'legs' ? m.row : undefined,
+      skillDesc: cat === 'arm' ? m.skillDesc : undefined,
+      nativePart: true, nativeSource: m.id, nativeSize: NATIVE_BIG.has(m.id) ? 40 : 32,
+    });
+  });
+  NATIVE_PARTS[m.id] = ids;
+}
 
                      
              
@@ -439,9 +493,9 @@ export function deriveKind(def           )              {
   const ANYROW = ['tentacle', 'root', 'spider', 'coil', 'swarmlet', 'flame', 'palanquin', 'broodleg', 'burrow', 'shade'];
   const BACKROW = ['wing', 'cloud', 'stilt', 'sail'];
   const FRONTROW = ['tread', 'anchor', 'molten', 'battering'];
-  const row                     = FRONTROW.includes(legs.id) ? 'front'
+  const row                     = legs.row ?? (FRONTROW.includes(legs.id) ? 'front'
     : BACKROW.includes(legs.id) ? 'back'
-    : ANYROW.includes(legs.id) ? 'any' : ranged ? 'any' : 'front';
+    : ANYROW.includes(legs.id) ? 'any' : ranged ? 'any' : 'front');
   const sk = SKILL_BY_ARM[arm.id] ?? { skill: 'multi'         , name: '乱击' };
   const eff         = {
     skill: sk.skill,
@@ -481,7 +535,8 @@ export function deriveKind(def           )              {
     id: def.id, name: def.name, tex: `tex-${def.id}`, cost: boneCost(def.parts),
     hp, atk, def: def2, spd,
     skill: eff.skillName,
-    skillDesc: arm.diy || eff.skill !== sk.skill
+    skillDesc: arm.nativePart ? arm.skillDesc
+      : arm.diy || eff.skill !== sk.skill
       ? (SKILL_TEXT[eff.skill] ?? '来历不明的攻击方式')
       : arm.desc.replace(/^技能·\S+：/, ''),
     passive: core.diy
@@ -585,7 +640,7 @@ export const PART_BUDGET = { hp: 120, atk: 20, def: 5, power: 6, mana: 20 }     
 
 // DIY 件不生成新贴图：从同部位的原生部件里挑一张最贴近的复用，
 // 保证拼接体永远由同一批手绘素材组成（风格一致优先于"每件都独一无二"）。
-// 造型库：默认给同部位的贴图（拼出来位置最合理），但玩家可以自由挑全部 56 张 ——
+// 造型库：默认给同部位的贴图（拼出来位置最合理），但玩家可以自由挑全部已登记素材 ——
 // 贴图只决定长相，数值与能力由草案决定，所以跨部位取用不会破坏平衡。
 export const lookOptions = (cat         ) => PARTS.filter((p) => p.cat === cat && !p.diy);
 export const allLooks = () => PARTS.filter((p) => !p.diy);
@@ -658,6 +713,7 @@ export function draftToPart(id        , cat         , d              , brief    
     unlockRaid: 0, word: d.word,
     desc: `${d.desc}${powers.length ? ` 能力：${powers.map((p) => p.name).join('・')}` : ''}`,
     eff, diy: true, powers: d.powers, brief,
+    nativePart: !!look?.nativePart, nativeSize: look?.nativeSize, nativeSource: look?.nativeSource,
   };
 }
 
@@ -680,22 +736,6 @@ export const GRAFT_PULL_MANA = 6;    // 摘除一件的魔质
 
 // 固定怪物也使用四部位蓝图。它们继续保留原 id 与原始数值，保证旧存档和平衡不变；
 // 改造时只替换对应部位的外观与职责，所以玩家能在所有固定/精英怪物身上看到真正的拼接结果。
-const NATIVE_PARTS = {
-  slime: { core: 'jelly', head: 'skull', arm: 'claw', legs: 'stump' },
-  goblin: { core: 'bone', head: 'maw', arm: 'claw', legs: 'hoof' },
-  archer: { core: 'bone', head: 'skull', arm: 'bow', legs: 'stilt' },
-  bat: { core: 'fungus', head: 'maw', arm: 'whip', legs: 'wing' },
-  shaman: { core: 'fungus', head: 'eye', arm: 'staff', legs: 'root' },
-  ogre: { core: 'rock', head: 'horn', arm: 'club', legs: 'stump' },
-  bonedragon: { core: 'tomb', head: 'frost', arm: 'censer', legs: 'wing' },
-  hundredarm: { core: 'throne', head: 'crown', arm: 'banner', legs: 'anchor' },
-  lich: { core: 'tomb', head: 'lantern', arm: 'reaper', legs: 'cloud' },
-  beholder: { core: 'crystal', head: 'eightfold', arm: 'staff', legs: 'tentacle' },
-  mindflayer: { core: 'void', head: 'tongue', arm: 'chain', legs: 'tentacle' },
-  plaguelord: { core: 'plague', head: 'bell', arm: 'sceptre', legs: 'palanquin' },
-  magmagolem: { core: 'magma', head: 'horn', arm: 'magmafist', legs: 'molten' },
-  broodqueen: { core: 'brood', head: 'eightfold', arm: 'reliquary', legs: 'broodleg' },
-};
 export function nativePartsFor(id) {
   const baseId = id.startsWith('elite-') ? id.slice(6) : id;
   const p = NATIVE_PARTS[baseId];
@@ -750,7 +790,8 @@ export function graftKind(k             , ids                      )            
         skillDesc = p.desc.replace(/^技能·\S+：/, '');
       }
     } else {
-      if (GRAFT_BACK.includes(p.id)) row = 'back';
+      if (p.row) row = p.row;
+      else if (GRAFT_BACK.includes(p.id)) row = 'back';
       else if (GRAFT_ANY.includes(p.id)) row = 'any';
       else if (GRAFT_FRONT.includes(p.id)) row = 'front';
       Object.assign(eff, GRAFT_LEGS_EXTRA[p.id] ?? {});

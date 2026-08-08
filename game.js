@@ -421,14 +421,18 @@ async function boot() {
   doneTasks += 1;
   setLoading((doneTasks / totalTasks) * 100);
 
-  for (const name of TEXTURES) {
-    try {
-      const t = await PIXI.Assets.load(`assets/${name}.png`);
-      t.source.scaleMode = 'nearest';
-      TEX[name] = t;
-    } catch { /* 缺图用白块占位，不阻断 */ }
-    doneTasks += 1;
-    setLoading((doneTasks / totalTasks) * 100);
+  // 专属部件显著增加后采用有限并发加载，避免 191 个小 PNG 串行请求拖长冷启动。
+  const LOAD_BATCH = 16;
+  for (let i = 0; i < TEXTURES.length; i += LOAD_BATCH) {
+    await Promise.all(TEXTURES.slice(i, i + LOAD_BATCH).map(async (name) => {
+      try {
+        const t = await PIXI.Assets.load(`assets/${name}.png`);
+        t.source.scaleMode = 'nearest';
+        TEX[name] = t;
+      } catch { /* 缺图用白块占位，不阻断 */ }
+      doneTasks += 1;
+      setLoading((doneTasks / totalTasks) * 100);
+    }));
   }
 
   hideLoading();
@@ -466,14 +470,22 @@ const CST_GRID = 24;
 
 const staleTex                       = [];
 
+function partsLayout(parts) {
+  const ps = ['legs', 'core', 'arm', 'head'].map((cat) => partById(parts[cat])).filter(Boolean);
+  const native = ps.some((p) => p.nativePart);
+  return { native, grid: native ? Math.max(32, ...ps.map((p) => p.nativeSize ?? 0)) : CST_GRID };
+}
+
 function buildPartsTex(key, parts) {
   const cont = new PIXI.Container();
-  // 部件素材本身朝右，拼接体要和其它怪物一样朝左：整组镜像一次。
-  // 逐件 flip 会把臂/头挪到身体另一侧，拼出错位怪。
-  const body = new PIXI.Container();
-  body.scale.x = -1;
-  body.x = CST_GRID;
-  cont.addChild(body);
+  const layout = partsLayout(parts);
+  // 传统专属件已经按怪物原朝向保存在完整画布上；通用件仍是朝右的小块，混搭时单件翻转并居中。
+  const body = layout.native ? cont : new PIXI.Container();
+  if (!layout.native) {
+    body.scale.x = -1;
+    body.x = CST_GRID;
+    cont.addChild(body);
+  }
   const order            = ['legs', 'core', 'arm', 'head'];
   const INV = 1 / 8;
   for (const cat of order) {
@@ -482,13 +494,25 @@ function buildPartsTex(key, parts) {
     const tex = TEX[p.tex];
     if (!tex) continue;
     const s = new PIXI.Sprite(tex);
-    s.scale.set(INV);
-    s.x = PART_SLOT[cat].x;
-    s.y = PART_SLOT[cat].y;
+    if (layout.native && p.nativePart) {
+      const size = p.nativeSize ?? 32;
+      s.scale.set(INV);
+      s.x = (layout.grid - size) / 2;
+      s.y = (layout.grid - size) / 2;
+    } else if (layout.native) {
+      const off = (layout.grid - CST_GRID) / 2;
+      s.scale.set(-INV, INV);
+      s.x = off + CST_GRID - PART_SLOT[cat].x;
+      s.y = off + PART_SLOT[cat].y;
+    } else {
+      s.scale.set(INV);
+      s.x = PART_SLOT[cat].x;
+      s.y = PART_SLOT[cat].y;
+    }
     body.addChild(s);
   }
   const frame = new PIXI.Graphics();
-  frame.rect(0, 0, CST_GRID, CST_GRID).fill({ color: 0x000000, alpha: 0 });
+  frame.rect(0, 0, layout.grid, layout.grid).fill({ color: 0x000000, alpha: 0 });
   cont.addChildAt(frame, 0);
   try {
     const old = TEX[key];
@@ -1844,10 +1868,12 @@ function drawForgeFooter(g               , isPart         ) {
 
 function drawStitchPreview(left        , top        , cell        ) {
   const st = stitch ;
-  // 与烘焙贴图同一套镜像：预览里看到的朝向就是上场时的朝向（朝左，面向入口）
+  const layout = partsLayout(st.parts);
+  const unit = layout.native ? (CST_GRID * cell) / layout.grid : cell;
   const body = new PIXI.Container();
-  body.scale.x = -1;
-  body.x = Math.round(left + CST_GRID * cell);
+  body.x = Math.round(left);
+  body.y = Math.round(top);
+  if (!layout.native) { body.scale.x = -1; body.x += Math.round(CST_GRID * cell); }
   modalLayer.addChild(body);
   const order            = ['legs', 'core', 'arm', 'head'];
   for (const cat of order) {
@@ -1857,9 +1883,21 @@ function drawStitchPreview(left        , top        , cell        ) {
     if (!tex) continue;
     const s = new PIXI.Sprite(tex);
     s.anchor.set(0, 0);
-    s.scale.set(cell / 8); // 部件 PNG 为 8× 放大图，除以 8 回到逻辑格
-    s.x = Math.round(PART_SLOT[cat].x * cell);
-    s.y = Math.round(top + PART_SLOT[cat].y * cell);
+    if (layout.native && p.nativePart) {
+      const size = p.nativeSize ?? 32;
+      s.scale.set(unit / 8);
+      s.x = Math.round((layout.grid - size) * unit / 2);
+      s.y = Math.round((layout.grid - size) * unit / 2);
+    } else if (layout.native) {
+      const off = (layout.grid - CST_GRID) * unit / 2;
+      s.scale.set(-unit / 8, unit / 8);
+      s.x = Math.round(off + (CST_GRID - PART_SLOT[cat].x) * unit);
+      s.y = Math.round(off + PART_SLOT[cat].y * unit);
+    } else {
+      s.scale.set(cell / 8);
+      s.x = Math.round(PART_SLOT[cat].x * cell);
+      s.y = Math.round(PART_SLOT[cat].y * cell);
+    }
     s.roundPixels = true;
     body.addChild(s);
   }
@@ -4822,7 +4860,7 @@ window.__debug = {
     }
     return out;
   },
-  get partList() { return PARTS.map((p) => ({ id: p.id, cat: p.cat, name: p.name, bone: p.bone, unlockRaid: p.unlockRaid, diy: !!p.diy, legendary: !!p.legendary, tex: p.tex })); },
+  get partList() { return PARTS.map((p) => ({ id: p.id, cat: p.cat, name: p.name, bone: p.bone, unlockRaid: p.unlockRaid, diy: !!p.diy, legendary: !!p.legendary, nativePart: !!p.nativePart, nativeSource: p.nativeSource, tex: p.tex })); },
   get powerMenu() { return POWER_MENU.map((p) => ({ id: p.id, name: p.name, cost: p.cost, cats: p.cats })); },
   get storyScenes() { return SCENES.map((x) => ({ id: x.id, once: !!x.once, chained: !!x.chained, kind: x.input ? 'input' : 'choice' })); },
 };
