@@ -179,10 +179,27 @@ export class Hits {
   list        = [];
   clear() { this.list.length = 0; }
   add(x        , y        , w        , h        , fn            ) { this.list.push({ x, y, w, h, fn }); }
-  test(px        , py        )          {
+  test(px        , py        , pad = 0)          {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const h = this.list[i];
       if (px >= h.x && px <= h.x + h.w && py >= h.y && py <= h.y + h.h) { h.fn(); return true; }
+    }
+    // On a coarse pointer, allow a small nearest-target halo around compact
+    // pixel controls. Large blockers/panels are deliberately excluded.
+    if (pad > 0) {
+      let best = null, bestScore = Infinity, bestIndex = -1;
+      for (let i = this.list.length - 1; i >= 0; i--) {
+        const h = this.list[i];
+        if (h.w * h.h > 4000) continue;
+        const dx = px < h.x ? h.x - px : px > h.x + h.w ? px - (h.x + h.w) : 0;
+        const dy = py < h.y ? h.y - py : py > h.y + h.h ? py - (h.y + h.h) : 0;
+        if (dx > pad || dy > pad) continue;
+        const score = dx * dx + dy * dy;
+        if (score < bestScore || (score === bestScore && i > bestIndex)) {
+          best = h; bestScore = score; bestIndex = i;
+        }
+      }
+      if (best) { best.fn(); return true; }
     }
     return false;
   }

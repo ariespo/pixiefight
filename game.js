@@ -461,6 +461,8 @@ const modalGfx = new PIXI.Graphics();
 const overlay = new PIXI.Container();
 const hits = new Hits();
 let viewScale = 1;
+let smallScreen = false;
+let renderResolution = 1;
 
 const loadingEl   = document.getElementById('loading');
 const loadingText = document.getElementById('loading-text');
@@ -480,9 +482,11 @@ function hideLoading() {
 
 async function boot() {
   const host = document.getElementById('app') ;
-  await app.init({ background: C.bg, resizeTo: host, antialias: false, roundPixels: true });
+  renderResolution = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  await app.init({ background: C.bg, resizeTo: host, resolution: renderResolution, autoDensity: true, antialias: false, roundPixels: true });
   host.appendChild(app.canvas);
   app.canvas.style.imageRendering = 'pixelated';
+  app.canvas.setAttribute('aria-label', '夜曲地牢游戏画面');
 
   const totalTasks = 1 + TEXTURES.length;
   let doneTasks = 0;
@@ -524,7 +528,10 @@ async function boot() {
   buildBackdrop();
   for (const d of S.customs) buildCustomTex(d);
   layout();
-  window.addEventListener('resize', layout);
+  window.addEventListener('resize', scheduleLayout);
+  window.addEventListener('orientationchange', scheduleLayout);
+  window.visualViewport?.addEventListener('resize', scheduleLayout);
+  window.visualViewport?.addEventListener('scroll', scheduleLayout);
   bindInput();
   render();
 
@@ -622,11 +629,19 @@ function buildBackdrop() {
 }
 
 function layout() {
+  const host = document.getElementById('app');
+  const hostW = Math.max(1, host?.clientWidth ?? app.screen.width);
+  const hostH = Math.max(1, host?.clientHeight ?? app.screen.height);
+  if (Math.abs(app.screen.width - hostW) > 0.5 || Math.abs(app.screen.height - hostH) > 0.5) {
+    app.renderer.resize(hostW, hostH);
+  }
   const w = app.screen.width, h = app.screen.height;
-  viewScale = Math.min(w / VIEW_W, h / VIEW_H);
+  viewScale = Math.max(0.1, Math.min(w / VIEW_W, h / VIEW_H));
+  smallScreen = w < 720 || h < 420 || viewScale < 1;
+  const snap = (v) => Math.round(v * renderResolution) / renderResolution;
   root.scale.set(viewScale);
-  root.x = Math.round((w - VIEW_W * viewScale) / 2);
-  root.y = Math.round((h - VIEW_H * viewScale) / 2);
+  root.x = snap((w - VIEW_W * viewScale) / 2);
+  root.y = snap((h - VIEW_H * viewScale) / 2);
   setTextRes(Math.min(4, Math.max(1, Math.ceil(viewScale))));
   if (bdTile) { bdTile.width = w; bdTile.height = h; }
   bdFrame.clear();
@@ -636,8 +651,25 @@ function layout() {
   positionForgeInput();
   positionStoryInput();
   render();
+  drawRotateHint();
 }
 let portrait = false;
+let layoutQueued = false;
+
+function scheduleLayout() {
+  if (layoutQueued) return;
+  layoutQueued = true;
+  requestAnimationFrame(() => { layoutQueued = false; layout(); });
+}
+
+async function requestLandscapeMode() {
+  try {
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen();
+  } catch { /* iOS Safari may not expose page fullscreen. */ }
+  try {
+    if (window.screen.orientation?.lock) await window.screen.orientation.lock('landscape');
+  } catch { /* Orientation lock is permission/platform dependent. */ }
+}
 
 function unlockAndPlay() {
   unlockAudio();
@@ -648,15 +680,18 @@ function unlockAndPlay() {
 function bindInput() {
   const canvas = app.canvas;
   canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
     unlockAndPlay();
+    if (portrait) { void requestLandscapeMode(); return; }
     const rect = canvas.getBoundingClientRect();
     const sx = (e.clientX - rect.left) * (app.screen.width / rect.width);
     const sy = (e.clientY - rect.top) * (app.screen.height / rect.height);
     const x = (sx - root.x) / viewScale;
     const y = (sy - root.y) / viewScale;
-    console.log('game pointerdown', e.clientX, e.clientY, '=>', x, y, 'hits', hits.list.length);
-    hits.test(x, y);
+    const touchPad = e.pointerType === 'touch' ? Math.min(6, Math.max(2, 4 / viewScale)) : 0;
+    hits.test(x, y, touchPad);
   });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   window.addEventListener('keydown', (e) => {
     unlockAndPlay();
     if (screen === 'manage') {
@@ -1030,7 +1065,7 @@ function ensureNameInput() {
   el.maxLength = 8;
   el.value = stitch?.name ?? smith?.plan.name ?? '';
   el.placeholder = '给它起个名字';
-  el.style.cssText = 'position:fixed;z-index:9;background:#241c33;color:#e7d7a1;border:1px solid #7a7490;outline:none;font-family:inherit;text-align:center;padding:0;';
+  el.style.cssText = 'position:fixed;z-index:9;box-sizing:border-box;background:#241c33;color:#e7d7a1;border:1px solid #7a7490;outline:none;font-family:inherit;text-align:center;padding:0;touch-action:manipulation;user-select:text;-webkit-user-select:text;';
   el.addEventListener('input', () => {
     if (smith) { smith.plan.name = el.value; smith.auto = false; render(); return; }
     if (!stitch) return;
@@ -1047,19 +1082,29 @@ function removeNameInput() {
   if (nameInput) { nameInput.remove(); nameInput = null; }
 }
 
-function positionNameInput() {
-  if (!nameInput) return;
+function positionDomInput(el, box) {
+  if (!el) return;
   const rect = app.canvas.getBoundingClientRect();
   const sx = rect.width / app.screen.width;
   const sy = rect.height / app.screen.height;
+  const rawX = rect.left + (root.x + box.x * viewScale) * sx;
+  const rawY = rect.top + (root.y + box.y * viewScale) * sy;
+  const rawW = box.w * viewScale * sx;
+  const rawH = box.h * viewScale * sy;
+  const cssH = Math.max(smallScreen ? 22 : 18, Math.round(rawH));
+  const cssW = Math.min(Math.round(rawW), Math.max(40, rect.right - rawX - 2));
+  el.style.left = `${Math.round(Math.max(rect.left, Math.min(rawX, rect.right - cssW)))}px`;
+  el.style.top = `${Math.round(Math.max(rect.top, Math.min(rawY - (cssH - rawH) / 2, rect.bottom - cssH)))}px`;
+  el.style.width = `${cssW}px`;
+  el.style.height = `${cssH}px`;
+  // 16 CSS px prevents Safari from zooming the whole page when the keyboard opens.
+  el.style.fontSize = `${smallScreen ? 16 : Math.max(12, Math.round(11 * viewScale * sy))}px`;
+}
+
+function positionNameInput() {
+  if (!nameInput) return;
   const box = smith ? SMITH_NAME : STITCH_NAME;
-  const px = rect.left + (root.x + box.x * viewScale) * sx;
-  const py = rect.top + (root.y + box.y * viewScale) * sy;
-  nameInput.style.left = `${Math.round(px)}px`;
-  nameInput.style.top = `${Math.round(py)}px`;
-  nameInput.style.width = `${Math.round(box.w * viewScale * sx)}px`;
-  nameInput.style.height = `${Math.round(box.h * viewScale * sy)}px`;
-  nameInput.style.fontSize = `${Math.max(11, Math.round(11 * viewScale * sy))}px`;
+  positionDomInput(nameInput, box);
 }
 
 const STITCH_NAME = { x: 96, y: 200, w: 128, h: 18 };
@@ -1389,7 +1434,7 @@ function ensureForgeInput() {
   el.maxLength = 24;
   el.placeholder = '例如：会喷火的胖家伙 / 剧毒的黏液';
   el.autocomplete = 'off';
-  el.style.cssText = 'position:fixed;z-index:9;background:#241c33;color:#e7d7a1;border:1px solid #7a7490;outline:none;font-family:inherit;padding:0 4px;';
+  el.style.cssText = 'position:fixed;z-index:9;box-sizing:border-box;background:#241c33;color:#e7d7a1;border:1px solid #7a7490;outline:none;font-family:inherit;padding:0 4px;touch-action:manipulation;user-select:text;-webkit-user-select:text;';
   el.addEventListener('input', () => { if (forge) forge.brief = el.value; });
   el.addEventListener('keydown', (e) => {
     e.stopPropagation();
@@ -1413,14 +1458,7 @@ function syncForgePlaceholder() {
 
 function positionForgeInput() {
   if (!forgeInput) return;
-  const rect = app.canvas.getBoundingClientRect();
-  const sx = rect.width / app.screen.width;
-  const sy = rect.height / app.screen.height;
-  forgeInput.style.left = `${Math.round(rect.left + (root.x + FORGE_INPUT.x * viewScale) * sx)}px`;
-  forgeInput.style.top = `${Math.round(rect.top + (root.y + FORGE_INPUT.y * viewScale) * sy)}px`;
-  forgeInput.style.width = `${Math.round(FORGE_INPUT.w * viewScale * sx)}px`;
-  forgeInput.style.height = `${Math.round(FORGE_INPUT.h * viewScale * sy)}px`;
-  forgeInput.style.fontSize = `${Math.max(11, Math.round(11 * viewScale * sy))}px`;
+  positionDomInput(forgeInput, FORGE_INPUT);
 }
 
 async function askForge() {
@@ -2888,7 +2926,7 @@ function ensureStoryInput() {
   if (storyInput) return;
   const el = document.createElement('input');
   el.type = 'text';
-  el.style.cssText = 'position:fixed;z-index:9;background:#241c33;color:#e7d7a1;border:1px solid #7a7490;outline:none;font-family:inherit;padding:0 4px;';
+  el.style.cssText = 'position:fixed;z-index:9;box-sizing:border-box;background:#241c33;color:#e7d7a1;border:1px solid #7a7490;outline:none;font-family:inherit;padding:0 4px;touch-action:manipulation;user-select:text;-webkit-user-select:text;';
   el.addEventListener('keydown', (e) => {
     e.stopPropagation();
     if (e.key === 'Enter') submitStoryInput();
@@ -2920,14 +2958,7 @@ function syncStoryInput() {
 
 function positionStoryInput() {
   if (!storyInput) return;
-  const rect = app.canvas.getBoundingClientRect();
-  const sx = rect.width / app.screen.width;
-  const sy = rect.height / app.screen.height;
-  storyInput.style.left = `${Math.round(rect.left + (root.x + STORY_INPUT.x * viewScale) * sx)}px`;
-  storyInput.style.top = `${Math.round(rect.top + (root.y + STORY_INPUT.y * viewScale) * sy)}px`;
-  storyInput.style.width = `${Math.round(STORY_INPUT.w * viewScale * sx)}px`;
-  storyInput.style.height = `${Math.round(STORY_INPUT.h * viewScale * sy)}px`;
-  storyInput.style.fontSize = `${Math.max(11, Math.round(11 * viewScale * sy))}px`;
+  positionDomInput(storyInput, STORY_INPUT);
 }
 
 function pageStory(g               ) {
@@ -4669,7 +4700,7 @@ function tick(dt        ) {
     return;
   }
   endingBuilt = false;
-  if (portrait) drawRotateHint();
+  drawRotateHint();
 }
 
 let toastNode                   = null;
@@ -4705,14 +4736,21 @@ function drawRotateHint() {
     const g = new PIXI.Graphics();
     g.rect(0, 0, VIEW_W, VIEW_H).fill({ color: C.bg, alpha: 0.92 });
     rotateNode.addChild(g);
-    const t = txt('请把设备横过来玩', 12, C.gold);
+    const t = txt('请横屏游玩', 14, C.gold);
     t.x = Math.round((VIEW_W - t.width) / 2);
-    t.y = 120;
+    t.y = 108;
     rotateNode.addChild(t);
-    const t2 = txt('地牢面板需要横屏空间', 12, C.stoneLit);
+    const t2 = txt('点按画面可尝试进入全屏横屏', 11, C.stoneLit);
     t2.x = Math.round((VIEW_W - t2.width) / 2);
-    t2.y = 140;
+    t2.y = 132;
     rotateNode.addChild(t2);
+    const plate = new PIXI.Graphics();
+    plate.roundRect(174, 154, 132, 24, 3).fill(C.wallLit).stroke({ width: 1, color: C.gold, alignment: 0 });
+    rotateNode.addChild(plate);
+    const t3 = txt('进入横屏', 12, C.white);
+    t3.x = Math.round((VIEW_W - t3.width) / 2);
+    t3.y = 158;
+    rotateNode.addChild(t3);
     overlay.addChild(rotateNode);
   }
   rotateNode.visible = true;
@@ -4735,6 +4773,13 @@ window.__debug = {
     ui: uiPortraitFx.filter((r) => !r.node.destroyed).map((r) => ({ maxed: r.maxed, selected: r.selected, y: r.node.y, baseY: r.baseY, glow: r.glow?.alpha ?? 0, motes: r.motes.length })),
     battle: battlePortraitFx.filter((r) => !r.node.destroyed).map((r) => ({ maxed: r.maxed, glow: r.glow?.alpha ?? 0, motes: r.motes.length })),
   }),
+  viewport: () => {
+    const host = document.getElementById('app');
+    const rect = host?.getBoundingClientRect();
+    return { width: app.screen.width, height: app.screen.height, scale: viewScale, portrait, smallScreen, rotateHint: !!rotateNode?.visible,
+      resolution: renderResolution, dpr: window.devicePixelRatio || 1,
+      safeRect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null };
+  },
   get monsters() { return S.monsters.map((m) => ({ ...m, room: roomOf(m.uid) })); },
   get rooms() { return S.rooms; },
   get battle() {
