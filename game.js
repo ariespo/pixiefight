@@ -13,7 +13,7 @@ import { applyEffects, fillText, getProvider, requestScene, sceneById, setProvid
                                                                       
 import { READ_PATHS, foldMods, modSummary } from './vars.js';
                                                                         
-import { CHAMP_CAP, CHAMP_LV_CAP, CHEM_INFO, HEAL_MANA, POT_MULT, POT_NAME, REROLL_MANA, REST_MANA, RESPEC_MANA,
+import { CHAMP_CAP, CHAMP_LV_CAP, CHEM_INFO, HEAL_MANA, HERO_REST_ROUNDS, HERO_SORTIE_LIMIT, POT_MULT, POT_NAME, REROLL_MANA, REST_MANA, RESPEC_MANA,
   REROLL_TRAIT_BONE, REROLL_TRAIT_MANA, TALENTS, TALENT_CAP, TALENT_TIERS, TIER_LV, TRAITS, WOUND_CAP,
   activeTitleOf, auraText, backgroundById, canLevel, champStats, chemOf, chemistry, ensureChampLore, fatigueTier, newChamp, nextTitle, pendingTier, personalityById, randomName, respecCost,
   rerollTraits, rollCands, talentSlots, tickFatigue, titleById, titleOf, unlockedTitles, upCostOf, xpNeed } from './heroes.js';
@@ -179,6 +179,8 @@ function sanitizeSave() {
     c.lv = Math.max(1, Math.min(CHAMP_LV_CAP, Math.round(c.lv || 1)));
     c.xp = Math.max(0, Math.round(c.xp || 0));
     c.fatigue = Math.max(0, Math.min(100, Math.round(c.fatigue || 0)));
+    c.sorties = Math.max(0, Math.min(HERO_SORTIE_LIMIT - 1, Math.round(c.sorties || 0)));
+    c.restTurns = Math.max(0, Math.min(HERO_REST_ROUNDS, Math.round(c.restTurns || 0)));
     c.battles = Math.max(0, Math.round(c.battles || 0));
     c.kills = Math.max(0, Math.round(c.kills || 0));
     c.wounds = Math.max(0, Math.min(WOUND_CAP, Math.round(c.wounds || 0)));
@@ -2205,9 +2207,11 @@ function pageThrone(g               ) {
   const placed = countPlaced();
   const traps = S.rooms.filter((r) => r.trap !== 'none').length;
   const leads = S.rooms.filter((r) => r.leader != null).length;
+  const resting = seatedChampUids().filter((u) => (champById(u)?.restTurns || 0) > 0).length;
   const tired = seatedChampUids().filter((u) => { const c = champById(u); return c && fatigueTier(c.fatigue).bad; }).length;
   const hurt = S.champs.filter((c) => seatedChampUids().includes(c.uid) && (c.wounds || 0) > 0).length;
-  const warn = tired || hurt ? `${tired ? `${tired}名英雄乏力` : ''}${tired && hurt ? '、' : ''}${hurt ? `${hurt}名带伤` : ''}` : '';
+  const warnBits = [resting ? `${resting}名强制休息` : '', tired ? `${tired}名英雄乏力` : '', hurt ? `${hurt}名带伤` : ''].filter(Boolean);
+  const warn = warnBits.join('、');
   label(uiLayer, cut(`已布防 ${placed}怪 / ${leads}英雄 / ${traps}陷阱${warn ? `  ${warn}` : ''}`, 36), 10, 177, 12, warn ? C.red : C.bone);
   const best = S.best[raid.no] || 0;
   label(uiLayer, '最佳评价', 10, 195, 12, C.stoneLit);
@@ -2314,7 +2318,7 @@ function slotBox(g               , x        , y        , w        , h        , u
     const k = champKind(ch);
     uiLayer.addChild(portraitEffect(sprite(k.tex, x + w / 2, y + h - 11 + bounce, 32), ch.lv >= CHAMP_LV_CAP, selected, ch.uid));
     const ft = fatigueTier(ch.fatigue);
-    labelC(uiLayer, `Lv${ch.lv}`, x + w / 2, y + h - 13, 12, ft.bad || ch.wounds ? C.red : C.gold);
+    labelC(uiLayer, ch.restTurns ? `休${ch.restTurns}` : `Lv${ch.lv}`, x + w / 2, y + h - 13, 12, ch.restTurns || ft.bad || ch.wounds ? C.red : C.gold);
     for (let i2 = 0; i2 < (ch.wounds || 0); i2++) g.rect(x + w - 5 - i2 * 4, y + 3, 3, 3).fill(C.red);
   } else if (inst) {
     const k = instKind(inst);
@@ -2374,7 +2378,8 @@ function drawSidePanel(g               ) {
         uiLayer.addChild(portraitEffect(sprite(champKind(c).tex, 348, y + 19, 16), c.lv >= CHAMP_LV_CAP, here, c.uid));
         label(uiLayer, cut(c.name.split('·')[0], 4), 358, y + 3, 12, here ? C.white : C.gold);
         label(uiLayer, `${c.lv}`, 410, y + 3, 12, C.bone);
-        label(uiLayer, ft.bad ? ft.text.slice(0, 2) : at < 0 ? '待' : `${at + 1}房`, 432, y + 3, 12, ft.bad ? C.red : at < 0 ? C.green : C.gold);
+        const state = c.restTurns ? `休${c.restTurns}` : ft.bad ? ft.text.slice(0, 2) : at < 0 ? '待' : `${at + 1}房`;
+        label(uiLayer, state, 432, y + 3, 12, c.restTurns || ft.bad ? C.red : at < 0 ? C.green : C.gold);
         hits.add(340, y, 130, 20, () => assign(room, which, c.uid));
         y += 22;
       }
@@ -3092,6 +3097,7 @@ function pageStory(g               ) {
 function seatChamp(room        , uid        ) {
   const c = champById(uid);
   if (!c) return;
+  if ((c.restTurns || 0) > 0) { say(`${c.name} 仍需休息 ${c.restTurns} 回合`); return; }
   for (let i = 0; i < 4; i++) if (S.rooms[i].leader === uid) { S.rooms[i].leader = null; S.rooms[i].flank = null; }
   S.rooms[room].leader = uid;
   slotFlash = { room, which: 'leader', t: 0.45 };
@@ -3218,13 +3224,13 @@ function confirmTalent(c) {
 }
 
 function restChamp(c       ) {
-  if (c.fatigue <= 0) { say(`${c.name} 已经很精神了`); return; }
+  if ((c.restTurns || 0) <= 0) { say(`${c.name} 当前不需要疗愈`); return; }
   if (S.mana < REST_MANA) { say('魔质不足'); return; }
   S.mana -= REST_MANA;
-  c.fatigue = Math.max(0, c.fatigue - 55);
+  c.restTurns--;
   playSfx('place');
   persist();
-  say(`${c.name} 在孵化池里泡了一夜`);
+  say(`${c.name} 接受疗愈，休息缩短至 ${c.restTurns} 回合`);
   render();
 }
 
@@ -3293,7 +3299,7 @@ function drawRoster(g               ) {
     label(uiLayer, nm.length > 4 ? `${nm.slice(0, 4)}…` : nm, 34, y + 6, 12, on ? C.white : C.gold);
     label(uiLayer, `${c.lv}`, 86, y + 6, 12, C.bone);
     label(uiLayer, at < 0 ? '待' : `${at + 1}房`, 102, y + 6, 12, at < 0 ? C.green : C.gold);
-    label(uiLayer, ft.text.slice(0, 2), 128, y + 6, 12, ft.bad ? C.red : C.steel);
+    label(uiLayer, c.restTurns ? `休${c.restTurns}` : ft.text.slice(0, 2), 128, y + 6, 12, c.restTurns || ft.bad ? C.red : C.steel);
     if (canLevel(c) && S.bone >= upCostOf(c)) g.circle(151, y + 6, 3).fill(C.red);
     else if (pendingTier(c)) g.circle(151, y + 6, 3).fill(C.purple);
     for (let w = 0; w < (c.wounds || 0); w++) g.rect(140 + w * 5, y + 18, 4, 3).fill(C.red);
@@ -3396,13 +3402,14 @@ function drawChampStat(g, c) {
   const pot = S.champPot[c.uid] ?? 0;
   label(uiLayer, `资质${POT_NAME[pot]}`, 174, 96, 12, C.bone);
   const ft = fatigueTier(c.fatigue);
-  label(uiLayer, `疲劳 ${c.fatigue} ${ft.text}`, 174, 112, 12, ft.bad ? C.red : C.steel);
+  label(uiLayer, `轮值 ${c.sorties || 0}/${HERO_SORTIE_LIMIT}・疲劳 ${c.fatigue} ${ft.text}`, 174, 112, 12, c.restTurns || ft.bad ? C.red : C.steel);
   const wd = c.wounds || 0;
-  label(uiLayer, wd ? `伤 ${wd}道 属性-${wd * 8}%` : '无伤', 174, 128, 12, wd ? C.red : C.green);
+  const healthState = `${c.restTurns ? `休息 ${c.restTurns}回合` : '可出战'}・${wd ? `伤 ${wd}道 属性-${wd * 8}%` : '无伤'}`;
+  label(uiLayer, healthState, 174, 128, 12, c.restTurns || wd ? C.red : C.green);
   const chem = chemistry(S.champs, seatedChampUids());
   const at = roomOfChamp(c.uid);
   const tags = chemOf(chem.map, c.uid).tags;
-  label(uiLayer, at < 0 ? '未上阵（留守，疲劳每战-25）' : cut(`${at + 1}房统领 ${tags.length ? tags.join('・') : '无同僚效应'}`, 20),
+  label(uiLayer, at < 0 ? '未上阵（休息及疲劳随战斗恢复）' : cut(`${at + 1}房统领 ${tags.length ? tags.join('・') : '无同僚效应'}`, 20),
     174, 144, 12, at < 0 ? C.stoneLit : C.steel);
   const nt = nextTitle(c);
   label(uiLayer, cut(`${c.battles}战${c.kills}杀${nt ? `→${nt.t.name}` : '・满'}`, 14), 174, 160, 12, C.stoneLit);
@@ -3419,8 +3426,8 @@ function drawChampStat(g, c) {
   }
   button(g, uiLayer, hits, 174, 195, 130, 15, `重随特质 ${REROLL_TRAIT_BONE}骨+${REROLL_TRAIT_MANA}魔`, () => rerollChampTraits(c),
     { size: 10, enabled: S.bone >= REROLL_TRAIT_BONE && S.mana >= REROLL_TRAIT_MANA, border: C.purple, color: C.white });
-  button(g, uiLayer, hits, 306, 195, 48, 15, `休整 ${REST_MANA}魔`, () => restChamp(c),
-    { size: 10, enabled: c.fatigue > 0 && S.mana >= REST_MANA, border: C.steel, color: C.white });
+  button(g, uiLayer, hits, 306, 195, 48, 15, `疗愈${REST_MANA}魔`, () => restChamp(c),
+    { size: 10, enabled: c.restTurns > 0 && S.mana >= REST_MANA, border: c.restTurns ? C.purple : C.stoneLit, color: c.restTurns ? C.white : C.stoneLit });
   button(g, uiLayer, hits, 356, 195, 50, 15, `疗伤 ${HEAL_MANA}魔`, () => healChamp(c),
     { size: 10, enabled: wd > 0 && S.mana >= HEAL_MANA, border: wd ? C.red : C.stoneLit, color: wd ? C.white : C.stoneLit });
   button(g, uiLayer, hits, 174, 214, 70, 15, '同僚关系', () => sayChem(chem.lines), { size: 10, border: C.purple, color: C.purple });
@@ -4032,6 +4039,11 @@ function initBattleLayers() {
 function startBattle() {
   if (screen !== 'manage') return;
   if (stitch) closeStitch();
+  const unavailable = seatedChampUids().map(champById).filter((c) => c && (c.restTurns || 0) > 0);
+  if (unavailable.length) {
+    say(`${unavailable.map((c) => c.name).join('、')}仍在强制休息，请先更换统领`);
+    return;
+  }
   // 战斗逻辑只携带纹理 key；开战前先烘焙固定怪物/精英怪物的四部位组合与当前改造外观。
   for (const m of S.monsters) instKind(m);
   for (const c of S.champs) champKind(c);
@@ -4481,7 +4493,8 @@ function finishBattle() {
     if (inst && inst.lv < 5) inst.xp += x.xp;
   }
   // 英雄结算：经验/战功归到具体个体，疲劳按"上没上场"分别涨落
-  const chemBefore = chemistry(S.champs, seatedChampUids()).map;
+  const deployedChampUids = seatedChampUids();
+  const chemBefore = chemistry(S.champs, deployedChampUids).map;
   for (const x of r.champXp ?? []) {
     const c = champById(x.uid);
     if (!c) continue;
@@ -4505,7 +4518,16 @@ function finishBattle() {
     }
     S.vault.push(id);
   }
-  tickFatigue(S.champs, seatedChampUids());
+  const newlyResting = tickFatigue(S.champs, deployedChampUids);
+  if (newlyResting.length) {
+    const ids = new Set(newlyResting);
+    for (const room of S.rooms) {
+      if (room.leader != null && ids.has(room.leader)) {
+        room.leader = null;
+        room.flank = null;
+      }
+    }
+  }
   // 战后维度统计写入英雄长期 stats，供称号解锁/切换读取
   for (const x of r.champStats ?? []) {
     const c = champById(x.uid);
@@ -4898,7 +4920,7 @@ window.__debug = {
   get champs() {
     const chem = chemistry(S.champs, seatedChampUids());
     return S.champs.map((c) => ({
-      ...c, stat: statOf(c, chem.map), rest: fatigueTier(c.fatigue).text, room: roomOfChamp(c.uid),
+      ...c, stat: statOf(c, chem.map), rest: c.restTurns ? `休息${c.restTurns}回合` : fatigueTier(c.fatigue).text, room: roomOfChamp(c.uid),
       pendingTier: pendingTier(c), title: titleOf(c)?.name ?? null, chem: chemOf(chem.map, c.uid).tags,
     }));
   },
@@ -4944,7 +4966,15 @@ window.__debug = {
   previewTalent: (uid, id) => { const c = champById(uid); if (c) previewTalent(c, id); return talentPreview ? { ...talentPreview } : null; },
   confirmTalent: (uid) => { const c = champById(uid); if (c) confirmTalent(c); return c ? [...c.talents] : []; },
   devFatigue: (uid        , f        ) => { const c = champById(uid); if (c) c.fatigue = f; persist(); render(); },
-  devRest: (uid        ) => { const c = champById(uid); if (c) restChamp(c); return c ? c.fatigue : -1; },
+  devRotation: (uid, sorties, restTurns) => {
+    const c = champById(uid);
+    if (!c) return null;
+    c.sorties = Math.max(0, Math.min(HERO_SORTIE_LIMIT - 1, Math.round(sorties || 0)));
+    c.restTurns = Math.max(0, Math.min(HERO_REST_ROUNDS, Math.round(restTurns || 0)));
+    persist(); render();
+    return { sorties: c.sorties, restTurns: c.restTurns };
+  },
+  devRest: (uid        ) => { const c = champById(uid); if (c) restChamp(c); return c ? c.restTurns : -1; },
   devRecruitChamp: (i = 0) => { const c = S.cands[i]; if (c) recruitChamp(c); return S.champs.length; },
   devTrap: (room        , id        ) => { if (!(id in TRAPS)) return false; if (!S.traps.includes(id)) S.traps.push(id); S.rooms[room].trap = id; persist(); render(); return true; },
   devTheme: (room        , id         ) => { if (!(id in THEMES)) return false; if (!S.themes.includes(id)) S.themes.push(id); S.rooms[room].theme = id; persist(); render(); return true; },

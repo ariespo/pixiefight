@@ -95,7 +95,9 @@ export const CHAMP_XP = [40, 70, 110, 160, 220, 300, 400, 520, 660];
 export const TALENT_CAP = TALENT_TIERS.length;
 export const CHAMP_UP_COST = [30, 50, 75, 105, 140, 185, 240, 310, 400];
 export const CHAMP_CAP = 6;   // 名册上限：比 4 个统领席多，才有轮换疲劳的余地
-export const REST_MANA = 6;
+export const HERO_SORTIE_LIMIT = 4;
+export const HERO_REST_ROUNDS = 3;
+export const REST_MANA = 20;
 export const REROLL_MANA = 5;
 export const HEAL_MANA = 16;      // 疗一道伤
 export const WOUND_CAP = 3;
@@ -394,7 +396,7 @@ export function newChamp(uid        , c      )        {
     uid, race: c.race, name: c.name, lv: 1, xp: 0,
     traits: [...c.traits], talents: [], fatigue: 0,
     personality: c.personality, background: c.background,
-    battles: 0, kills: 0, wounds: 0, gear: {},
+    battles: 0, kills: 0, wounds: 0, sorties: 0, restTurns: 0, gear: {},
     activeTitle: '',
     stats: {},
   });
@@ -525,8 +527,9 @@ export const auraText = (id        , pow        ) => {
   }
 };
 
-// 战后疲劳结算：参战涨、留守降
+// 战后轮值与疲劳结算：出战次数跨留守累计；第四场结束后强制休息三轮。
 export function tickFatigue(champs         , seated          ) {
+  const newlyResting = [];
   for (const c of champs) {
     if (seated.includes(c.uid)) {
       const base = c.traits.includes('proud') ? 45 : c.traits.includes('diligent') ? 18 : 30;
@@ -534,8 +537,16 @@ export function tickFatigue(champs         , seated          ) {
       const g = (base + 8 * Math.min(WOUND_CAP, c.wounds || 0)) * gearEff(c.gear).fatigue;
       c.fatigue = Math.min(100, c.fatigue + g);
       c.battles++;
+      c.sorties = Math.max(0, Math.round(c.sorties || 0)) + 1;
+      if (c.sorties >= HERO_SORTIE_LIMIT) {
+        c.sorties = 0;
+        c.restTurns = HERO_REST_ROUNDS;
+        newlyResting.push(c.uid);
+      }
     } else {
       c.fatigue = Math.max(0, c.fatigue - 25);
+      if ((c.restTurns || 0) > 0) c.restTurns--;
     }
   }
+  return newlyResting;
 }
