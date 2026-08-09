@@ -178,7 +178,7 @@ function makeMonUnit(inst             , row       , roomIdx        , mod        
     skillCdMax: k.eff.skill === 'alt' ? 2.5 : 4,
     slowT: 0, slowAmt: 0, hasteAmt: 0, poisonT: 0, poisonDps: 0, burnT: 0, burnDps: 0, burstDone: false, stunT: 0, shield: 0,
     silenced: false, disarmT: 0, revived: false, killBoost: 0, charged: false,
-    flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, phase: 0, room: roomIdx,
+    flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, kills: 0, phase: 0, room: roomIdx,
     marked: 1, guardT: 0, healCutT: 0, healCutPct: 1, barbT: 0, atkCut: 1, rallyT: 0,
     legend: !!k.legend, aura: k.aura ?? null, charmT: 0, auraRevived: false,
   };
@@ -196,7 +196,7 @@ function makeChampUnit(st           , uid        , roomIdx        , mod         
     alive: true, cd: 0.6 + Math.random() * 0.3, skillCd: 4, skillCdMax: 4,
     slowT: 0, slowAmt: 0, hasteAmt: 0, poisonT: 0, poisonDps: 0, burnT: 0, burnDps: 0, burstDone: false, stunT: 0, shield: 0,
     silenced: false, disarmT: 0, revived: false, killBoost: 0, charged: false,
-    flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, phase: 0, room: roomIdx,
+    flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, kills: 0, phase: 0, room: roomIdx,
     marked: 1, guardT: 0, healCutT: 0, healCutPct: 1, barbT: 0, atkCut: 1, rallyT: 0,
     legend: true, aura: st.auraId, auraPow: st.auraPow, dmgTakenMult: st.dmgTakenMult, charmT: 0, auraRevived: false,
     __battleAttacks: 0, __battleThornDmg: 0, __battleRevives: 0, __soulAtk: 0,
@@ -217,7 +217,7 @@ function makeHeroUnit(cls        , lv        , idx        , total        , mod  
     alive: true, cd: 0.8, skillCd: 3, skillCdMax: 3,
     slowT: 0, slowAmt: 0, hasteAmt: 0, poisonT: 0, poisonDps: 0, burnT: 0, burnDps: 0, burstDone: false, stunT: 0, shield: 0,
     silenced: false, disarmT: 0, revived: false, killBoost: 0, charged: false,
-    flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, phase: 0, room: 0,
+    flashT: 0, lungeT: 0, deadT: 0, dmgDealt: 0, healed: 0, kills: 0, phase: 0, room: 0,
     marked: 1, guardT: 0, healCutT: 0, healCutPct: 1, barbT: 0, atkCut: 1, rallyT: 0,
     legend: false, aura: null, charmT: 0, auraRevived: false,
   };
@@ -293,9 +293,11 @@ export function createBattle(raid         , rooms           , insts             
     roomLimit: limit,
     roomTimer: limit,
     seal: sealCap, time: 0, moraleMult: 1,
-    events: [], log: [], result: null, throneIdx: 0,
+    events: [], log: [], dialogue: [], result: null, throneIdx: 0,
     sealMax: sealCap, trapPower: (opts.trapPower ?? 1) * mod.trapMult,
     rng: mulberry(raid.no * 9176 + 13),
+    metrics: { attacks: 0, skills: 0, hits: 0, heavyHits: 0, damage: 0, healing: 0,
+      thorns: 0, splash: 0, lifesteal: 0, backline: 0, poison: 0, burn: 0, revives: 0, allyRevives: 0 },
   };
   enterRoom(b);
   return b;
@@ -305,9 +307,80 @@ function log(b        , text        , tone                 ) {
   b.log.push({ room: b.roomIndex, t: b.time, text, tone });
 }
 
-function speak(b, u, text, kind = 'skill') {
-  if (!u || !u.alive || !text) return;
+function note(b, key, amount = 1) {
+  if (!b.metrics) return;
+  b.metrics[key] = (b.metrics[key] ?? 0) + amount;
+}
+
+function speak(b, u, text, kind = 'skill', force = false) {
+  if (!u || (!u.alive && !force) || !text) return;
+  if (!force && b.time - (u.__speechAt ?? -99) < 0.9) return;
+  u.__speechAt = b.time;
+  const last = b.dialogue[b.dialogue.length - 1];
+  if (last && last.name === u.name && last.kind === kind && Math.abs(last.t - b.time) < 0.1) last.text = text;
+  else b.dialogue.push({ room: u.room, t: b.time, name: u.name, text, kind, side: u.side });
+  if (b.dialogue.length > 120) b.dialogue.shift();
   b.events.push({ k: 'speech', room: u.room, x: u.x, y: u.y, text, side: u.side, unit: u, kind });
+}
+
+const pickLine = (pool, rng) => pool[Math.floor(rng() * pool.length)];
+
+const ATTACK_LINES = {
+  hero: ['破绽在这里！', '别给它喘息！', '压住它！', '这一击开路！', '跟上我的节奏！', '先解决眼前这个！', '守住队形，我来！', '往关节打！'],
+  mon: ['留下来！', '尝尝这个！', '别想越过我！', '王座不欢迎你！', '撕开那身甲！', '把火把留下！', '再往前一步试试！', '地牢会吞掉你！'],
+};
+const BACK_ATTACK_LINES = {
+  hero: ['后排露出来了！', '治疗者先倒！', '越过前线，取后阵！', '你躲得不够远！'],
+  mon: ['抓到后排了！', '先掐灭施法者！', '前排救不了你！', '从队尾开始撕！'],
+};
+const SKILL_LINES = {
+  heal: ['伤口合拢！', '光还没有熄灭！', '撑住，我来接你！', '呼吸，站稳！'],
+  control: ['别动。', '把脚留在这里！', '你的节奏归我了！', '安静下来！'],
+  aoe: ['都别想躲！', '整间房一起埋！', '让这一击席卷全场！', '一并吞下！'],
+  pierce: ['前线挡不住我！', '直取后阵！', '护甲只是纸！', '这一击穿到底！'],
+  fire: ['烧起来！', '灰烬会记住你！', '让火替我追你！', '整间房都点着！'],
+  poison: ['吸进去，别浪费。', '毒已经进血了。', '越挣扎，流得越快。', '让伤口慢慢说话。'],
+  drain: ['把生命交出来！', '你的血会养活我们！', '枯萎吧，回流吧！', '我收下这口生气！'],
+  summon: ['倒下的，再站起来！', '巢门打开！', '死者还没获准休息！', '回来，战斗还没完！'],
+  guard: ['站到我身后！', '这一线由我守！', '盾墙，合拢！', '先打穿我！'],
+  rally: ['抬头，跟着旗走！', '守军，听我号令！', '这一房寸步不退！', '让他们听见我们的脚步！'],
+  strike: ['这一式，断！', '接住这一击！', '刀锋已经到了！', '用力不必留给下一次！'],
+};
+const SPECIAL_LINES = {
+  thorns: ['碰我，就得付血！', '尖刺认得你的力道！', '这一击原样奉还！', '盔甲也会咬人！'],
+  splash: ['一个也别漏！', '余波也够你们喝一壶！', '站得太近了！', '一起退后！'],
+  lifesteal: ['你的血正合适。', '这口命，我收下了。', '伤口在替我进食。', '再多流一点。'],
+  revive: ['我还没死透！', '骨头还能站！', '死亡没有准许我离场！', '这口气，借我再战！'],
+  allyRevive: ['起来，门还没守完！', '我把你从黑暗里拽回来！', '别躺着，勇者还在！', '地牢不收你的尸体！'],
+  poison: ['毒已入骨。', '现在开始慢慢疼。', '每一次呼吸都算数。', '别急，毒会追上你。'],
+  burn: ['火会跟着你跑！', '烧到盔甲里面去！', '灰烬先替你占位！', '别想把火甩掉！'],
+};
+const RECOVERY_LINES = {
+  hero: ['好多了，继续推进！', '我还能站稳。', '光回来了。', '这条命先记在你账上。', '伤口止住了！', '别停，趁现在！'],
+  mon: ['肉又长回来了。', '地牢还不准我倒。', '伤口正在闭合。', '再来一次也一样。', '这点血够我继续咬。', '我又闻得到勇者了。'],
+};
+
+function attackSpeech(b, u, tgt) {
+  if (b.rng() > 0.24) return;
+  const side = u.side === 'hero' ? 'hero' : 'mon';
+  const pool = tgt?.row === 1 ? BACK_ATTACK_LINES[side] : ATTACK_LINES[side];
+  speak(b, u, pickLine(pool, b.rng), 'attack');
+}
+
+function skillSpeech(b, u, nature, fallback) {
+  const pool = SKILL_LINES[nature] ?? SKILL_LINES.strike;
+  speak(b, u, pickLine(pool, b.rng) || fallback, 'skill', true);
+}
+
+function specialSpeech(b, u, kind) {
+  const pool = SPECIAL_LINES[kind];
+  // 特殊机制必须留下对白/战报记录；同一瞬间若连续触发，画面仍只保留该单位最后一句。
+  if (pool) speak(b, u, pickLine(pool, b.rng), kind, true);
+}
+
+function recoverySpeech(b, u) {
+  const pool = u.side === 'hero' ? RECOVERY_LINES.hero : RECOVERY_LINES.mon;
+  speak(b, u, pickLine(pool, b.rng), 'heal');
 }
 
 function impactText(dmg        , tgt      )          {
@@ -319,8 +392,11 @@ function impactText(dmg        , tgt      )          {
   return '几乎没造成伤害';
 }
 
-function reactionText(tgt      , rng           )          {
+function reactionText(tgt      , dmg        , beforeHp        , rng           )          {
   const r = tgt.hp / Math.max(1, tgt.maxHp);
+  const maxRatio = dmg / Math.max(1, tgt.maxHp);
+  const currentRatio = dmg / Math.max(1, beforeHp);
+  const shock = Math.max(maxRatio, currentRatio);
   const hero = tgt.side === 'hero';
   const pools = hero ? {
     high: ['哈哈，根本不痛', '就这点本事？', '软弱无力', '阵形别乱，继续推进', '盔甲替我挡住了', '这种攻击吓不到我', '离王座还远着呢', '保持呼吸，别停下', '它们在试探我们', '我连热身都算不上', '别把背后露出来', '下一击就轮到我了'],
@@ -333,7 +409,10 @@ function reactionText(tgt      , rng           )          {
     low: ['吼！', '该死…', '你会后悔的', '不许碰王座！', '我的甲壳裂开了', '快封住缺口', '地牢不会交给你们', '就算爬也要拦住他们', '先杀治疗者', '墙后还有我们的同伴', '别让旗帜倒下', '我需要一点时间'],
     crit: ['不…我的地牢…', '我…倒下…', '不可能…', '替我守住下一道门', '别踩过我的影子', '主人，我尽力了', '至少留下一个勇者', '把我的部件带回工坊', '门闩还没有断…', '我会在骨坑里再醒来', '王座不能落到他们手里', '下一批守军会替我复仇'],
   };
-  const pool = r > 0.7 ? pools.high : r > 0.4 ? pools.mid : r > 0.15 ? pools.low : pools.crit;
+  const tier = shock >= 0.75 || r <= 0.12 ? 'crit'
+    : shock >= 0.42 || r <= 0.3 ? 'low'
+      : shock >= 0.18 || r <= 0.58 ? 'mid' : 'high';
+  const pool = pools[tier];
   return pool[Math.floor(rng() * pool.length)];
 }
 
@@ -346,8 +425,9 @@ function logHit(b        , src      , tgt      , dmg        , action        , he
   }
   const imp = impactText(dmg, tgt);
   log(b, `${src.name}对${tgt.name}${action}，造成${dmg}点伤害（${imp}）`, tone);
-  if (dmg / Math.max(1, tgt.maxHp) >= 0.05 || tgt.hp / Math.max(1, tgt.maxHp) < 0.35) {
-    const line = reactionText(tgt, rng ?? b.rng);
+  const beforeHp = Math.min(tgt.maxHp, Math.max(dmg, tgt.hp + dmg));
+  if (dmg / Math.max(1, tgt.maxHp) >= 0.05 || dmg / Math.max(1, beforeHp) >= 0.14 || tgt.hp / Math.max(1, tgt.maxHp) < 0.35) {
+    const line = reactionText(tgt, dmg, beforeHp, rng ?? b.rng);
     log(b, `　${tgt.name}：${line}`, tone);
     speak(b, tgt, line, 'reaction');
   }
@@ -358,6 +438,9 @@ const HERO_ROOM_LINES = [
   '这里的守军换过布置，小心脚下。', '别被那些怪物的外表骗了。', '王座的气息更近了，继续推进。',
   '照明往前送，我看不清门后。', '先确认退路，再准备破门。', '听见了吗？它们正在等我们。',
   '伤员站中间，前排跟我上。', '这间房交给我们，速战速决。', '不要分散火力，逐个击破。',
+  '墙缝里有风，附近一定还有暗道。', '先听呼吸声，再决定砍哪边。', '别追倒下的，活着的更危险。',
+  '盾沿贴紧，别给它们钻进队列。', '地上的灰是新的，守军刚换过岗。', '治疗者报位置，别等受伤才喊。',
+  '门后若没有声音，反而要更小心。', '把退路记住，我们可能得抬人出去。',
 ];
 const HERO_PARTY_BANTER = [
   ['这地方闻起来像墓地。', '好消息，我们已经省了返程车费。'],
@@ -370,16 +453,27 @@ const HERO_PARTY_BANTER = [
   ['这趟结束我就退休。', '大家进地牢时都这么说，地牢很爱听。'],
   ['治疗药还剩多少？', '够救一个人，所以先决定谁最会写遗嘱。'],
   ['别踩那块骨头。', '放心，它原来的主人已经踩不到了。'],
+  ['你为什么一直数门？', '因为每过一扇，回去的路就更贵一点。'],
+  ['这盔甲保修吗？', '保修，前提是能把穿盔甲的人找回来。'],
+  ['我好像听见有人哭。', '那是风。希望是风，风不用分战利品。'],
+  ['要是王座是空的呢？', '那就更糟，说明主人正站在我们背后。'],
+  ['谁带的地图？', '地图带了我们，现在它也迷路了。'],
+  ['回去以后先喝一杯。', '先活着回去，老板不赊账给尸体。'],
 ];
 const MON_ROOM_LINES = [
   '门后就是我们的地盘，一步也别让。', '勇者来了，把灯灭掉。', '陷阱已经醒了，等他们再近一点。',
   '盯住治疗者，别让他念完咒语。', '守住这间房，后面还有同伴。', '它们的盔甲有缝，往关节打。',
   '别急着冲，等统领的号令。', '让墙壁记住他们的惨叫。', '王座不会欢迎活着的勇者。',
   '把前排拖住，后排交给我。', '就算倒下，也要咬掉一块甲。', '地牢养了我们，现在轮到我们守它。',
+  '听脚步，重甲在前，施法者在后。', '别挤在门口，给溅射留出角度。', '毒已经抹好，等他们自己送进血里。',
+  '火盆别灭，烧伤会让治疗者忙不过来。', '谁先倒下，骨头就归下一班守军。', '盯住残血的，别让牧师把它拉回去。',
+  '统领还站着，我们就没有退路。', '让他们以为这间房就是最后一间。',
 ];
 const BREACH_LINES = [
   '门闩断了，退到下一道防线！', '这一间守不住了，把伤员带走！', '别让勇者趁乱追上来！',
   '熄掉火把，撤进暗道！', '记住他们的阵形，通知后面的守军！', '门已经开了，但战斗还没有结束！',
+  '把毒瓶打碎，别给他们留下干净的路！', '伤员先走，能咬的留下断后！', '下一房准备，他们带着速度过来了！',
+  '别回头看门，去看还能守住的人！', '把统领的旗带走，不能留给勇者！', '让废墟拖住他们，我们从侧道撤！',
 ];
 
 function enterRoom(b        ) {
@@ -572,6 +666,10 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     src.hp -= back;
     src.flashT = 0.1;
     b.events.push({ k: 'hit', room: b.roomIndex, x: src.x, y: src.y, dmg: back, heavy: false, target: src });
+    note(b, 'thorns', back);
+    note(b, 'burn');
+    specialSpeech(b, tgt, 'thorns');
+    specialSpeech(b, tgt, 'burn');
     applyBurn(src, 4, 3);
     if (src.hp <= 0) {
       src.alive = false; src.hp = 0; src.deadT = 0;
@@ -634,6 +732,9 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
   tgt.hp -= dmg;
   tgt.flashT = 0.12;
   src.dmgDealt += dmg;
+  note(b, 'hits');
+  note(b, 'damage', dmg);
+  if (heavy) note(b, 'heavyHits');
   b.events.push({ k: 'hit', room: b.roomIndex, x: tgt.x, y: tgt.y, dmg, heavy, target: tgt });
   if (heavy) b.events.push({ k: 'shake', amount: 2 });
   if (tgt.hp <= 0) {
@@ -642,6 +743,8 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
       tgt.revived = true;
       tgt.hp = Math.max(1, Math.round(tgt.maxHp * tgt.eff.undyingTrait));
       if (tgt.champUid) tgt.__battleRevives++;
+      note(b, 'revives');
+      specialSpeech(b, tgt, 'revive');
       log(b, `不灭：${tgt.name}以${Math.round(tgt.eff.undyingTrait * 100)}%生命站起`, 'good');
       return;
     }
@@ -649,6 +752,8 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
       tgt.revived = true;
       tgt.hp = Math.round(tgt.maxHp * 0.2);
       if (tgt.champUid) tgt.__battleRevives++;
+      note(b, 'revives');
+      specialSpeech(b, tgt, 'revive');
       log(b, `不朽骨：${tgt.name}以20%生命复活`, 'good');
       return;
     }
@@ -657,6 +762,8 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
       tgt.auraRevived = true;
       tgt.hp = Math.max(1, Math.round(tgt.maxHp * Math.min(0.9, 0.3 * auraPow(b, tgt.room))));
       if (tgt.champUid) tgt.__battleRevives++;
+      note(b, 'revives');
+      specialSpeech(b, tgt, 'revive');
       b.events.push({ k: 'cast', room: b.roomIndex, x: tgt.x, y: tgt.y, color: 0x9b5de5 });
       log(b, `亡者不休：${tgt.name}被${b.rooms[tgt.room]?.leader?.name ?? '巫妖'}拽了回来`, 'good');
       return;
@@ -665,6 +772,7 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     tgt.hp = 0;
     tgt.deadT = 0;
     b.events.push({ k: 'die', room: b.roomIndex, x: tgt.x, y: tgt.y, side: tgt.side });
+    src.kills = (src.kills ?? 0) + 1;
     if (tgt.legend) {
       b.events.push({ k: 'shake', amount: 5 });
       const rm = b.rooms[tgt.room];
@@ -686,6 +794,8 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
         fallen.deadT = 0;
         fallen.cd = 0.5;
         b.events.push({ k: 'cast', room: b.roomIndex, x: fallen.x, y: fallen.y, color: 0xd95763 });
+        note(b, 'allyRevives');
+        specialSpeech(b, fallen, 'allyRevive');
         log(b, `囚笼碎裂：${fallen.name}被放了出来`, 'good');
       }
     }
@@ -700,6 +810,9 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
       const got = src.hp - before;
       if (got > 0) {
         src.healed += got;
+        note(b, 'healing', got);
+        note(b, 'lifesteal');
+        specialSpeech(b, src, 'lifesteal');
         b.events.push({ k: 'heal', room: b.roomIndex, x: src.x, y: src.y, amt: got, target: src });
         log(b, `嗜血：${src.name}回复${got}生命`, 'good');
       }
@@ -740,6 +853,8 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
       src.flashT = 0.12;
       b.events.push({ k: 'hit', room: b.roomIndex, x: src.x, y: src.y, dmg: back, heavy: false, target: src });
       b.events.push({ k: 'cast', room: b.roomIndex, x: src.x, y: src.y, color: 0x9b5de5 });
+      note(b, 'thorns', back);
+      specialSpeech(b, tgt, 'thorns');
       if (src.hp <= 0) {
         src.alive = false; src.hp = 0; src.deadT = 0;
         b.events.push({ k: 'die', room: b.roomIndex, x: src.x, y: src.y, side: 'hero' });
@@ -755,6 +870,8 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     src.flashT = 0.12;
     tgt.dmgDealt += back;
     if (tgt.champUid) tgt.__battleThornDmg += back;
+    note(b, 'thorns', back);
+    specialSpeech(b, tgt, 'thorns');
     b.events.push({ k: 'hit', room: b.roomIndex, x: src.x, y: src.y, dmg: back, heavy: false, target: src });
     if (src.hp <= 0) {
       src.alive = false; src.hp = 0; src.deadT = 0;
@@ -863,8 +980,14 @@ function onHitEffect(b        , u      , tgt      , dealt        ) {
   if (eff.onHit === 'weaken') { tgt.slowT = Math.max(tgt.slowT, 3); tgt.slowAmt = Math.max(tgt.slowAmt, 0.12); }
   if (eff.venomHit && tgt.side === 'hero' && tgt.alive) {
     applyPoison(b, tgt, eff.venomHit * (eff.passive === 'spore' && u.lv >= 5 ? 1.3 : 1), 4);
+    note(b, 'poison');
+    specialSpeech(b, u, 'poison');
   }
-  if (eff.burnHit && tgt.side === 'hero' && tgt.alive) applyBurn(tgt, eff.burnHit, 3);
+  if (eff.burnHit && tgt.side === 'hero' && tgt.alive) {
+    applyBurn(tgt, eff.burnHit, 3);
+    note(b, 'burn');
+    specialSpeech(b, u, 'burn');
+  }
   if (eff.chillHit) { tgt.slowT = Math.max(tgt.slowT, 3); tgt.slowAmt = Math.max(tgt.slowAmt, eff.chillHit); }
   if (eff.stunHit && b.rng() < eff.stunHit) tgt.stunT = Math.max(tgt.stunT, 0.7);
   if (eff.onHit === 'sunder') { tgt.def = Math.max(0, tgt.def - 3); }
@@ -889,6 +1012,8 @@ function onHitEffect(b        , u      , tgt      , dealt        ) {
   // 疫喙：中毒 + 治疗折扣（毒本身走 venomHit 之外的独立数值，别和词缀叠成两条毒）
   if (eff.onHit === 'plague' && tgt.side === 'hero' && tgt.alive) {
     applyPoison(b, tgt, 9 * (eff.passive === 'spore' && u.lv >= 5 ? 1.3 : 1), 4);
+    note(b, 'poison');
+    specialSpeech(b, u, 'poison');
     tgt.healCutT = Math.max(tgt.healCutT, 6);
     tgt.healCutPct = Math.min(tgt.healCutPct, 0.7);
   }
@@ -903,12 +1028,18 @@ function onHitEffect(b        , u      , tgt      , dealt        ) {
   // 丧钟首/疫主：重毒 + 治疗大幅折扣 + 技能延后（专打治疗队）
   if (eff.onHit === 'tithe' && tgt.side === 'hero' && tgt.alive) {
     applyPoison(b, tgt, 12 * (eff.passive === 'spore' && u.lv >= 5 ? 1.3 : 1), 4);
+    note(b, 'poison');
+    specialSpeech(b, u, 'poison');
     tgt.healCutT = Math.max(tgt.healCutT, 6);
     tgt.healCutPct = Math.min(tgt.healCutPct, 0.35);
     tgt.skillCd += 1.5;
   }
   // 熔核系：普攻点燃（burn 无视圣水）
-  if (eff.onHit === 'scorch' && tgt.side === 'hero' && tgt.alive) applyBurn(tgt, 6, 4);
+  if (eff.onHit === 'scorch' && tgt.side === 'hero' && tgt.alive) {
+    applyBurn(tgt, 6, 4);
+    note(b, 'burn');
+    specialSpeech(b, u, 'burn');
+  }
   // 八目首/孵母：黏网减速
   if (eff.onHit === 'ensnare') { tgt.slowT = Math.max(tgt.slowT, 4); tgt.slowAmt = Math.max(tgt.slowAmt, 0.25); }
   // 虚蚀：叠易伤
@@ -916,7 +1047,11 @@ function onHitEffect(b        , u      , tgt      , dealt        ) {
   // 分蜂/虫群：溅射到另一名勇者
   if (eff.splash && dealt > 0 && tgt.side === 'hero') {
     const other = aliveHeroes(b).find((h) => h !== tgt);
-    if (other) damage(b, u, other, Math.max(1, dealt * eff.splash), false);
+    if (other) {
+      note(b, 'splash');
+      specialSpeech(b, u, 'splash');
+      damage(b, u, other, Math.max(1, dealt * eff.splash), false);
+    }
   }
   const steal = eff.lifestealPct ?? (eff.onHit === 'lifesteal' ? 0.25 : 0);
   if (steal > 0 && dealt > 0) {
@@ -926,6 +1061,9 @@ function onHitEffect(b        , u      , tgt      , dealt        ) {
     const got = u.hp - before;
     if (got > 0) {
       u.healed += got;
+      note(b, 'healing', got);
+      note(b, 'lifesteal');
+      specialSpeech(b, u, 'lifesteal');
       b.events.push({ k: 'heal', room: b.roomIndex, x: u.x, y: u.y, amt: got, target: u });
     }
   }
@@ -954,6 +1092,9 @@ function basicAttack(b        , u      ) {
   const charmed = u.side === 'hero' && u.charmT > 0;
   const tgt = charmed ? charmTarget(b, u) : u.side === 'hero' ? heroTarget(b, u) : monTarget(b, u);
   if (!tgt) return;
+  note(b, 'attacks');
+  if (tgt.row === 1) note(b, 'backline');
+  attackSpeech(b, u, tgt);
   u.lungeT = 0.22;
   if (u.champUid) u.__battleAttacks++;
   const mult = u.side === 'hero' ? b.moraleMult * u.atkCut : atkMult(b, u);
@@ -999,7 +1140,13 @@ function monSkill(b        , u      ) {
   const eff = u.eff;
   const name = eff?.skillName ?? '技能';
   const action = `使用${name}`;
-  speak(b, u, `${name}！`);
+  note(b, 'skills');
+  const nature = ({ slow: 'control', multi: 'strike', pierce: 'pierce', harass: 'control', alt: u.phase === 0 ? 'poison' : 'heal',
+    aoe: 'aoe', drag: 'control', wall: 'guard', incense: 'fire', bore: 'pierce', reap: 'aoe', volley: 'pierce',
+    lash: 'control', brew: 'poison', rally: 'rally', decree: 'rally', eruption: 'fire', broodcall: 'summon',
+    inject: 'poison', shieldSkill: 'guard', breath: 'fire', flurry: 'strike', necro: 'drain', petrify: 'control',
+    charm: 'control', hex: 'poison' })[eff?.skill] ?? 'strike';
+  skillSpeech(b, u, nature, `${name}！`);
   // 淬毒词缀：给"这次技能实际打到的人"上毒，靠打前/打后血量差判定，不必逐技能改写
   const venom = eff?.venomSkill ?? 0;
   const before = venom ? b.heroes.map((h) => h.hp + h.shield) : null;
@@ -1027,6 +1174,7 @@ function monSkill(b        , u      ) {
       const hs = aliveHeroes(b);
       const t = [...hs].reverse().find((h) => h.row === 1) || hs[hs.length - 1];
       if (t) {
+        if (t.row === 1) note(b, 'backline');
         const bf = t.hp + t.shield;
         damage(b, u, t, u.atk * 1.4 * boost, false, 0.5);
         logHit(b, u, t, bf - (t.hp + t.shield), action, false, b.rng);
@@ -1051,6 +1199,8 @@ function monSkill(b        , u      ) {
       if (u.phase === 0) {
         const dps = 3 * boost * (u.eff?.passive === 'spore' && u.lv >= 5 ? 1.3 : 1) * (room.theme === 'poison' ? 1.25 : 1);
         aliveHeroes(b).forEach((h) => applyPoison(b, h, dps, 5));
+        note(b, 'poison', aliveHeroes(b).length);
+        specialSpeech(b, u, 'poison');
         b.events.push({ k: 'poison', room: b.roomIndex, x: 200, y: 0 });
         log(b, `毒雾：勇者全体中毒`, 'good');
         u.phase = 1;
@@ -1058,10 +1208,16 @@ function monSkill(b        , u      ) {
         const t = lowest(room.mons);
         if (t) {
           const amt = Math.round(10 * boost);
+          const bf = t.hp;
           t.hp = Math.min(t.maxHp, t.hp + amt);
-          t.healed += amt;
-          b.events.push({ k: 'heal', room: b.roomIndex, x: t.x, y: t.y, amt, target: t });
-          log(b, `回春：${t.name}恢复${amt}`, 'good');
+          const got = t.hp - bf;
+          t.healed += got;
+          if (got > 0) {
+            note(b, 'healing', got);
+            recoverySpeech(b, t);
+            b.events.push({ k: 'heal', room: b.roomIndex, x: t.x, y: t.y, amt: got, target: t });
+          }
+          log(b, `回春：${t.name}恢复${got}`, 'good');
         }
         u.phase = 0;
       }
@@ -1108,6 +1264,8 @@ function monSkill(b        , u      ) {
     case 'incense': {
       const dps = 7 * boost;
       aliveHeroes(b).forEach((h) => applyBurn(h, dps, 5));
+      note(b, 'burn', aliveHeroes(b).length);
+      specialSpeech(b, u, 'burn');
       b.events.push({ k: 'poison', room: b.roomIndex, x: 200, y: 0 });
       log(b, `${name}：勇者全体被点燃`, 'good');
       u.skillCd = 7 * cdMult;
@@ -1143,6 +1301,7 @@ function monSkill(b        , u      ) {
       // 齐射：专打后排（治疗/法术都在后排），并短暂眩晕
       const back = aliveHeroes(b).filter((h) => h.row === 1);
       const targets = back.length ? back : aliveHeroes(b);
+      if (back.length) note(b, 'backline', targets.length);
       for (const h of targets) {
         const bf = h.hp + h.shield;
         damage(b, u, h, u.atk * 1.1 * boost, true);
@@ -1173,10 +1332,16 @@ function monSkill(b        , u      ) {
         const bf = m.hp;
         m.hp = Math.min(m.maxHp, m.hp + amt);
         u.healed += m.hp - bf;
-        if (m.hp > bf) b.events.push({ k: 'heal', room: b.roomIndex, x: m.x, y: m.y, amt: m.hp - bf, target: m });
+        if (m.hp > bf) {
+          note(b, 'healing', m.hp - bf);
+          recoverySpeech(b, m);
+          b.events.push({ k: 'heal', room: b.roomIndex, x: m.x, y: m.y, amt: m.hp - bf, target: m });
+        }
       }
       const dps = 7 * boost * (room.theme === 'poison' ? 1.25 : 1);
       aliveHeroes(b).forEach((h) => applyPoison(b, h, dps, 5));
+      note(b, 'poison', aliveHeroes(b).length);
+      specialSpeech(b, u, 'poison');
       b.events.push({ k: 'poison', room: b.roomIndex, x: 200, y: 0 });
       log(b, `${name}：守军饮下毒剂回血，勇者吸入毒雾`, 'good');
       u.skillCd = 8 * cdMult;
@@ -1213,6 +1378,8 @@ function monSkill(b        , u      ) {
         if (h.alive) applyBurn(h, 7, 8);
       }
       b.events.push({ k: 'cast', room: b.roomIndex, x: u.x, y: u.y, color: 0xd95763 });
+      note(b, 'burn', aliveHeroes(b).length);
+      specialSpeech(b, u, 'burn');
       b.events.push({ k: 'shake', amount: 4 });
       log(b, `${name}：岩浆喷了满屋，火要烧上8秒`, 'good');
       u.skillCd = 10 * cdMult;
@@ -1266,6 +1433,8 @@ function monSkill(b        , u      ) {
         if (h.alive) applyBurn(h, 5 * boost, 6);
       });
       b.events.push({ k: 'shake', amount: 4 });
+      note(b, 'burn', aliveHeroes(b).length);
+      specialSpeech(b, u, 'burn');
       log(b, `${name}：全体勇者被骨焰灼烧`, 'good');
       u.skillCd = 9 * cdMult;
       break;
@@ -1299,7 +1468,11 @@ function monSkill(b        , u      ) {
           const bf = m.hp;
           m.hp = Math.min(m.maxHp, m.hp + heal);
           u.healed += m.hp - bf;
-          if (m.hp > bf) b.events.push({ k: 'heal', room: b.roomIndex, x: m.x, y: m.y, amt: m.hp - bf, target: m });
+          if (m.hp > bf) {
+            note(b, 'healing', m.hp - bf);
+            recoverySpeech(b, m);
+            b.events.push({ k: 'heal', room: b.roomIndex, x: m.x, y: m.y, amt: m.hp - bf, target: m });
+          }
         }
       }
       log(b, `${name}：抽取${Math.round(drained)}点生命回馈守军`, 'good');
@@ -1333,6 +1506,8 @@ function monSkill(b        , u      ) {
     case 'hex': {
       const dps = 3.4 * boost * (u.eff?.passive === 'spore' && u.lv >= 5 ? 1.3 : 1) * (room.theme === 'poison' ? 1.25 : 1);
       aliveHeroes(b).forEach((h) => { applyPoison(b, h, dps, 5); h.silenced = true; });
+      note(b, 'poison', aliveHeroes(b).length);
+      specialSpeech(b, u, 'poison');
       b.events.push({ k: 'poison', room: b.roomIndex, x: 200, y: 0 });
       log(b, `${name}：全体中毒并被沉默一次`, 'good');
       u.skillCd = 7 * cdMult;
@@ -1349,6 +1524,10 @@ function monSkill(b        , u      ) {
       if (noDamage || h.hp + h.shield < before[i]) { applyPoison(b, h, dps, 5); any = true; }
     });
     if (any) log(b, `淬毒：${u.name}的技能附带毒素`, 'good');
+    if (any) {
+      note(b, 'poison');
+      specialSpeech(b, u, 'poison');
+    }
   }
 }
 
@@ -1360,18 +1539,21 @@ function healHero(b        , src      , t      , amt        ) {
   t.hp = Math.min(t.maxHp, t.hp + real);
   const got = Math.round(t.hp - before);   // hp 会被 dt 型伤害带上小数，日志里必须取整
   src.healed += got;
-  if (got > 0) b.events.push({ k: 'heal', room: b.roomIndex, x: t.x, y: t.y, amt: got, target: t });
+  if (got > 0) {
+    note(b, 'healing', got);
+    b.events.push({ k: 'heal', room: b.roomIndex, x: t.x, y: t.y, amt: got, target: t });
+    if (got / Math.max(1, t.maxHp) >= 0.08 || t.hp / Math.max(1, t.maxHp) < 0.45) recoverySpeech(b, t);
+  }
   return { got, blocked: cut < 1 };
 }
 
 function heroSkill(b        , u      ) {
   const room = b.rooms[b.roomIndex];
-  const skillLines = {
-    cleric: '治愈术！', mage: '火球术！', knight: '重斩！', captain: '圣裁！', archer: '穿云箭！',
-    rogue: '背刺！', paladin: '护佑！', berserker: '血怒斩！', ranger: '猎标！', bard: '战歌！',
-    inquisitor: '审判！', swordmaster: '连斩！',
-  };
-  if (!u.silenced) speak(b, u, skillLines[u.kind] ?? '技能！');
+  note(b, 'skills');
+  const nature = ({ cleric: 'heal', mage: 'fire', knight: 'strike', captain: 'strike', archer: 'pierce', rogue: 'pierce',
+    paladin: 'guard', berserker: 'strike', ranger: 'pierce', bard: u.phase === 0 ? 'rally' : 'heal',
+    inquisitor: 'strike', swordmaster: 'strike' })[u.kind] ?? 'strike';
+  if (!u.silenced) skillSpeech(b, u, nature, '技能！');
   if (u.kind === 'cleric') {
     if (u.silenced) {
       u.silenced = false;
@@ -1422,6 +1604,7 @@ function heroSkill(b        , u      ) {
     const mons = aliveMons(b);
     const t = mons.find((mm) => mm.row === 1) || mons[0];
     if (t) {
+      if (t.row === 1) note(b, 'backline');
       const bf = t.hp + t.shield;
       damage(b, u, t, u.atk * 1.5 * b.moraleMult, false, 0.5);
       logHit(b, u, t, bf - (t.hp + t.shield), '使用穿云箭', false, b.rng);
@@ -1468,6 +1651,7 @@ function heroSkill(b        , u      ) {
     const mons = aliveMons(b);
     const t = mons.find((mm) => mm.row === 1) || mons[0];
     if (t) {
+      if (t.row === 1) note(b, 'backline');
       t.marked = 1.25;
       const bf = t.hp + t.shield;
       damage(b, u, t, u.atk * 1.35 * b.moraleMult, false, 0.35);
@@ -1897,35 +2081,51 @@ function finish(b        ) {
     }
   }
 
-  let firstCause = '地牢守住了防线';
+  let firstCause = `四道门在尘烟里合拢，地牢以${seal}%封印余量守住了王座。`;
   if (!win) {
-    if (kills === 0) firstCause = '全队勇者毫无损伤地走到王座：地牢得先有守军';
+    if (kills === 0) firstCause = '勇者的靴声从入口一直响到王座，没有一人倒下；这不是失守，而是一条无人阻拦的路。';
     const firstBroken = b.rooms.find((r) => r.broken);
-    if (firstBroken && kills > 0) firstCause = `第${firstBroken.index + 1}房最先失守：${firstBroken.breachReason}`;
+    if (firstBroken && kills > 0) firstCause = `第一道裂缝出现在第${firstBroken.index + 1}房，${Number(firstBroken.breachTime ?? b.time).toFixed(1)}秒时，${firstBroken.breachReason}。此后勇者沿着这道裂缝把战线一路推向王座。`;
     const badLine = b.log.find((l) => l.tone === 'bad' && /击倒|拆除|治疗/.test(l.text));
-    if (badLine) firstCause += ` · ${badLine.text}`;
+    if (badLine) firstCause += ` 转折处的记录写着：“${badLine.text}”。`;
   }
   if (echo > 0) log(b, `余晶：存活的缝合体额外析出${echo}魔质`, 'good');
   const allUnits = [...b.heroes, ...b.rooms.flatMap((room) => room.mons)];
   const topDamage = [...allUnits].sort((a, z) => z.dmgDealt - a.dmgDealt)[0];
+  const topHeal = [...allUnits].sort((a, z) => z.healed - a.healed)[0];
   const firstBroken = b.rooms.find((room) => room.broken);
+  const m = b.metrics ?? {};
+  const specialBits = [
+    m.thorns ? `反伤折回${Math.round(m.thorns)}点` : '',
+    m.splash ? `溅射触发${m.splash}次` : '',
+    m.lifesteal ? `吸血触发${m.lifesteal}次` : '',
+    m.backline ? `直击后排${m.backline}次` : '',
+    m.poison ? `施毒${m.poison}次` : '',
+    m.burn ? `点燃${m.burn}次` : '',
+    m.revives ? `复活${m.revives}次` : '',
+    m.allyRevives ? `拉起队友${m.allyRevives}次` : '',
+  ].filter(Boolean);
+  const roomStory = b.rooms.map((room) => room.broken
+    ? `第${room.index + 1}房在${Number(room.breachTime ?? b.time).toFixed(1)}秒失守，${room.breachReason}`
+    : `第${room.index + 1}房守到战斗结束`).join('；');
   const review = [
     win
-      ? `守军最终保住了${roomsHeld}间房，王座封印剩余${seal}%，勇者队伍有${kills}/${total}人倒下。`
-      : `勇者突破了${b.rooms.filter((room) => room.broken).length}间房，王座封印归零；守军击倒${kills}/${total}名勇者。`,
+      ? `终场：${kills}/${total}名勇者倒在门与门之间，仍有${roomsHeld}间房保持完整；王座上方的封印最后停在${seal}%。`
+      : `终场：勇者踏过${b.rooms.filter((room) => room.broken).length}间失守房间，守军留下了${kills}/${total}名敌人，却没能阻止最后的人触及王座。`,
     topDamage
-      ? `本场最高输出是${topDamage.name}，累计造成${Math.round(topDamage.dmgDealt)}点伤害。`
+      ? `最锋利的一笔属于${topDamage.name}：${Math.round(topDamage.dmgDealt)}点伤害、${topDamage.kills ?? 0}次击倒。${topHeal?.healed >= 5 ? `而${topHeal.name}用${Math.round(topHeal.healed)}点治疗，把几次本该结束的呼吸重新接了起来。` : ''}`
       : '本场没有形成有效伤害记录。',
+    `交锋共发生${m.attacks ?? 0}次普攻、${m.skills ?? 0}次主动技能、${m.heavyHits ?? 0}次重击，累计记录${Math.round(m.damage ?? 0)}点伤害与${Math.round(m.healing ?? 0)}点恢复。${specialBits.length ? `特殊效果在战线留下了这些痕迹：${specialBits.join('、')}。` : '双方主要依靠正面攻防，没有特殊效果真正改写战线。'}`,
     firstBroken
-      ? `最早出现缺口的是第${firstBroken.index + 1}房，原因是“${firstBroken.breachReason}”，发生在${firstBroken.breachTime.toFixed(1)}秒。`
-      : '四道房门均未被突破，布防节奏完整。',
+      ? `房间纪事：${roomStory}。最早的缺口决定了后续节奏，后房不得不接住已经蓄起速度的勇者。`
+      : `房间纪事：${roomStory}。每一道门都替下一道门争取到了完整的准备时间。`,
     kills === 0
-      ? '改进建议：至少安排一支能稳定造成伤害的守军，单靠封印无法获得胜利。'
+      ? '地牢评语：沉默的房间不会让勇者恐惧。至少需要一支能稳定制造伤口的守军，让推进从“行走”变成“战斗”。'
       : !win
-        ? '改进建议：把高耐久单位前移，并让控制、治疗或光环覆盖最早失守的房间。'
+        ? `地牢评语：应在第${(firstBroken?.index ?? 0) + 1}房补上耐久、控制或恢复，让第一道裂缝晚一些出现；后房才有机会面对疲惫的敌人，而不是完整的冲锋。`
         : seal < 35
-          ? '改进建议：本次虽胜但封印已接近极限，可加强后两房的持续作战能力。'
-          : '战术结论：当前布防能形成连续消耗，建议保留核心组合并针对下一批勇者词缀微调。',
+          ? '地牢评语：胜利离失守只隔着最后一层暗光。后两房需要更长的续航，或更早地切断治疗与后排输出。'
+          : '地牢评语：这套布防已经形成了完整的消耗链。保留它的骨架，再针对下一批勇者的词缀更换一两处牙齿即可。',
   ];
   // 战利品：从被击倒的勇者身上剥下来的东西，用他们的等级决定档次
   const fallen = b.heroes.filter((h) => !h.alive);
@@ -1940,7 +2140,7 @@ function finish(b        ) {
     xp: [...xpMap.entries()].map(([uid, xp]) => ({ uid, xp })),
     champXp: [...champXp.entries()].map(([uid, v]) => ({ uid, xp: v.xp, kills: v.kills, fell: v.fell })),
     champStats: [...champStats.entries()].map(([uid, v]) => ({ uid, ...v })),
-    firstCause, review,
+    firstCause, review, metrics: { ...m },
   };
   log(b, win ? `守住地牢！封印剩余${seal}` : `封印被击破，勇者攻入王座`, win ? 'good' : 'bad');
 }

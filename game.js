@@ -2311,7 +2311,7 @@ function slotBox(g               , x        , y        , w        , h        , u
   const ch = which === 'leader' ? champById(uid) : undefined;
   const inst = which === 'leader' ? undefined : instById(uid);
   if (ch) {
-    const k = monKind(ch.race);
+    const k = champKind(ch);
     uiLayer.addChild(portraitEffect(sprite(k.tex, x + w / 2, y + h - 11 + bounce, 32), ch.lv >= CHAMP_LV_CAP, selected, ch.uid));
     const ft = fatigueTier(ch.fatigue);
     labelC(uiLayer, `Lv${ch.lv}`, x + w / 2, y + h - 13, 12, ft.bad || ch.wounds ? C.red : C.gold);
@@ -3942,17 +3942,20 @@ function pageReport(g               ) {
   label(uiLayer, '关键败因/结论：', 8, y + 4, 12, C.gold);
   button(g, uiLayer, hits, 132, y + 2, 76, 15, '完整战术复盘', () => {
     const review = Array.isArray(r.review) && r.review.length ? r.review : [r.firstCause];
-    const quotes = r.logs.filter((l) => /^　/.test(l.text)).slice(0, 12).map((l) => l.text.trim());
-    openDetailPopup(`#${r.raidNo} 战术复盘`, `${review.join('\n\n')}${quotes.length ? `\n\n战场台词摘录：\n${quotes.join('\n')}` : ''}`, r.win ? C.green : C.red);
+    const quotes = Array.isArray(r.dialogue) && r.dialogue.length
+      ? r.dialogue.slice(-18).map((d) => `${d.name}：${d.text}`)
+      : r.logs.filter((l) => /^　/.test(l.text)).slice(0, 12).map((l) => l.text.trim());
+    openDetailPopup(`#${r.raidNo} 战术复盘`, `${review.join('\n\n')}${quotes.length ? `\n\n战场对白摘录：\n${quotes.join('\n')}` : ''}`, r.win ? C.green : C.red);
   }, { size: 9, fill: C.ink, border: C.goldDark, color: C.gold });
   boundedText(uiLayer, r.firstCause, 8, y + 20, 200, Math.max(15, 210 - (y + 20)), 11, C.bone);
-  const pu = paged(`rep-units-${reportIdx}`, r.units, 5);
+  const pu = paged(`rep-units-${reportIdx}`, r.units, 4);
   label(uiLayer, `单位战绩 ${r.units.length}`, 216, 82, 12, C.white);
   let y2 = 98;
   for (const u of pu.view) {
-    label(uiLayer, cut(u.name.split('·')[0], 5), 216, y2, 12, u.side === 'mon' ? C.green : C.red);
-    label(uiLayer, `伤${u.dmg}`, 288, y2, 12, C.bone);
-    y2 += 22;
+    label(uiLayer, cut(u.name.split('·')[0], 3), 216, y2, 12, u.side === 'mon' ? C.green : C.red);
+    label(uiLayer, `伤${u.dmg}`, 274, y2, 11, C.bone);
+    label(uiLayer, `治${u.heal ?? 0}・倒${u.kills ?? 0}`, 218, y2 + 12, 9, C.stoneLit);
+    y2 += 28;
   }
   pager(g, `rep-units-${reportIdx}`, pu.pages, 216, 212, 106);
   panelF(g, uiLayer, 'stone', 334, 40, 142, 194, C.wall);
@@ -4515,13 +4518,14 @@ function finishBattle() {
     c.stats.revives = (c.stats.revives ?? 0) + (x.revives ?? 0);
     if (x.soulAtk) c.soulAtk = Math.min(30, (c.soulAtk ?? 0) + x.soulAtk);
   }
-  const units = [...b.heroes.map((h) => ({ name: h.name, dmg: Math.round(h.dmgDealt), heal: Math.round(h.healed), side: 'hero' })),
-    ...b.rooms.flatMap((rm) => rm.mons.map((m) => ({ name: m.name, dmg: Math.round(m.dmgDealt), heal: Math.round(m.healed), side: 'mon' })))]
+  const units = [...b.heroes.map((h) => ({ name: h.name, dmg: Math.round(h.dmgDealt), heal: Math.round(h.healed), kills: h.kills ?? 0, side: 'hero' })),
+    ...b.rooms.flatMap((rm) => rm.mons.map((m) => ({ name: m.name, dmg: Math.round(m.dmgDealt), heal: Math.round(m.healed), kills: m.kills ?? 0, side: 'mon' })))]
     .sort((a, z) => z.dmg - a.dmg);
   const report         = {
     raidNo: b.raid.no, title: b.raid.title, win: r.win, skulls: r.skulls, seal: r.seal, time: b.time,
     rooms: b.rooms.map((rm) => ({ i: rm.index, broken: rm.broken, t: rm.breachTime, reason: rm.breachReason })),
-    units, firstCause: r.firstCause, review: r.review ?? [],
+    units, firstCause: r.firstCause, review: r.review ?? [], metrics: r.metrics ?? {},
+    dialogue: (b.dialogue ?? []).map((d) => ({ name: d.name, text: d.text, kind: d.kind, side: d.side, room: d.room, t: d.t })),
     logs: b.log.map((l) => ({ text: l.text, tone: l.tone })),
   };
   S.reports.unshift(report);
@@ -4562,22 +4566,21 @@ function buildResultOverlay() {
     }
   }
   labelC(overlay, `骨币 +${r.bone}   魔质 +${r.mana}`, 240, 104, 12, C.gold);
-  let y = 122;
-  labelC(overlay, r.firstCause, 240, y, 12, r.win ? C.stoneLit : C.gold);
-  y += 20;
+  boundedText(overlay, r.firstCause, 90, 120, 300, 26, 9, r.win ? C.stoneLit : C.gold);
+  let y = 148;
   const xpLines = r.xp.map((x) => {
     const inst = instById(x.uid);
     return inst ? `${instKind(inst).name} +${x.xp}xp` : '';
   }).filter(Boolean).slice(0, 4);
   labelC(overlay, xpLines.length ? xpLines.join('  ') : '本场无怪物参战', 240, y, 12, C.green);
-  y += 19;
+  y += 16;
   // 英雄的成长单独一行：这是玩家最在意的长期读数
   const champLines = (r.champXp ?? []).map((x) => {
     const c = champById(x.uid);
     return c ? `${c.name} +${x.xp}xp${x.kills ? `/${x.kills}杀` : ''}${x.fell ? '（受伤）' : ''}` : '';
   }).filter(Boolean).slice(0, 2);
   if (champLines.length) labelC(overlay, champLines.join('  '), 240, y, 12, C.gold);
-  y += 19;
+  y += 16;
   const loot = (r.loot ?? []).map((id) => gearById(id)?.name ?? '').filter(Boolean);
   const lootLine = `${loot.length ? `缴获：${cut(loot.join('、'), 16)}` : '无装备缴获'}${r.relicLoot ? '・英雄遗物×1' : ''}`;
   labelC(overlay, lootLine, 240, y, 12, loot.length || r.relicLoot ? C.purple : C.stoneLit);
