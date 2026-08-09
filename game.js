@@ -59,15 +59,18 @@ const UTILITY_KINDS = {
   none:       { id: 'none', name: '空后勤房', desc: '尚未建造经营设施。', bone: 0, mana: 0, color: C.stoneLit },
   'bone-yard': { id: 'bone-yard', name: '骨料场', desc: '每轮生产骨币；越靠外层产量越高。', bone: 60, mana: 0, color: C.bone, yields: [10, 17, 26] },
   'mana-well': { id: 'mana-well', name: '魔力井', desc: '每轮凝聚魔质；失守后会损失待结算产出。', bone: 40, mana: 12, color: C.purple, yields: [3, 5, 8] },
+  training:   { id: 'training', name: '训练场', desc: '让未参战的怪物或英雄稳定获得经验。', bone: 80, mana: 0, color: C.green, xp: [8, 14, 20], slots: [1, 1, 2] },
   vault:      { id: 'vault', name: '宝库', desc: '保护被攻破楼层的部分骨币与魔质。', bone: 130, mana: 18, color: C.gold, boneCap: [20, 45, 80], manaCap: [5, 10, 18] },
   healing:    { id: 'healing', name: '疗愈池', desc: '提供英雄疗愈资格与每轮服务次数。', bone: 70, mana: 20, color: C.green, charges: [1, 2, 3] },
+  workshop:   { id: 'workshop', name: '工坊', desc: '积攒维修点，并降低锻造或全身改造成本。', bone: 110, mana: 10, color: C.steel, repair: [10, 18, 28], discount: [0.05, 0.10, 0.15] },
+  hatchery:   { id: 'hatchery', name: '孵化室', desc: '降低普通怪物招募骨币，并提供本轮优惠次数。', bone: 90, mana: 8, color: C.purple, charges: [1, 1, 2], discount: [0.08, 0.15, 0.20] },
 };
 const FLOOR_EXPAND = [null, null,
   { bone: 120, mana: 0 }, { bone: 220, mana: 15 },
   { bone: 400, mana: 35 }, { bone: 650, mana: 70 }];
 
 const freshBattleRoom = () => ({ theme: 'stone', trap: 'none', front: null, back: null, leader: null, flank: null });
-const freshUtilityRoom = () => ({ kind: 'none', level: 0, condition: 100, workerUid: null });
+const freshUtilityRoom = () => ({ kind: 'none', level: 0, condition: 100, workerUid: null, trainTargets: [] });
 const freshFloor = (id, battle = freshBattleRoom(), utility = freshUtilityRoom()) => ({ id, battle, utility });
 
 function syncRoomAlias() {
@@ -81,7 +84,12 @@ function freshSave()       {
     bone: 95, mana: 18, relic: 0, raidNo: 1, uidNext: 1,
     monsters: [],
     floors, rooms: floors.map((f) => f.battle),
-    dungeon: { unlockedFloors: BASE_NEW_FLOORS, notoriety: 0, healingCharges: 0, vaultPriority: 'mana', lastEconomy: null },
+    dungeon: {
+      unlockedFloors: BASE_NEW_FLOORS, notoriety: 0, healingCharges: 0,
+      repairPoints: 0, forgeCharges: 0, forgeDiscount: 0,
+      hatcheryCharges: 0, hatcheryDiscount: 0,
+      vaultPriority: 'mana', lastEconomy: null,
+    },
     themes: ['stone'], traps: ['none'],
     sealLv: 0, trapLv: 0,
     best: {}, reports: [],
@@ -171,13 +179,22 @@ function sanitizeSave() {
     const kind = raw.kind in UTILITY_KINDS ? raw.kind : 'none';
     const level = kind === 'none' ? 0 : Math.max(1, Math.min(3, Math.round(raw.level || 1)));
     const condition = Math.max(0, Math.min(100, Math.round(raw.condition ?? 100)));
-    return freshFloor(i + 1, battle, { kind, level, condition, workerUid: null });
+    const workerUid = typeof raw.workerUid === 'number' ? raw.workerUid : null;
+    const trainTargets = Array.isArray(raw.trainTargets) ? raw.trainTargets
+      .filter((x) => x && (x.type === 'monster' || x.type === 'hero') && typeof x.uid === 'number')
+      .slice(0, 2).map((x) => ({ type: x.type, uid: x.uid })) : [];
+    return freshFloor(i + 1, battle, { kind, level, condition, workerUid, trainTargets });
   });
   if (!S.dungeon || typeof S.dungeon !== 'object') S.dungeon = {};
   S.dungeon = {
     unlockedFloors: S.floors.length,
     notoriety: Math.max(0, Math.round(S.dungeon.notoriety || 0)),
     healingCharges: Math.max(0, Math.min(6, Math.round(S.dungeon.healingCharges || 0))),
+    repairPoints: Math.max(0, Math.min(60, Math.round(S.dungeon.repairPoints || 0))),
+    forgeCharges: Math.max(0, Math.min(2, Math.round(S.dungeon.forgeCharges || 0))),
+    forgeDiscount: Math.max(0, Math.min(0.15, Number(S.dungeon.forgeDiscount) || 0)),
+    hatcheryCharges: Math.max(0, Math.min(3, Math.round(S.dungeon.hatcheryCharges || 0))),
+    hatcheryDiscount: Math.max(0, Math.min(0.20, Number(S.dungeon.hatcheryDiscount) || 0)),
     vaultPriority: S.dungeon.vaultPriority === 'bone' ? 'bone' : 'mana',
     lastEconomy: S.dungeon.lastEconomy && typeof S.dungeon.lastEconomy === 'object' ? S.dungeon.lastEconomy : null,
   };
@@ -283,7 +300,40 @@ function sanitizeSave() {
     if (kind === 'affix') return PART_AFFIXES.some((a) => a.id === id);
     return false;
   });
+  // 后勤岗位与战斗部署、训练目标严格互斥；坏档或旧档中的重复引用只保留最先出现的一处。
+  const deployedMonsters = new Set(S.rooms.flatMap((r) => [r.front, r.back, r.flank]).filter((u) => u != null));
+  const deployedHeroes = new Set(S.rooms.map((r) => r.leader).filter((u) => u != null));
+  const monsterUids = new Set(S.monsters.map((m) => m.uid));
+  const heroUids = new Set(S.champs.map((c) => c.uid));
+  const occupiedWorkers = new Set();
+  const workerKinds = new Set(['bone-yard', 'mana-well', 'workshop', 'hatchery']);
+  for (const floor of S.floors) {
+    const u = floor.utility;
+    if (!workerKinds.has(u.kind) || !monsterUids.has(u.workerUid) || deployedMonsters.has(u.workerUid) || occupiedWorkers.has(u.workerUid)) u.workerUid = null;
+    if (u.workerUid != null) occupiedWorkers.add(u.workerUid);
+  }
+  const occupiedTraining = new Set();
+  for (const floor of S.floors) {
+    const u = floor.utility;
+    if (u.kind !== 'training') { u.trainTargets = []; continue; }
+    const slots = utilityDef(u).slots[u.level - 1];
+    u.trainTargets = u.trainTargets.filter((x) => {
+      const key = `${x.type}:${x.uid}`;
+      const exists = x.type === 'monster' ? monsterUids.has(x.uid) : heroUids.has(x.uid);
+      const deployed = x.type === 'monster' ? deployedMonsters.has(x.uid) : deployedHeroes.has(x.uid);
+      const worker = x.type === 'monster' && occupiedWorkers.has(x.uid);
+      if (!exists || deployed || worker || occupiedTraining.has(key)) return false;
+      occupiedTraining.add(key);
+      return true;
+    }).slice(0, slots);
+  }
   S.dungeon.healingCharges = Math.min(S.dungeon.healingCharges, healingCapacity());
+  const workshopOut = S.floors.map((_, i) => utilityOutput(i)).filter((x, i) => S.floors[i].utility.kind === 'workshop');
+  S.dungeon.forgeCharges = Math.min(S.dungeon.forgeCharges, 2, workshopOut.length);
+  S.dungeon.forgeDiscount = Math.min(S.dungeon.forgeDiscount, workshopOut.reduce((n, x) => Math.max(n, x.forgeDiscount), 0));
+  const hatcheryOut = S.floors.map((_, i) => utilityOutput(i)).filter((x, i) => S.floors[i].utility.kind === 'hatchery');
+  S.dungeon.hatcheryCharges = Math.min(S.dungeon.hatcheryCharges, 3, hatcheryOut.reduce((n, x) => n + x.hatcheryCharges, 0));
+  S.dungeon.hatcheryDiscount = Math.min(S.dungeon.hatcheryDiscount, hatcheryOut.reduce((n, x) => Math.max(n, x.hatcheryDiscount), 0));
 }
 
 // 拼接体存档只保存部件选择；数值/文案每次重新派生并注册到种类表，改部件表即改全部已造怪物。
@@ -342,19 +392,99 @@ const trapPower = () => 1 + S.trapLv * 0.25;
 const utilityAt = (floor) => S.floors[floor]?.utility;
 const utilityDef = (u) => UTILITY_KINDS[u?.kind] ?? UTILITY_KINDS.none;
 const conditionEff = (condition) => condition <= 0 ? 0 : condition <= 25 ? 0.4 : condition <= 50 ? 0.7 : condition <= 75 ? 0.9 : 1;
-const workerEff = () => 0.5; // 第一阶段尚未开放后勤工作人员，空房按设计以半效率运作。
+const WORKER_KINDS = new Set(['bone-yard', 'mana-well', 'workshop', 'hatchery']);
+const WORKER_APTITUDE = {
+  'bone-yard': new Set(['archer', 'lich', 'elite-lich', 'bonedragon', 'elite-bonedragon']),
+  'mana-well': new Set(['shaman', 'lich', 'elite-lich', 'beholder', 'elite-beholder', 'mindflayer', 'elite-mindflayer']),
+  workshop: new Set(['goblin', 'ogre', 'hundredarm', 'elite-hundredarm', 'magmagolem', 'elite-magmagolem']),
+  hatchery: new Set(['slime', 'bat', 'shaman', 'broodqueen', 'elite-broodqueen']),
+};
+
+function workerFloorOf(uid) {
+  return S.floors.findIndex((f) => f.utility.workerUid === uid);
+}
+
+function trainingOf(type, uid) {
+  return S.floors.findIndex((f) => f.utility.trainTargets.some((x) => x.type === type && x.uid === uid));
+}
+
+function monsterPost(uid) {
+  const room = roomOf(uid);
+  if (room >= 0) return { text: `${room + 1}房`, busy: true, kind: 'guard' };
+  const job = workerFloorOf(uid);
+  if (job >= 0) return { text: `${job + 1}层工`, busy: true, kind: 'work' };
+  const training = trainingOf('monster', uid);
+  if (training >= 0) return { text: `${training + 1}层训`, busy: true, kind: 'training' };
+  return { text: '空闲', busy: false, kind: 'free' };
+}
+
+function workerEff(u) {
+  const inst = instById(u?.workerUid);
+  if (!inst) return 0.5;
+  const base = inst.lv <= 2 ? 0.9 : inst.lv <= 4 ? 1 : 1.1;
+  const aptitude = WORKER_APTITUDE[u.kind]?.has(inst.kind) ? 0.1 : 0;
+  return Math.min(1.2, base + aptitude);
+}
+
+function workerName(u) {
+  const inst = instById(u?.workerUid);
+  return inst ? instKind(inst).name : '无人';
+}
 
 function utilityOutput(floorIndex) {
   const floor = S.floors[floorIndex];
   const u = floor?.utility;
   const d = utilityDef(u);
-  if (!u || u.kind === 'none' || u.condition <= 0) return { bone: 0, mana: 0 };
+  if (!u || u.kind === 'none' || u.condition <= 0) return {
+    bone: 0, mana: 0, xp: 0, repair: 0, forgeCharges: 0, forgeDiscount: 0,
+    hatcheryCharges: 0, hatcheryDiscount: 0, training: [],
+  };
   const lv = Math.max(1, Math.min(3, u.level)) - 1;
-  const mult = (DEPTH_MULT[floorIndex] ?? 0.8) * conditionEff(u.condition) * workerEff();
+  const depth = DEPTH_MULT[floorIndex] ?? 0.8;
+  const condition = conditionEff(u.condition);
+  const staffed = workerEff(u);
+  const mult = depth * condition * staffed;
+  const targets = u.trainTargets.map((x) => ({ ...x }));
   return {
     bone: d.yields && u.kind === 'bone-yard' ? Math.max(0, Math.round(d.yields[lv] * mult)) : 0,
     mana: d.yields && u.kind === 'mana-well' ? Math.max(0, Math.round(d.yields[lv] * mult)) : 0,
+    xp: u.kind === 'training' && targets.length ? Math.max(0, Math.round(d.xp[lv] * condition)) : 0,
+    repair: u.kind === 'workshop' ? Math.max(0, Math.round(d.repair[lv] * condition * staffed)) : 0,
+    forgeCharges: u.kind === 'workshop' ? 1 : 0,
+    forgeDiscount: u.kind === 'workshop' ? d.discount[lv] * Math.min(1, condition * staffed) : 0,
+    hatcheryCharges: u.kind === 'hatchery' ? Math.max(1, Math.round(d.charges[lv] * condition * staffed)) : 0,
+    hatcheryDiscount: u.kind === 'hatchery' ? d.discount[lv] * Math.min(1, condition * staffed) : 0,
+    training: targets,
   };
+}
+
+function repairQuote(u) {
+  const missing = Math.max(0, 100 - u.condition);
+  const points = Math.min(S.dungeon.repairPoints, missing);
+  return { missing, points, bone: Math.max(0, Math.ceil((missing - points) * 0.8)) };
+}
+
+function workshopQuote(bone, mana) {
+  const discount = S.dungeon.forgeCharges > 0 ? S.dungeon.forgeDiscount : 0;
+  return {
+    bone: Math.max(0, Math.ceil(bone * (1 - discount))),
+    mana: Math.max(0, Math.ceil(mana * (1 - discount))),
+    discount,
+  };
+}
+
+function consumeWorkshopCharge(quote) {
+  if (quote.discount > 0 && S.dungeon.forgeCharges > 0) S.dungeon.forgeCharges--;
+}
+
+function recruitQuote(k) {
+  const eligible = !isCustomKind(k.id) && !k.legend && S.dungeon.hatcheryCharges > 0;
+  const discount = eligible ? S.dungeon.hatcheryDiscount : 0;
+  return { cost: Math.max(1, Math.ceil(k.cost * (1 - discount))), discount };
+}
+
+function consumeHatcheryCharge(quote) {
+  if (quote.discount > 0 && S.dungeon.hatcheryCharges > 0) S.dungeon.hatcheryCharges--;
 }
 
 function healingCapacity() {
@@ -382,6 +512,8 @@ function dungeonEconomyPreview() {
     rows,
     bone: rows.reduce((n, x) => n + x.bone, 0),
     mana: rows.reduce((n, x) => n + x.mana, 0),
+    xp: rows.reduce((n, x) => n + x.xp * x.training.length, 0),
+    repair: rows.reduce((n, x) => n + x.repair, 0),
     vault: vaultCapacity(),
   };
 }
@@ -397,7 +529,7 @@ function buildUtility(floorIndex, kind) {
   if (!floor || !d || kind === 'none' || floor.utility.kind !== 'none') return;
   if (S.bone < d.bone || S.mana < d.mana) { say('建造资源不足'); return; }
   S.bone -= d.bone; S.mana -= d.mana;
-  floor.utility = { kind, level: 1, condition: 100, workerUid: null };
+  floor.utility = { kind, level: 1, condition: 100, workerUid: null, trainTargets: [] };
   if (kind === 'healing') S.dungeon.healingCharges = Math.min(6, S.dungeon.healingCharges + 1);
   persist(); playSfx('buy'); say(`${floorIndex + 1}层建成${d.name}`); render();
 }
@@ -415,13 +547,57 @@ function upgradeUtility(floorIndex) {
 function repairUtility(floorIndex) {
   const u = utilityAt(floorIndex);
   if (!u || u.kind === 'none' || u.condition >= 100) return;
-  const cost = Math.max(1, Math.ceil((100 - u.condition) * 0.8));
-  if (S.bone < cost) { say('维修骨币不足'); return; }
+  const quote = repairQuote(u);
+  if (S.bone < quote.bone) { say('维修骨币不足'); return; }
   const wasStopped = u.condition <= 0;
-  S.bone -= cost; u.condition = 100;
+  S.dungeon.repairPoints -= quote.points;
+  S.bone -= quote.bone; u.condition = 100;
   if (wasStopped && u.kind === 'healing') S.dungeon.healingCharges = Math.min(healingCapacity(), S.dungeon.healingCharges + utilityDef(u).charges[u.level - 1]);
   else S.dungeon.healingCharges = Math.min(S.dungeon.healingCharges, healingCapacity());
   persist(); playSfx('place'); say(`${utilityDef(u).name}修复完成`); render();
+}
+
+function assignWorker(floorIndex, uid) {
+  const u = utilityAt(floorIndex);
+  const inst = instById(uid);
+  if (!u || !WORKER_KINDS.has(u.kind) || !inst) return;
+  if (u.workerUid === uid) {
+    u.workerUid = null;
+    persist(); playSfx('place'); say(`${instKind(inst).name}离开了${utilityDef(u).name}`); render(); return;
+  }
+  if (roomOf(uid) >= 0) { say('驻守中的怪物不能兼任工作人员'); return; }
+  const trainingFloor = trainingOf('monster', uid);
+  if (trainingFloor >= 0) { say(`它正在${trainingFloor + 1}层训练，先取消训练`); return; }
+  const old = workerFloorOf(uid);
+  if (old >= 0) S.floors[old].utility.workerUid = null;
+  u.workerUid = uid;
+  sel = { kind: 'utility', floor: floorIndex };
+  persist(); playSfx('place'); say(`${instKind(inst).name}开始管理${utilityDef(u).name}`); render();
+}
+
+function toggleTrainingTarget(floorIndex, type, uid) {
+  const u = utilityAt(floorIndex);
+  if (!u || u.kind !== 'training') return;
+  const list = u.trainTargets;
+  const at = list.findIndex((x) => x.type === type && x.uid === uid);
+  if (at >= 0) {
+    list.splice(at, 1); persist(); playSfx('place'); render(); return;
+  }
+  const d = utilityDef(u);
+  if (list.length >= d.slots[u.level - 1]) { say('训练名额已满'); return; }
+  if (type === 'monster') {
+    const inst = instById(uid);
+    if (!inst || roomOf(uid) >= 0) { say('驻守中的怪物不能训练'); return; }
+    const job = workerFloorOf(uid);
+    if (job >= 0) { say(`它正在${job + 1}层工作，先撤下岗位`); return; }
+  } else {
+    const c = champById(uid);
+    if (!c || roomOfChamp(uid) >= 0) { say('统领席上的英雄不能训练'); return; }
+  }
+  const old = trainingOf(type, uid);
+  if (old >= 0) { say(`该单位已在${old + 1}层训练`); return; }
+  list.push({ type, uid });
+  persist(); playSfx('place'); render();
 }
 
 function demolishUtility(floorIndex) {
@@ -429,12 +605,19 @@ function demolishUtility(floorIndex) {
   if (!u || u.kind === 'none') return;
   if (!(sel?.kind === 'utility' && sel.floor === floorIndex && sel.confirmDemolish)) {
     sel = { kind: 'utility', floor: floorIndex, confirmDemolish: true };
-    say(`再次点击拆除将返还${Math.round(utilityDef(u).bone * 0.4)}骨币`); render(); return;
+    const lastHealing = u.kind === 'healing' && healingCapacity() <= utilityDef(u).charges[u.level - 1];
+    say(lastHealing ? '拆除后将无法使用英雄疗愈；再次点击确认拆除' : `再次点击拆除将返还${Math.round(utilityDef(u).bone * 0.4)}骨币`); render(); return;
   }
   const name = utilityDef(u).name;
   S.bone += Math.round(utilityDef(u).bone * 0.4);
   S.floors[floorIndex].utility = freshUtilityRoom();
   S.dungeon.healingCharges = Math.min(S.dungeon.healingCharges, healingCapacity());
+  const workshops = S.floors.map((_, i) => utilityOutput(i)).filter((x, i) => S.floors[i].utility.kind === 'workshop');
+  S.dungeon.forgeCharges = Math.min(S.dungeon.forgeCharges, Math.min(2, workshops.length));
+  S.dungeon.forgeDiscount = workshops.reduce((n, x) => Math.max(n, x.forgeDiscount), 0);
+  const hatcheries = S.floors.map((_, i) => utilityOutput(i)).filter((x, i) => S.floors[i].utility.kind === 'hatchery');
+  S.dungeon.hatcheryCharges = Math.min(S.dungeon.hatcheryCharges, Math.min(3, hatcheries.reduce((n, x) => n + x.hatcheryCharges, 0)));
+  S.dungeon.hatcheryDiscount = hatcheries.reduce((n, x) => Math.max(n, x.hatcheryDiscount), 0);
   sel = { kind: 'utility', floor: floorIndex };
   persist(); playSfx('break'); say(`${name}已拆除`); render();
 }
@@ -457,23 +640,55 @@ function settleDungeonEconomy(b) {
   let boneShield = cap.bone, manaShield = cap.mana;
   const rows = [...snap.rows].reverse().map((row) => {
     const breached = broken[row.floor] ?? false;
-    let boneLoss = breached ? Math.round(row.bone * 0.6) : 0;
-    let manaLoss = breached ? Math.round(row.mana * 0.6) : 0;
+    const bone = row.bone ?? 0, mana = row.mana ?? 0, xp = row.xp ?? 0, repair = row.repair ?? 0;
+    const training = Array.isArray(row.training) ? row.training : [];
+    let boneLoss = breached ? Math.round(bone * 0.6) : 0;
+    let manaLoss = breached ? Math.round(mana * 0.6) : 0;
+    const xpLoss = breached ? Math.round(xp * 0.6) : 0;
+    const repairLoss = breached ? Math.round(repair * 0.6) : 0;
     const manaProtected = Math.min(manaShield, manaLoss); manaShield -= manaProtected; manaLoss -= manaProtected;
     const boneProtected = Math.min(boneShield, boneLoss); boneShield -= boneProtected; boneLoss -= boneProtected;
     const u = utilityAt(row.floor);
     if (breached && u && u.kind !== 'none') u.condition = Math.max(0, u.condition - 15);
-    return { ...row, breached, boneLoss, manaLoss, boneProtected, manaProtected,
-      boneGot: row.bone - boneLoss, manaGot: row.mana - manaLoss, conditionAfter: u?.condition ?? 100 };
+    return { ...row, bone, mana, xp, repair, training, breached, boneLoss, manaLoss, xpLoss, repairLoss, boneProtected, manaProtected,
+      boneGot: bone - boneLoss, manaGot: mana - manaLoss,
+      xpGot: xp - xpLoss, repairGot: repair - repairLoss, conditionAfter: u?.condition ?? 100 };
   }).reverse();
   const out = {
     rows,
     bone: rows.reduce((n, x) => n + x.boneGot, 0), mana: rows.reduce((n, x) => n + x.manaGot, 0),
+    xp: rows.reduce((n, x) => n + x.xpGot * x.training.length, 0),
+    repair: rows.reduce((n, x) => n + x.repairGot, 0),
     boneLost: rows.reduce((n, x) => n + x.boneLoss, 0), manaLost: rows.reduce((n, x) => n + x.manaLoss, 0),
+    xpLost: rows.reduce((n, x) => n + x.xpLoss * x.training.length, 0),
+    repairLost: rows.reduce((n, x) => n + x.repairLoss, 0),
     boneProtected: rows.reduce((n, x) => n + x.boneProtected, 0), manaProtected: rows.reduce((n, x) => n + x.manaProtected, 0),
   };
   S.bone += out.bone; S.mana += out.mana;
-  S.dungeon.healingCharges = healingCapacity();
+  for (const row of rows) {
+    if (!row.xpGot) continue;
+    for (const target of row.training) {
+      const unit = target.type === 'monster' ? instById(target.uid) : champById(target.uid);
+      if (!unit) continue;
+      const capped = target.type === 'monster' ? unit.lv >= 5 : unit.lv >= CHAMP_LV_CAP;
+      if (!capped) unit.xp += row.xpGot;
+    }
+  }
+  S.dungeon.repairPoints = Math.min(60, S.dungeon.repairPoints + out.repair);
+  const safeRows = rows.filter((row) => !row.breached && row.conditionAfter > 0);
+  S.dungeon.healingCharges = Math.min(6, safeRows.reduce((n, row) => row.kind === 'healing'
+    ? n + UTILITY_KINDS.healing.charges[row.level - 1] : n, 0));
+  S.dungeon.forgeCharges = Math.min(2, safeRows.reduce((n, row) => n + (row.forgeCharges ?? 0), 0));
+  S.dungeon.forgeDiscount = safeRows.reduce((n, row) => Math.max(n, row.forgeDiscount ?? 0), 0);
+  S.dungeon.hatcheryCharges = Math.min(3, safeRows.reduce((n, row) => n + (row.hatcheryCharges ?? 0), 0));
+  S.dungeon.hatcheryDiscount = safeRows.reduce((n, row) => Math.max(n, row.hatcheryDiscount ?? 0), 0);
+  out.services = {
+    healing: S.dungeon.healingCharges,
+    forge: S.dungeon.forgeCharges,
+    forgeDiscount: S.dungeon.forgeDiscount,
+    hatchery: S.dungeon.hatcheryCharges,
+    hatcheryDiscount: S.dungeon.hatcheryDiscount,
+  };
   S.dungeon.lastEconomy = out;
   return out;
 }
@@ -581,7 +796,8 @@ const SLOT_NAME                          = { leader: '统领', front: '前排', 
 function roomOf(uid        ) {
   for (let i = 0; i < S.rooms.length; i++) {
     const r = S.rooms[i];
-    if (r.front === uid || r.back === uid || r.leader === uid || r.flank === uid) return i;
+    // 怪物与英雄使用独立 uid 计数器；这里不能把 leader uid 当作怪物驻守判断。
+    if (r.front === uid || r.back === uid || r.flank === uid) return i;
   }
   return -1;
 }
@@ -1135,11 +1351,13 @@ function confirmGraft() {
   const cost = { bone: rawCost.bone * mult, mana: rawCost.mana * mult };
   const pulled = cur.filter((id) => !gf.picks.includes(id)).length;
   const mana = cost.mana + pulled * GRAFT_PULL_MANA * mult;
+  const quote = workshopQuote(cost.bone, mana);
   const relic = gf.picks.filter((id) => partById(id)?.legendary && !cur.includes(id)).length * mult;
-  if (S.bone < cost.bone || S.mana < mana || S.relic < relic) { say(relic && S.relic < relic ? '英雄遗物不足' : '资源不足'); return; }
-  S.bone -= cost.bone;
-  S.mana -= mana;
+  if (S.bone < quote.bone || S.mana < quote.mana || S.relic < relic) { say(relic && S.relic < relic ? '英雄遗物不足' : '资源不足'); return; }
+  S.bone -= quote.bone;
+  S.mana -= quote.mana;
   S.relic -= relic;
+  consumeWorkshopCharge(quote);
   inst.graft = gf.picks.length ? [...gf.picks] : undefined;
   // 站位可能被改造改变（比如装了蝠翼变后排）：站错位就先请下场
   const k = hero ? champKind(inst) : instKind(inst);
@@ -1235,9 +1453,11 @@ function drawGraft() {
   const cost = { bone: rawCost.bone * mult, mana: rawCost.mana * mult };
   const pulled = cur.filter((id) => !gf.picks.includes(id)).length;
   const mana = cost.mana + pulled * GRAFT_PULL_MANA * mult;
+  const quote = workshopQuote(cost.bone, mana);
   const relic = gf.picks.filter((id) => partById(id)?.legendary && !cur.includes(id)).length * mult;
-  const can = (cost.bone > 0 || mana > 0 || relic > 0) && S.bone >= cost.bone && S.mana >= mana && S.relic >= relic;
-  label(modalLayer, `移植 ${cost.bone}骨 + ${mana}魔${relic ? ` + ${relic}遗物` : ''}${pulled ? `（摘${pulled}）` : ''}`, 20, 206, 12, can ? C.gold : C.red);
+  const can = (cost.bone > 0 || mana > 0 || relic > 0) && S.bone >= quote.bone && S.mana >= quote.mana && S.relic >= relic;
+  const discountText = quote.discount ? `・工坊-${Math.round(quote.discount * 100)}%` : '';
+  label(modalLayer, `移植 ${quote.bone}骨 + ${quote.mana}魔${relic ? ` + ${relic}遗物` : ''}${discountText}`, 20, 206, 12, can ? C.gold : C.red);
   label(modalLayer, hero ? `全身 4 部位・每件 ${GRAFT_MANA * 2} 魔・摘除 ${GRAFT_PULL_MANA * 2} 魔・遗物同样×2` : `最多 ${GRAFT_CAP} 件・每件 ${GRAFT_MANA} 魔・摘除 ${GRAFT_PULL_MANA} 魔`, 20, 222, 12, C.stoneLit);
   button(g, modalLayer, hits, 372, 204, 96, 20, '动手改造', () => confirmGraft(),
     { size: 12, enabled: can, fill: C.purpleDark, border: C.purple, color: C.white });
@@ -1428,12 +1648,14 @@ function confirmSmith() {
   const oldCost = old ? craftCost(old.plan) : { bone: 0, mana: 0 };
   const payBone = old ? Math.max(0, cost.bone - oldCost.bone) : cost.bone;
   const payMana = old ? Math.max(0, cost.mana - oldCost.mana) : cost.mana;
+  const quote = workshopQuote(payBone, payMana);
   if (!old && S.forged.length >= FORGED_CAP) { say(`自制装备已满（${FORGED_CAP}），先熔掉一张图纸`); return; }
-  if (S.bone < payBone) { say('骨币不足'); return; }
-  if (S.mana < payMana) { say('魔质不足'); return; }
+  if (S.bone < quote.bone) { say('骨币不足'); return; }
+  if (S.mana < quote.mana) { say('魔质不足'); return; }
   if (!old && S.vault.length >= GEAR_CAP) { say('仓库已满，先熔掉一件'); return; }
-  S.bone -= payBone;
-  S.mana -= payMana;
+  S.bone -= quote.bone;
+  S.mana -= quote.mana;
+  consumeWorkshopCharge(quote);
   const name = (sm.plan.name || craftName(sm.plan)).slice(0, 5);
   if (old) {
     old.plan = { ...sm.plan, name };
@@ -1535,11 +1757,13 @@ function drawSmith() {
   const oldCost = old ? craftCost(old.plan) : { bone: 0, mana: 0 };
   const payBone = old ? Math.max(0, cost.bone - oldCost.bone) : cost.bone;
   const payMana = old ? Math.max(0, cost.mana - oldCost.mana) : cost.mana;
+  const quote = workshopQuote(payBone, payMana);
   const full = !old && (S.forged.length >= FORGED_CAP || S.vault.length >= GEAR_CAP);
-  const can = !planValid(sm.plan) && S.bone >= payBone && S.mana >= payMana && !full;
-  label(modalLayer, cut(`${old ? '改锻' : '造价'} ${payBone}骨+${payMana}魔`, 13), 22, 196, 12, can ? C.gold : C.red);
+  const can = !planValid(sm.plan) && S.bone >= quote.bone && S.mana >= quote.mana && !full;
+  const quoteText = `${old ? '改锻' : '造价'} ${quote.bone}骨+${quote.mana}魔${quote.discount ? ` -${Math.round(quote.discount * 100)}%` : ''}`;
+  label(modalLayer, cut(quoteText, 18), 22, 196, 12, can ? C.gold : C.red);
   const note = full ? (S.forged.length >= FORGED_CAP ? `图纸已满（${FORGED_CAP}）` : '仓库已满')
-    : S.bone < payBone ? '骨币不足' : S.mana < payMana ? '魔质不足' : `自制 ${S.forged.length}/${FORGED_CAP}`;
+    : S.bone < quote.bone ? '骨币不足' : S.mana < quote.mana ? '魔质不足' : `自制 ${S.forged.length}/${FORGED_CAP}`;
   label(modalLayer, cut(note, 12), 216, 196, 12, can ? C.wall : C.red);
   button(g, modalLayer, hits, 340, 214, 116, 20, old ? '改锻' : '开锻！', () => confirmSmith(),
     { size: 12, enabled: can, fill: C.purpleDark, border: C.purple, color: C.white });
@@ -2315,6 +2539,9 @@ function dismantle(uid        ) {
   for (let i = 0; i < S.rooms.length; i++) {
     if (S.rooms[i].front === uid) S.rooms[i].front = null;
     if (S.rooms[i].back === uid) S.rooms[i].back = null;
+    if (S.rooms[i].flank === uid) S.rooms[i].flank = null;
+    if (S.floors[i].utility.workerUid === uid) S.floors[i].utility.workerUid = null;
+    S.floors[i].utility.trainTargets = S.floors[i].utility.trainTargets.filter((x) => !(x.type === 'monster' && x.uid === uid));
   }
   S.monsters = S.monsters.filter((m) => m.uid !== uid);
   S.bone += refund;
@@ -2512,9 +2739,12 @@ function pageDungeon(g               ) {
       .stroke({ width: 1, color: selected ? C.gold : u.kind === 'none' ? C.wallLit : ud.color, alignment: 0 });
     label(uiLayer, u.kind === 'none' ? '＋建后勤房' : `${ud.name} Lv${u.level}`, b.x + 8, b.y + 110, 11, u.kind === 'none' ? C.stoneLit : ud.color);
     if (u.kind !== 'none') {
-      label(uiLayer, `耐久${u.condition}`, b.x + 8, b.y + 126, 10, u.condition <= 25 ? C.red : C.stoneLit);
+      const staffText = WORKER_KINDS.has(u.kind) ? `・工${cut(workerName(u), 3)}` : u.kind === 'training' ? `・训${u.trainTargets.length}` : '';
+      label(uiLayer, cut(`耐久${u.condition}${staffText}`, 12), b.x + 8, b.y + 126, 10, u.condition <= 25 ? C.red : C.stoneLit);
       const yieldText = out.bone ? `待产＋${out.bone}骨` : out.mana ? `待产＋${out.mana}魔` : u.kind === 'vault'
-        ? `护${ud.boneCap[u.level - 1]}骨/${ud.manaCap[u.level - 1]}魔` : `疗愈${ud.charges[u.level - 1]}次`;
+        ? `护${ud.boneCap[u.level - 1]}骨/${ud.manaCap[u.level - 1]}魔` : u.kind === 'healing'
+          ? `疗愈${ud.charges[u.level - 1]}次` : u.kind === 'training' ? `每人＋${out.xp}经验`
+            : u.kind === 'workshop' ? `维修＋${out.repair}点` : `招募-${Math.round(out.hatcheryDiscount * 100)}%`;
       label(uiLayer, cut(yieldText, 12), b.x + 8, b.y + 140, 10, C.bone);
     }
     hits.add(b.x + 4, b.y + 106, b.w - 8, 50, () => { sel = { kind: 'utility', floor: i }; playSfx('tab'); render(); });
@@ -2567,40 +2797,95 @@ function drawSidePanel(g               ) {
     labelC(uiLayer, `${floor + 1}层 后勤房`, 405, 46, 12, C.white);
     if (u.kind === 'none') {
       label(uiLayer, '选择设施建造：', 340, 62, 11, C.bone);
-      const kinds = ['bone-yard', 'mana-well', 'vault', 'healing'];
+      const kinds = ['bone-yard', 'mana-well', 'training', 'healing', 'workshop', 'hatchery', 'vault'];
+      const pk = paged('utility-build', kinds, 4);
       let y = 80;
-      for (const kind of kinds) {
+      for (const kind of pk.view) {
         const k = UTILITY_KINDS[kind];
         const can = S.bone >= k.bone && S.mana >= k.mana;
         g.rect(340, y, 130, 31).fill(C.ink).stroke({ width: 1, color: can ? k.color : C.wallLit, alignment: 0 });
         label(uiLayer, k.name, 344, y + 2, 11, can ? k.color : C.stoneLit);
         label(uiLayer, `${k.bone}骨${k.mana ? `＋${k.mana}魔` : ''}`, 408, y + 2, 10, can ? C.bone : C.redDark);
-        boundedText(uiLayer, k.desc, 344, y + 17, 122, 11, 9, C.stoneLit);
+        label(uiLayer, cut(k.desc, 14), 344, y + 17, 8, C.stoneLit);
         if (can) hits.add(340, y, 130, 31, () => buildUtility(floor, kind));
         y += 34;
+      }
+      pager(g, 'utility-build', pk.pages, 340, 216, 130, '设施 ');
+      return;
+    }
+    if (sel.people) {
+      button(g, uiLayer, hits, 438, 46, 30, 14, '返回', () => { sel = { kind: 'utility', floor }; playSfx('tab'); render(); }, { size: 9 });
+      if (WORKER_KINDS.has(u.kind)) {
+        label(uiLayer, `${d.name}・工作人员`, 340, 64, 11, d.color);
+        label(uiLayer, `当前：${workerName(u)}・效率${Math.round(workerEff(u) * 100)}%`, 340, 80, 10, C.bone);
+        const pool = paged(`utility-worker-${floor}`, S.monsters, 6);
+        let y = 98;
+        for (const inst of pool.view) {
+          const at = roomOf(inst.uid), job = workerFloorOf(inst.uid), train = trainingOf('monster', inst.uid);
+          const current = u.workerUid === inst.uid;
+          const free = at < 0 && train < 0 && (job < 0 || current);
+          g.rect(340, y, 130, 18).fill(current ? C.wallLit : C.ink).stroke({ width: 1, color: current ? C.gold : free ? C.stoneLit : C.wallLit, alignment: 0 });
+          label(uiLayer, cut(`${instKind(inst).name} Lv${inst.lv}`, 8), 344, y + 3, 10, current ? C.gold : free ? C.bone : C.stoneLit);
+          const state = current ? '撤下' : at >= 0 ? `${at + 1}层守` : train >= 0 ? `${train + 1}层训` : job >= 0 ? `${job + 1}层工` : `${Math.round(workerEff({ ...u, workerUid: inst.uid }) * 100)}%`;
+          label(uiLayer, state, 438, y + 3, 9, current ? C.red : free ? C.green : C.stoneLit);
+          if (free) hits.add(340, y, 130, 18, () => assignWorker(floor, inst.uid));
+          y += 20;
+        }
+        pager(g, `utility-worker-${floor}`, pool.pages, 340, 220, 130, '员工 ');
+      } else {
+        label(uiLayer, `训练对象 ${u.trainTargets.length}/${d.slots[u.level - 1]}`, 340, 64, 11, d.color);
+        const units = [
+          ...S.monsters.map((unit) => ({ type: 'monster', uid: unit.uid, name: instKind(unit).name, lv: unit.lv })),
+          ...S.champs.map((unit) => ({ type: 'hero', uid: unit.uid, name: unit.name, lv: unit.lv })),
+        ];
+        const pool = paged(`utility-training-${floor}`, units, 7);
+        let y = 82;
+        for (const unit of pool.view) {
+          const active = u.trainTargets.some((x) => x.type === unit.type && x.uid === unit.uid);
+          const deployed = unit.type === 'monster' ? roomOf(unit.uid) >= 0 : roomOfChamp(unit.uid) >= 0;
+          const job = unit.type === 'monster' ? workerFloorOf(unit.uid) : -1;
+          const other = trainingOf(unit.type, unit.uid);
+          const free = active || (!deployed && job < 0 && other < 0);
+          g.rect(340, y, 130, 17).fill(active ? C.wallLit : C.ink).stroke({ width: 1, color: active ? C.gold : free ? C.stoneLit : C.wallLit, alignment: 0 });
+          label(uiLayer, cut(`${unit.type === 'hero' ? '英' : '怪'}・${unit.name} Lv${unit.lv}`, 10), 344, y + 2, 10, active ? C.gold : free ? C.bone : C.stoneLit);
+          label(uiLayer, active ? '取消' : deployed ? '驻守' : job >= 0 ? '工作' : other >= 0 ? `${other + 1}层` : '选择', 440, y + 2, 9, active ? C.red : free ? C.green : C.stoneLit);
+          if (free) hits.add(340, y, 130, 17, () => toggleTrainingTarget(floor, unit.type, unit.uid));
+          y += 19;
+        }
+        pager(g, `utility-training-${floor}`, pool.pages, 340, 220, 130, '学员 ');
       }
       return;
     }
     label(uiLayer, `${d.name}・Lv${u.level}`, 340, 64, 12, d.color);
-    boundedText(uiLayer, d.desc, 340, 82, 130, 34, 10, C.bone);
-    label(uiLayer, `设施耐久 ${u.condition}/100`, 340, 120, 11, u.condition <= 25 ? C.red : C.stoneLit);
-    bar(g, 340, 136, 130, 6, u.condition / 100, u.condition <= 25 ? C.red : C.green);
+    boundedText(uiLayer, d.desc, 340, 82, 130, 26, 10, C.bone);
+    label(uiLayer, `设施耐久 ${u.condition}/100`, 340, 110, 11, u.condition <= 25 ? C.red : C.stoneLit);
+    bar(g, 340, 126, 130, 6, u.condition / 100, u.condition <= 25 ? C.red : C.green);
     const out = utilityOutput(floor);
     const detail = out.bone ? `本轮预计 ＋${out.bone}骨币` : out.mana ? `本轮预计 ＋${out.mana}魔质`
       : u.kind === 'vault' ? `保护 ${d.boneCap[u.level - 1]}骨/${d.manaCap[u.level - 1]}魔`
-        : `疗愈 ${d.charges[u.level - 1]}次・剩${S.dungeon.healingCharges}`;
-    label(uiLayer, detail, 340, 148, 10, C.gold);
+        : u.kind === 'healing' ? `疗愈 ${d.charges[u.level - 1]}次・剩${S.dungeon.healingCharges}`
+          : u.kind === 'training' ? `每名学员 ＋${out.xp}经验`
+            : u.kind === 'workshop' ? `维修＋${out.repair}・锻造-${Math.round(out.forgeDiscount * 100)}%`
+              : `优惠${out.hatcheryCharges}次・-${Math.round(out.hatcheryDiscount * 100)}%`;
+    label(uiLayer, detail, 340, 138, 10, C.gold);
+    if (WORKER_KINDS.has(u.kind)) label(uiLayer, `员工 ${workerName(u)}・效率${Math.round(workerEff(u) * 100)}%`, 340, 152, 10, C.stoneLit);
+    else if (u.kind === 'training') label(uiLayer, `学员 ${u.trainTargets.length}/${d.slots[u.level - 1]}`, 340, 152, 10, C.stoneLit);
+    else label(uiLayer, `深度 ${Math.round((DEPTH_MULT[floor] ?? 0.8) * 100)}%`, 340, 152, 10, C.stoneLit);
     if (u.level < 3) {
       const cost = utilityUpgradeCost(u);
-      button(g, uiLayer, hits, 340, 166, 130, 18, `升级 ${cost.bone}骨${cost.mana ? `＋${cost.mana}魔` : ''}`, () => upgradeUtility(floor),
+      button(g, uiLayer, hits, 340, 168, 130, 18, `升级 ${cost.bone}骨${cost.mana ? `＋${cost.mana}魔` : ''}`, () => upgradeUtility(floor),
         { size: 10, enabled: S.bone >= cost.bone && S.mana >= cost.mana, border: d.color, color: C.white });
-    } else labelC(uiLayer, '设施已满级', 405, 168, 10, C.gold);
-    const repairCost = Math.max(1, Math.ceil((100 - u.condition) * 0.8));
-    button(g, uiLayer, hits, 340, 188, 64, 18, u.condition >= 100 ? '无需维修' : `维修${repairCost}骨`, () => repairUtility(floor),
-      { size: 9, enabled: u.condition < 100 && S.bone >= repairCost, border: C.green, color: C.green });
-    button(g, uiLayer, hits, 406, 188, 64, 18, sel.confirmDemolish ? '确认拆除' : '拆除', () => demolishUtility(floor),
+    } else labelC(uiLayer, '设施已满级', 405, 170, 10, C.gold);
+    const repair = repairQuote(u);
+    const repairLabel = u.condition >= 100 ? '无需维修' : repair.points ? `修${repair.points}点+${repair.bone}骨` : `维修${repair.bone}骨`;
+    button(g, uiLayer, hits, 340, 190, 64, 18, repairLabel, () => repairUtility(floor),
+      { size: 8, enabled: u.condition < 100 && S.bone >= repair.bone, border: C.green, color: C.green });
+    button(g, uiLayer, hits, 406, 190, 64, 18, sel.confirmDemolish ? '确认拆除' : '拆除', () => demolishUtility(floor),
       { size: 9, border: C.red, color: C.red });
-    label(uiLayer, `深度产出 ${Math.round((DEPTH_MULT[floor] ?? 0.8) * 100)}%`, 340, 214, 10, C.stoneLit);
+    if (WORKER_KINDS.has(u.kind) || u.kind === 'training') button(g, uiLayer, hits, 340, 212, 130, 16,
+      u.kind === 'training' ? '管理训练对象' : '指派工作人员', () => { sel = { kind: 'utility', floor, people: true }; playSfx('tab'); render(); },
+      { size: 10, border: d.color, color: C.white });
+    else label(uiLayer, `维修点 ${S.dungeon.repairPoints}/60`, 340, 214, 10, C.stoneLit);
     return;
   }
   if (sel.kind === 'slot' && sel.which !== 'trap' && sel.which !== 'theme') {
@@ -2665,8 +2950,9 @@ function drawSidePanel(g               ) {
       const s = portraitEffect(sprite(k.tex, 348, y + 17, 15), inst.lv >= 5, here, inst.uid);
       uiLayer.addChild(s);
       label(uiLayer, `${cut(k.name, 4)} Lv${inst.lv}`, 360, y + 3, 12, here ? C.white : C.bone);
-      const tagCol = at < 0 ? C.green : here ? C.gold : C.red;
-      label(uiLayer, at < 0 ? '空闲' : `${at + 1}房`, 440, y + 3, 12, tagCol);
+      const post = monsterPost(inst.uid);
+      const tagCol = here ? C.gold : post.kind === 'free' ? C.green : post.kind === 'guard' ? C.red : C.purple;
+      label(uiLayer, post.text, 440, y + 3, 12, tagCol);
       hits.add(340, y, 130, 18, () => assign(room, which, inst.uid));
       y += 20;
     }
@@ -2746,8 +3032,8 @@ function drawSidePanel(g               ) {
     const mult = LEVEL_MULT[inst.lv - 1];
     label(uiLayer, `生命 ${Math.round(k.hp * mult)}  攻击 ${Math.round(k.atk * mult)}`, 340, 100, 12, C.bone);
     label(uiLayer, `防御 ${Math.round(k.def * mult)}  速度 ${k.spd.toFixed(1)}`, 340, 114, 12, C.bone);
-    const at = roomOf(inst.uid);
-    label(uiLayer, at < 0 ? '驻守：空闲' : `驻守：${at + 1}房`, 340, 128, 12, at < 0 ? C.stoneLit : C.gold);
+    const post = monsterPost(inst.uid);
+    label(uiLayer, `去向：${post.text}`, 340, 128, 12, post.kind === 'free' ? C.stoneLit : post.kind === 'guard' ? C.gold : C.purple);
     // 技能名可点击，点击弹出详情小卡片
     button(g, uiLayer, hits, 340, 142, 130, 14, `技能 ${k.skill}`, () => {
       monSkillTip = monSkillTip === inst.uid ? null : inst.uid;
@@ -2794,8 +3080,8 @@ function drawSidePanel(g               ) {
     const mult = LEVEL_MULT[inst.lv - 1];
     label(uiLayer, `生命 ${Math.round(k.hp * mult)}  攻击 ${Math.round(k.atk * mult)}`, 340, 66, 12, C.bone);
     label(uiLayer, `防御 ${Math.round(k.def * mult)}  速度 ${k.spd.toFixed(1)}`, 340, 80, 12, C.bone);
-    const at = roomOf(inst.uid);
-    label(uiLayer, at < 0 ? '驻守：空闲' : `驻守：${at + 1}房`, 340, 94, 12, at < 0 ? C.stoneLit : C.gold);
+    const post = monsterPost(inst.uid);
+    label(uiLayer, `去向：${post.text}`, 340, 94, 12, post.kind === 'free' ? C.stoneLit : post.kind === 'guard' ? C.gold : C.purple);
     label(uiLayer, `技能 ${k.skill}`, 340, 108, 12, C.purple);
 
     const skillBlock = boundedText(uiLayer, k.skillDesc, 340, 122, 130, 28, 11, C.stoneLit);
@@ -2840,6 +3126,7 @@ function drawSidePanel(g               ) {
       monKindSkillTip = null;
     }
     const k = monKind(sel.id);
+    const rq = recruitQuote(k);
     labelC(uiLayer, k.name, 405, 44, 12, isCustomKind(k.id) ? C.purple : C.white);
     label(uiLayer, `生命 ${k.hp}  攻击 ${k.atk}`, 340, 98, 12, C.bone);
     label(uiLayer, `防御 ${k.def}  速度 ${k.spd.toFixed(1)}`, 340, 117, 12, C.bone);
@@ -2851,9 +3138,9 @@ function drawSidePanel(g               ) {
       playSfx('tab'); render();
     }, { size: 12, fill: C.ink, border: C.purple, color: C.purple });
 
-    button(g, uiLayer, hits, 340, 176, 130, 18, `${isCustomKind(k.id) ? '再缝一只' : '招募'} ${k.cost}骨币`,
+    button(g, uiLayer, hits, 340, 176, 130, 18, `${isCustomKind(k.id) ? '再缝一只' : '招募'} ${rq.cost}骨${rq.discount ? `(-${Math.round(rq.discount * 100)}%)` : ''}`,
       () => recruit(k.id),
-      { size: 12, enabled: S.bone >= k.cost, fill: C.greenDark, border: C.green, color: C.white });
+      { size: 11, enabled: S.bone >= rq.cost, fill: C.greenDark, border: C.green, color: C.white });
 
     const passiveBody = k.passiveDesc ?? k.passive ?? '无被动说明';
     g.rect(340, 197, 130, 27).fill(C.ink).stroke({ width: 1, color: C.goldDark, alignment: 0 });
@@ -3366,6 +3653,8 @@ function seatChamp(room        , uid        ) {
   const c = champById(uid);
   if (!c) return;
   if ((c.restTurns || 0) > 0) { say(`${c.name} 仍需休息 ${c.restTurns} 回合`); return; }
+  const trainingFloor = trainingOf('hero', uid);
+  if (trainingFloor >= 0) { say(`${c.name}正在${trainingFloor + 1}层训练，先取消训练`); return; }
   for (let i = 0; i < S.rooms.length; i++) if (S.rooms[i].leader === uid) { S.rooms[i].leader = null; S.rooms[i].flank = null; }
   S.rooms[room].leader = uid;
   slotFlash = { room, which: 'leader', t: 0.45 };
@@ -3381,6 +3670,10 @@ function assign(room        , which         , uid        ) {
   if (which === 'leader') { seatChamp(room, uid); return; }
   const inst = instById(uid);
   if (!inst) return;
+  const job = workerFloorOf(uid);
+  if (job >= 0) { say(`${instKind(inst).name}正在${job + 1}层工作，先撤下岗位`); return; }
+  const trainingFloor = trainingOf('monster', uid);
+  if (trainingFloor >= 0) { say(`${instKind(inst).name}正在${trainingFloor + 1}层训练，先取消训练`); return; }
   const k = instKind(inst);
   if (which === 'flank' && S.rooms[room].leader == null) { say('侧翼位要先在本房安置统领'); return; }
   if (which === 'front' || which === 'back') {
@@ -3400,15 +3693,17 @@ function assign(room        , which         , uid        ) {
 
 function recruit(kindId        ) {
   const k = monKind(kindId);
-  if (S.bone < k.cost) { say('骨币不足'); return; }
+  const quote = recruitQuote(k);
+  if (S.bone < quote.cost) { say('骨币不足'); return; }
   if (S.monsters.length >= 10) { say('怪物栏已满（10）'); return; }
-  S.bone -= k.cost;
+  S.bone -= quote.cost;
+  consumeHatcheryCharge(quote);
   const inst              = { uid: S.uidNext++, kind: k.id, lv: 1, xp: 0 };
   S.monsters.push(inst);
   sel = { kind: 'inst', uid: inst.uid };
   playSfx('buy');
   persist();
-  say(`招募了${k.name}`);
+  say(`招募了${k.name}${quote.discount ? `，孵化室节省${k.cost - quote.cost}骨币` : ''}`);
   render();
 }
 
@@ -3533,6 +3828,7 @@ function respecChamp(c       ) {
 function dismissChamp(c       ) {
   S.champs = S.champs.filter((x) => x.uid !== c.uid);
   for (const r of S.rooms) if (r.leader === c.uid) { r.leader = null; r.flank = null; }
+  for (const floor of S.floors) floor.utility.trainTargets = floor.utility.trainTargets.filter((x) => !(x.type === 'hero' && x.uid === c.uid));
   delete S.champPot[c.uid];
   S.bone += Math.round(monKind(c.race).cost * 0.4);
   if (heroSel === c.uid) heroSel = null;
@@ -3564,13 +3860,14 @@ function drawRoster(g               ) {
   for (const c of pr.view) {
     const on = heroSel === c.uid;
     const at = roomOfChamp(c.uid);
+    const training = trainingOf('hero', c.uid);
     const ft = fatigueTier(c.fatigue);
     g.rect(8, y, 150, 26).fill(on ? C.wallLit : C.ink).stroke({ width: 1, color: on ? C.gold : C.goldDark, alignment: 0 });
     uiLayer.addChild(portraitEffect(sprite(champKind(c).tex, 20, y + 25, 24), c.lv >= CHAMP_LV_CAP, on, c.uid));
     const nm = c.name.split('·')[0];
     label(uiLayer, nm.length > 4 ? `${nm.slice(0, 4)}…` : nm, 34, y + 6, 12, on ? C.white : C.gold);
     label(uiLayer, `${c.lv}`, 86, y + 6, 12, C.bone);
-    label(uiLayer, at < 0 ? '待' : `${at + 1}房`, 102, y + 6, 12, at < 0 ? C.green : C.gold);
+    label(uiLayer, at >= 0 ? `${at + 1}房` : training >= 0 ? `${training + 1}训` : '待', 102, y + 6, 12, at >= 0 ? C.gold : training >= 0 ? C.purple : C.green);
     label(uiLayer, c.restTurns ? `休${c.restTurns}` : ft.text.slice(0, 2), 128, y + 6, 12, c.restTurns || ft.bad ? C.red : C.steel);
     if (canLevel(c) && S.bone >= upCostOf(c)) g.circle(151, y + 6, 3).fill(C.red);
     else if (pendingTier(c)) g.circle(151, y + 6, 3).fill(C.purple);
@@ -3680,9 +3977,11 @@ function drawChampStat(g, c) {
   label(uiLayer, healthState, 174, 128, 12, c.restTurns || wd ? C.red : C.green);
   const chem = chemistry(S.champs, seatedChampUids());
   const at = roomOfChamp(c.uid);
+  const training = trainingOf('hero', c.uid);
   const tags = chemOf(chem.map, c.uid).tags;
-  label(uiLayer, at < 0 ? '未上阵（休息及疲劳随战斗恢复）' : cut(`${at + 1}房统领 ${tags.length ? tags.join('・') : '无同僚效应'}`, 20),
-    174, 144, 12, at < 0 ? C.stoneLit : C.steel);
+  label(uiLayer, at >= 0 ? cut(`${at + 1}房统领 ${tags.length ? tags.join('・') : '无同僚效应'}`, 20)
+    : training >= 0 ? `第${training + 1}层训练中` : '未上阵（休息及疲劳随战斗恢复）',
+    174, 144, 12, at >= 0 ? C.steel : training >= 0 ? C.purple : C.stoneLit);
   const nt = nextTitle(c);
   label(uiLayer, cut(`${c.battles}战${c.kills}杀${nt ? `→${nt.t.name}` : '・满'}`, 14), 174, 160, 12, C.stoneLit);
 
@@ -4075,6 +4374,7 @@ function pageMob(g               ) {
   label(uiLayer, '可招募兵种', 10, 40, 12, C.white);
   let y = 56;
   for (const k of pg.view) {
+    const rq = recruitQuote(k);
     const selected = sel?.kind === 'monkind' && sel.id === k.id;
     const cst = isCustomKind(k.id);
     const el = isEliteKind(k.id);
@@ -4083,8 +4383,8 @@ function pageMob(g               ) {
       .stroke({ width: 1, color: selected ? C.gold : cst ? C.purpleDark : el ? C.goldDark : C.ink, alignment: 0 });
     uiLayer.addChild(portraitEffect(sprite(k.tex, 18, y + 19, 18), false, selected, k.id.length * 13));
     label(uiLayer, cut(k.name, 4), 30, y + 4, 12, cst ? C.purple : el ? C.gold : C.bone);
-    label(uiLayer, open ? `${k.cost}骨` : `第${k.eliteMin}轮`, 92, y + 4, 12,
-      !open ? C.stoneLit : S.bone >= k.cost ? C.gold : C.redDark);
+    label(uiLayer, open ? `${rq.cost}骨${rq.discount ? '↓' : ''}` : `第${k.eliteMin}轮`, 92, y + 4, 12,
+      !open ? C.stoneLit : S.bone >= rq.cost ? C.gold : C.redDark);
     label(uiLayer, k.row === 'front' ? '前' : k.row === 'back' ? '后' : '任', 142, y + 4, 12, C.stoneLit);
     hits.add(6, y, 152, 20, () => { sel = { kind: 'monkind', id: k.id }; playSfx('tab'); render(); });
     y += 22;
@@ -4105,8 +4405,8 @@ function pageMob(g               ) {
     uiLayer.addChild(portraitEffect(sprite(k.tex, 178, y2 + 17, 16), inst.lv >= 5, selected, inst.uid));
     label(uiLayer, `${cut(k.name, 4)} Lv${inst.lv}`, 190, y2 + 2, 12,
       isCustomKind(inst.kind) ? C.purple : isEliteKind(inst.kind) ? C.gold : C.bone);
-    const at = roomOf(inst.uid);
-    label(uiLayer, at < 0 ? '空闲' : `${at + 1}房`, 278, y2 + 2, 12, at < 0 ? C.stoneLit : C.gold);
+    const post = monsterPost(inst.uid);
+    label(uiLayer, post.text, 278, y2 + 2, 12, post.kind === 'free' ? C.stoneLit : post.kind === 'guard' ? C.gold : C.purple);
     if (ready) g.circle(324, y2 + 9, 3).fill(C.red);
     hits.add(168, y2, 160, 18, () => { sel = { kind: 'inst', uid: inst.uid }; playSfx('tab'); render(); });
     y2 += 20;
@@ -4229,7 +4529,7 @@ function pageReport(g               ) {
     const review = Array.isArray(r.review) && r.review.length ? r.review : [r.firstCause];
     const economy = r.economy;
     const economyText = economy
-      ? `\n\n经营损益：结算${economy.bone}骨币、${economy.mana}魔质；损失${economy.boneLost}骨币、${economy.manaLost}魔质；宝库保护${economy.boneProtected}骨币、${economy.manaProtected}魔质。\n${economy.rows.filter((x) => x.kind !== 'none').map((x) => `第${x.floor + 1}层 ${utilityDef({ kind: x.kind }).name}：${x.breached ? '遭劫掠' : '安全'}，结算${x.boneGot}骨/${x.manaGot}魔，耐久${x.conditionAfter}`).join('\n')}`
+      ? `\n\n经营损益：结算${economy.bone}骨币、${economy.mana}魔质、${economy.xp ?? 0}训练经验与${economy.repair ?? 0}维修点；损失${economy.boneLost}骨币、${economy.manaLost}魔质、${economy.xpLost ?? 0}训练经验与${economy.repairLost ?? 0}维修点；宝库保护${economy.boneProtected}骨币、${economy.manaProtected}魔质。\n功能储备：疗愈${economy.services?.healing ?? 0}次，工坊${economy.services?.forge ?? 0}次（-${Math.round((economy.services?.forgeDiscount ?? 0) * 100)}%），孵化优惠${economy.services?.hatchery ?? 0}次（-${Math.round((economy.services?.hatcheryDiscount ?? 0) * 100)}%）。\n${economy.rows.filter((x) => x.kind !== 'none').map((x) => `第${x.floor + 1}层 ${utilityDef({ kind: x.kind }).name}：${x.breached ? '遭劫掠' : '安全'}，结算${x.boneGot}骨/${x.manaGot}魔/${(x.xpGot ?? 0) * (x.training?.length ?? 0)}经验/${x.repairGot ?? 0}维修点，耐久${x.conditionAfter}`).join('\n')}`
       : '';
     const quotes = Array.isArray(r.dialogue) && r.dialogue.length
       ? r.dialogue.slice(-18).map((d) => `${d.name}：${d.text}`)
@@ -4876,7 +5176,7 @@ function buildResultOverlay() {
     }
   }
   const eco = r.economy;
-  labelC(overlay, eco ? `战利＋${r.bone}骨/${r.mana}魔・经营＋${eco.bone}骨/${eco.mana}魔` : `骨币 +${r.bone}   魔质 +${r.mana}`, 240, 104, 10, C.gold);
+  labelC(overlay, eco ? `战利＋${r.bone}骨/${r.mana}魔・经营＋${eco.bone}骨/${eco.mana}魔・训${eco.xp ?? 0}/修${eco.repair ?? 0}` : `骨币 +${r.bone}   魔质 +${r.mana}`, 240, 104, 9, C.gold);
   boundedText(overlay, r.firstCause, 90, 120, 300, 26, 9, r.win ? C.stoneLit : C.gold);
   let y = 148;
   const xpLines = r.xp.map((x) => {
@@ -5099,6 +5399,7 @@ function drawRotateHint() {
 
 // 只读调试钩子（自测用）
 window.__debug = {
+  get rawSave() { return localStorage.getItem(SAVE_KEY); },
   get screen() { return screen; },
   get paused() { return paused; },
   get battleSpeed() { return speed; },
@@ -5128,7 +5429,7 @@ window.__debug = {
   devUtility: (floor, kind, level = 1, condition = 100) => {
     if (!S.floors[floor] || !(kind in UTILITY_KINDS)) return null;
     S.floors[floor].utility = kind === 'none' ? freshUtilityRoom() : {
-      kind, level: Math.max(1, Math.min(3, Math.round(level))), condition: Math.max(0, Math.min(100, Math.round(condition))), workerUid: null,
+      kind, level: Math.max(1, Math.min(3, Math.round(level))), condition: Math.max(0, Math.min(100, Math.round(condition))), workerUid: null, trainTargets: [],
     };
     S.dungeon.healingCharges = healingCapacity(); persist(); render();
     return { ...S.floors[floor].utility };
@@ -5139,6 +5440,13 @@ window.__debug = {
     const out = settleDungeonEconomy({ dungeonEconomy: snap, rooms: S.rooms.map((_, i) => ({ broken: broken.includes(i) })) });
     persist(); render(); return out;
   },
+  devWorker: (floor, uid) => { assignWorker(floor, uid); return utilityAt(floor)?.workerUid ?? null; },
+  devTrain: (floor, type, uid) => { toggleTrainingTarget(floor, type, uid); return utilityAt(floor)?.trainTargets ?? []; },
+  devRepairUtility: (floor) => { repairUtility(floor); return { utility: { ...utilityAt(floor) }, repairPoints: S.dungeon.repairPoints, bone: S.bone }; },
+  economyQuotes: (bone = 100, mana = 20, kind = 'slime') => ({ workshop: workshopQuote(bone, mana), recruit: recruitQuote(monKind(kind)) }),
+  devBuyMonster: (kind = 'slime') => { const before = { bone: S.bone, charges: S.dungeon.hatcheryCharges }; recruit(kind); return { before, bone: S.bone, charges: S.dungeon.hatcheryCharges, count: S.monsters.length }; },
+  devSelectUtility: (floor, people = false) => { tab = 'dungeon'; sel = { kind: 'utility', floor, people }; render(); return true; },
+  devPage: (key, page) => { pageState[key] = Math.max(0, Math.round(page || 0)); render(); return pageState[key]; },
   get battle() {
     if (!battle) return null;
     return {
