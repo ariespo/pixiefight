@@ -2704,7 +2704,7 @@ function tutorialHint()         {
   return '';
 }
 
-const ROOM_BOX = (i        ) => ({ x: 6 + (i % 3) * 106, y: 54, w: 102, h: 162 });
+const ROOM_BOX = (i        ) => ({ x: 34, y: 70 + (i % 3) * 48, w: 182, h: 44 });
 
 function pageDungeon(g               ) {
   const eco = dungeonEconomyPreview();
@@ -2717,48 +2717,79 @@ function pageDungeon(g               ) {
   const pf = paged('dungeon-floors', S.floors, 3);
   const selectedFloor = sel?.kind === 'utility' ? sel.floor : sel?.kind === 'slot' ? sel.room : null;
   if (selectedFloor != null && (selectedFloor < pf.from || selectedFloor >= pf.from + pf.view.length)) sel = null;
+  // 地牢剖面：入口沿左侧竖井向下，战斗房在外侧，后勤房在更深的内侧。
+  label(uiLayer, pf.from === 0 ? '入口门 ↓' : '继续深入 ↓', 8, 56, 10, C.gold);
+  labelC(uiLayer, '外层防线', 124, 56, 9, C.red);
+  labelC(uiLayer, '→ 内层经营区', 271, 56, 9, C.green);
+  g.rect(19, 68, 3, 146).fill(C.leather);
+  g.rect(18, 68, 5, 2).fill(C.goldDark);
   for (let local = 0; local < pf.view.length; local++) {
     const i = pf.from + local;
     const b = ROOM_BOX(i);
     const cfg = S.rooms[i];
+    g.rect(20, b.y + 20, 14, 3).fill(C.leather);
+    g.rect(16, b.y + 18, 8, 7).fill(C.wallLit).stroke({ width: 1, color: C.goldDark, alignment: 0 });
+    labelC(uiLayer, `${i + 1}F`, 20, b.y + 4, 9, C.bone);
     panelF(g, uiLayer, 'stone', b.x, b.y, b.w, b.h, C.wall);
-    g.rect(b.x + 1, b.y + 1, b.w - 2, 12).fill(C.wallLit);
-    labelC(uiLayer, `${i + 1}层 ${THEMES[cfg.theme].name}`, b.x + b.w / 2, b.y + 1, 11, C.white);
-    if (THEMES[cfg.theme].prop) {
-      const p = sprite(THEMES[cfg.theme].prop , b.x + 6, b.y + 83, 11);
-      uiLayer.addChild(p);
-    }
-    slotBox(g, b.x + 4, b.y + 15, 45, 32, cfg.back, i, 'back', '后排');
-    slotBox(g, b.x + 53, b.y + 15, 45, 32, cfg.leader, i, 'leader', '统领');
-    slotBox(g, b.x + 4, b.y + 49, 45, 32, cfg.front, i, 'front', '前排');
-    slotBox(g, b.x + 53, b.y + 49, 45, 32, cfg.flank, i, 'flank', '侧翼');
+    g.rect(b.x + 1, b.y + 1, b.w - 2, 14).fill(C.wallLit);
+    label(uiLayer, `${i + 1}层战斗房`, b.x + 5, b.y + 3, 10, C.white);
     const trapSelected = sel?.kind === 'slot' && sel.room === i && sel.which === 'trap';
-    button(g, uiLayer, hits, b.x + 4, b.y + 84, 46, 18, cfg.trap === 'none' ? '＋陷阱' : cut(TRAPS[cfg.trap].name, 4), () => {
-      sel = { kind: 'slot', room: i, which: 'trap' }; playSfx('tab'); render();
-    }, { size: 10, fill: C.ink, border: trapSelected ? C.gold : C.stoneLit, color: cfg.trap === 'none' ? C.stoneLit : C.bone });
-    const themeSel = sel?.kind === 'slot' && sel.room === i && sel.which === 'theme';
-    button(g, uiLayer, hits, b.x + 52, b.y + 84, 46, 18, '主题', () => {
+    button(g, uiLayer, hits, b.x + 102, b.y + 2, 36, 12, cut(THEMES[cfg.theme].name, 3), () => {
       sel = { kind: 'slot', room: i, which: 'theme' }; playSfx('tab'); render();
-    }, { size: 10, fill: themeSel ? C.wallLit : C.wall, border: themeSel ? C.gold : C.stoneLit });
+    }, { size: 8, fill: C.ink, border: sel?.kind === 'slot' && sel.room === i && sel.which === 'theme' ? C.gold : C.wallLit, color: C.stoneLit });
+    button(g, uiLayer, hits, b.x + 140, b.y + 2, 38, 12, cfg.trap === 'none' ? '陷阱' : cut(TRAPS[cfg.trap].name, 3), () => {
+      sel = { kind: 'slot', room: i, which: 'trap' }; playSfx('tab'); render();
+    }, { size: 8, fill: C.ink, border: trapSelected ? C.gold : C.wallLit, color: cfg.trap === 'none' ? C.stoneLit : C.bone });
+    dungeonSlotChip(g, b.x + 5, b.y + 17, 40, 23, cfg.back, i, 'back', '后');
+    dungeonSlotChip(g, b.x + 49, b.y + 17, 40, 23, cfg.leader, i, 'leader', '统');
+    dungeonSlotChip(g, b.x + 93, b.y + 17, 40, 23, cfg.front, i, 'front', '前');
+    dungeonSlotChip(g, b.x + 137, b.y + 17, 40, 23, cfg.flank, i, 'flank', '翼');
 
     const u = utilityAt(i), ud = utilityDef(u), out = utilityOutput(i);
     const selected = sel?.kind === 'utility' && sel.floor === i;
-    g.rect(b.x + 4, b.y + 106, b.w - 8, 50).fill(C.ink)
+    const ux = 228, uw = 98;
+    g.rect(b.x + b.w, b.y + 20, ux - (b.x + b.w), 3).fill(C.leather);
+    g.rect(ux, b.y, uw, b.h).fill(C.ink)
       .stroke({ width: 1, color: selected ? C.gold : u.kind === 'none' ? C.wallLit : ud.color, alignment: 0 });
-    label(uiLayer, u.kind === 'none' ? '＋建后勤房' : `${ud.name} Lv${u.level}`, b.x + 8, b.y + 110, 11, u.kind === 'none' ? C.stoneLit : ud.color);
+    g.rect(ux + 1, b.y + 1, 4, b.h - 2).fill(u.kind === 'none' ? C.wallLit : ud.color);
+    label(uiLayer, u.kind === 'none' ? '＋ 建资源房' : `${ud.name} Lv${u.level}`, ux + 9, b.y + 4, 10, u.kind === 'none' ? C.stoneLit : ud.color);
     if (u.kind !== 'none') {
       const staffText = WORKER_KINDS.has(u.kind) ? `・工${cut(workerName(u), 3)}` : u.kind === 'training' ? `・训${u.trainTargets.length}` : '';
-      label(uiLayer, cut(`耐久${u.condition}${staffText}`, 12), b.x + 8, b.y + 126, 10, u.condition <= 25 ? C.red : C.stoneLit);
+      label(uiLayer, cut(`耐${u.condition}${staffText}`, 11), ux + 9, b.y + 17, 8, u.condition <= 25 ? C.red : C.stoneLit);
       const yieldText = out.bone ? `待产＋${out.bone}骨` : out.mana ? `待产＋${out.mana}魔` : u.kind === 'vault'
         ? `护${ud.boneCap[u.level - 1]}骨/${ud.manaCap[u.level - 1]}魔` : u.kind === 'healing'
           ? `疗愈${ud.charges[u.level - 1]}次` : u.kind === 'training' ? `每人＋${out.xp}经验`
             : u.kind === 'workshop' ? `维修＋${out.repair}点` : `招募-${Math.round(out.hatcheryDiscount * 100)}%`;
-      label(uiLayer, cut(yieldText, 12), b.x + 8, b.y + 140, 10, C.bone);
+      label(uiLayer, cut(yieldText, 12), ux + 9, b.y + 29, 8, C.bone);
     }
-    hits.add(b.x + 4, b.y + 106, b.w - 8, 50, () => { sel = { kind: 'utility', floor: i }; playSfx('tab'); render(); });
+    hits.add(ux, b.y, uw, b.h, () => { sel = { kind: 'utility', floor: i }; playSfx('tab'); render(); });
   }
+  labelC(uiLayer, pf.from + pf.view.length >= S.floors.length ? '王座↓' : '深层↓', 20, 205, 8, C.purple);
   pager(g, 'dungeon-floors', pf.pages, 8, 219, 318, '楼层 ');
   drawSidePanel(g);
+}
+
+function dungeonSlotChip(g               , x        , y        , w        , h        , uid               , room        , which         , shortName        ) {
+  const selected = sel?.kind === 'slot' && sel.room === room && sel.which === which;
+  const flash = slotFlash.room === room && slotFlash.which === which && slotFlash.t > 0;
+  const locked = which === 'flank' && S.rooms[room].leader == null;
+  const border = flash ? C.green : selected ? C.gold : which === 'leader' ? C.goldDark : locked ? C.wallLit : C.stoneLit;
+  g.rect(x, y, w, h).fill(C.ink).stroke({ width: 1, color: border, alignment: 0 });
+  const ch = which === 'leader' ? champById(uid) : undefined;
+  const inst = which === 'leader' ? undefined : instById(uid);
+  const bounce = flash ? Math.round(Math.sin(slotFlash.t * 18) * 2) : 0;
+  if (ch) {
+    const k = champKind(ch);
+    uiLayer.addChild(portraitEffect(sprite(k.tex, x + 11, y + h - 1 + bounce, 18), ch.lv >= CHAMP_LV_CAP, selected, ch.uid));
+    label(uiLayer, ch.restTurns ? `休${ch.restTurns}` : `L${ch.lv}`, x + 22, y + 7, 8, ch.restTurns || ch.wounds ? C.red : C.gold);
+  } else if (inst) {
+    const k = instKind(inst);
+    uiLayer.addChild(portraitEffect(sprite(k.tex, x + 11, y + h - 1 + bounce, 17), inst.lv >= 5, selected, inst.uid));
+    label(uiLayer, `L${inst.lv}`, x + 22, y + 7, 8, C.bone);
+  } else {
+    labelC(uiLayer, locked ? '锁' : shortName, x + w / 2, y + 6, 9, locked ? C.wallLit : which === 'leader' ? C.goldDark : C.stoneLit);
+  }
+  hits.add(x, y, w, h, () => { sel = { kind: 'slot', room, which }; playSfx('tab'); render(); });
 }
 
 function slotBox(g               , x        , y        , w        , h        , uid               , room        , which         , name        ) {
@@ -3667,7 +3698,7 @@ function seatChamp(room        , uid        ) {
   S.rooms[room].leader = uid;
   slotFlash = { room, which: 'leader', t: 0.45 };
   const bx = ROOM_BOX(room);
-  spawnDust(bx.x + 56, bx.y + 54);
+  spawnDust(bx.x + 69, bx.y + 39);
   playSfx('place');
   persist();
   say(`${c.name} 就位于 ${room + 1}房`);
@@ -3693,7 +3724,8 @@ function assign(room        , which         , uid        ) {
   S.rooms[room][which] = uid;
   slotFlash = { room, which, t: 0.45 };
   const bx = ROOM_BOX(room);
-  spawnDust(bx.x + (which === 'front' ? 20 : which === 'back' ? 56 : which === 'leader' ? 56 : 20), bx.y + (which === 'front' || which === 'flank' ? 96 : 54));
+  const slotX = which === 'back' ? 25 : which === 'leader' ? 69 : which === 'front' ? 113 : 157;
+  spawnDust(bx.x + slotX, bx.y + 39);
   playSfx('place');
   persist();
   render();
