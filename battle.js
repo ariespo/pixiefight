@@ -2081,7 +2081,7 @@ function finish(b        ) {
     }
   }
 
-  let firstCause = `四道门在尘烟里合拢，地牢以${seal}%封印余量守住了王座。`;
+  let firstCause = `${b.rooms.length}层防线在尘烟里合拢，地牢以${seal}%封印余量守住了王座。`;
   if (!win) {
     if (kills === 0) firstCause = '勇者的靴声从入口一直响到王座，没有一人倒下；这不是失守，而是一条无人阻拦的路。';
     const firstBroken = b.rooms.find((r) => r.broken);

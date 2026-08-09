@@ -52,11 +52,36 @@ import { initAudio, unlockAudio, playSfx, playHit, playMusic, setMuted, audioSna
 
 const SAVE_KEY = 'yqh-save-v2';
 
+const MAX_FLOORS = 6;
+const BASE_NEW_FLOORS = 2;
+const DEPTH_MULT = [1.30, 1.15, 1, 0.90, 0.85, 0.80];
+const UTILITY_KINDS = {
+  none:       { id: 'none', name: '空后勤房', desc: '尚未建造经营设施。', bone: 0, mana: 0, color: C.stoneLit },
+  'bone-yard': { id: 'bone-yard', name: '骨料场', desc: '每轮生产骨币；越靠外层产量越高。', bone: 60, mana: 0, color: C.bone, yields: [10, 17, 26] },
+  'mana-well': { id: 'mana-well', name: '魔力井', desc: '每轮凝聚魔质；失守后会损失待结算产出。', bone: 40, mana: 12, color: C.purple, yields: [3, 5, 8] },
+  vault:      { id: 'vault', name: '宝库', desc: '保护被攻破楼层的部分骨币与魔质。', bone: 130, mana: 18, color: C.gold, boneCap: [20, 45, 80], manaCap: [5, 10, 18] },
+  healing:    { id: 'healing', name: '疗愈池', desc: '提供英雄疗愈资格与每轮服务次数。', bone: 70, mana: 20, color: C.green, charges: [1, 2, 3] },
+};
+const FLOOR_EXPAND = [null, null,
+  { bone: 120, mana: 0 }, { bone: 220, mana: 15 },
+  { bone: 400, mana: 35 }, { bone: 650, mana: 70 }];
+
+const freshBattleRoom = () => ({ theme: 'stone', trap: 'none', front: null, back: null, leader: null, flank: null });
+const freshUtilityRoom = () => ({ kind: 'none', level: 0, condition: 100, workerUid: null });
+const freshFloor = (id, battle = freshBattleRoom(), utility = freshUtilityRoom()) => ({ id, battle, utility });
+
+function syncRoomAlias() {
+  S.rooms = S.floors.map((f) => f.battle);
+  S.dungeon.unlockedFloors = S.floors.length;
+}
+
 function freshSave()       {
+  const floors = Array.from({ length: BASE_NEW_FLOORS }, (_, i) => freshFloor(i + 1));
   return {
     bone: 95, mana: 18, relic: 0, raidNo: 1, uidNext: 1,
     monsters: [],
-    rooms: [0, 1, 2, 3].map(() => ({ theme: 'stone'           , trap: 'none'          , front: null, back: null, leader: null, flank: null })),
+    floors, rooms: floors.map((f) => f.battle),
+    dungeon: { unlockedFloors: BASE_NEW_FLOORS, notoriety: 0, healingCharges: 0, vaultPriority: 'mana', lastEconomy: null },
     themes: ['stone'], traps: ['none'],
     sealLv: 0, trapLv: 0,
     best: {}, reports: [],
@@ -79,7 +104,21 @@ function loadSave() {
     if (!raw) return;
     const p = JSON.parse(raw)                 ;
     const base = freshSave();
-    S = { ...base, ...p, rooms: p.rooms && p.rooms.length === 4 ? p.rooms : base.rooms };  } catch { /* 存档损坏则用新档 */ }
+    const sourceFloors = Array.isArray(p.floors) && p.floors.length
+      ? p.floors
+      : Array.isArray(p.rooms) && p.rooms.length
+        ? p.rooms.map((room, i) => freshFloor(i + 1, room))
+        : base.floors;
+    const floors = sourceFloors.slice(0, MAX_FLOORS).map((f, i) => {
+      const battle = f?.battle && typeof f.battle === 'object' ? f.battle : f;
+      const utility = f?.utility && typeof f.utility === 'object' ? f.utility : freshUtilityRoom();
+      return freshFloor(i + 1, battle, utility);
+    });
+    S = {
+      ...base, ...p, floors, rooms: floors.map((f) => f.battle),
+      dungeon: { ...base.dungeon, ...(p.dungeon && typeof p.dungeon === 'object' ? p.dungeon : {}), unlockedFloors: floors.length },
+    };
+  } catch { /* 存档损坏则用新档 */ }
   sanitizeSave();
   syncDiyAffixes();   // 词缀先注册：图纸清洗要拿最终的 AFFIXES 表判定
   syncDiy();
@@ -122,6 +161,27 @@ function syncForged() {
 // 旧版本/损坏存档可能带未知陷阱或悬空引用，清洗后再渲染，否则查表会 undefined 白屏
 function sanitizeSave() {
   syncForged();
+  if (!Array.isArray(S.floors) || !S.floors.length) {
+    const legacy = Array.isArray(S.rooms) && S.rooms.length ? S.rooms : [freshBattleRoom(), freshBattleRoom()];
+    S.floors = legacy.slice(0, MAX_FLOORS).map((room, i) => freshFloor(i + 1, room));
+  }
+  S.floors = S.floors.slice(0, MAX_FLOORS).map((floor, i) => {
+    const battle = floor?.battle && typeof floor.battle === 'object' ? floor.battle : freshBattleRoom();
+    const raw = floor?.utility && typeof floor.utility === 'object' ? floor.utility : freshUtilityRoom();
+    const kind = raw.kind in UTILITY_KINDS ? raw.kind : 'none';
+    const level = kind === 'none' ? 0 : Math.max(1, Math.min(3, Math.round(raw.level || 1)));
+    const condition = Math.max(0, Math.min(100, Math.round(raw.condition ?? 100)));
+    return freshFloor(i + 1, battle, { kind, level, condition, workerUid: null });
+  });
+  if (!S.dungeon || typeof S.dungeon !== 'object') S.dungeon = {};
+  S.dungeon = {
+    unlockedFloors: S.floors.length,
+    notoriety: Math.max(0, Math.round(S.dungeon.notoriety || 0)),
+    healingCharges: Math.max(0, Math.min(6, Math.round(S.dungeon.healingCharges || 0))),
+    vaultPriority: S.dungeon.vaultPriority === 'bone' ? 'bone' : 'mana',
+    lastEconomy: S.dungeon.lastEconomy && typeof S.dungeon.lastEconomy === 'object' ? S.dungeon.lastEconomy : null,
+  };
+  syncRoomAlias();
   const uids = new Set(S.monsters.map((m) => m.uid));
   for (const r of S.rooms) {
     if (!(r.trap in TRAPS)) r.trap = 'none';
@@ -223,6 +283,7 @@ function sanitizeSave() {
     if (kind === 'affix') return PART_AFFIXES.some((a) => a.id === id);
     return false;
   });
+  S.dungeon.healingCharges = Math.min(S.dungeon.healingCharges, healingCapacity());
 }
 
 // 拼接体存档只保存部件选择；数值/文案每次重新派生并注册到种类表，改部件表即改全部已造怪物。
@@ -278,6 +339,152 @@ function importSave() {
 // ---------- 派生数据 ----------
 const sealMax = () => 100 + S.sealLv * 25;
 const trapPower = () => 1 + S.trapLv * 0.25;
+const utilityAt = (floor) => S.floors[floor]?.utility;
+const utilityDef = (u) => UTILITY_KINDS[u?.kind] ?? UTILITY_KINDS.none;
+const conditionEff = (condition) => condition <= 0 ? 0 : condition <= 25 ? 0.4 : condition <= 50 ? 0.7 : condition <= 75 ? 0.9 : 1;
+const workerEff = () => 0.5; // 第一阶段尚未开放后勤工作人员，空房按设计以半效率运作。
+
+function utilityOutput(floorIndex) {
+  const floor = S.floors[floorIndex];
+  const u = floor?.utility;
+  const d = utilityDef(u);
+  if (!u || u.kind === 'none' || u.condition <= 0) return { bone: 0, mana: 0 };
+  const lv = Math.max(1, Math.min(3, u.level)) - 1;
+  const mult = (DEPTH_MULT[floorIndex] ?? 0.8) * conditionEff(u.condition) * workerEff();
+  return {
+    bone: d.yields && u.kind === 'bone-yard' ? Math.max(0, Math.round(d.yields[lv] * mult)) : 0,
+    mana: d.yields && u.kind === 'mana-well' ? Math.max(0, Math.round(d.yields[lv] * mult)) : 0,
+  };
+}
+
+function healingCapacity() {
+  return Math.min(6, S.floors.reduce((n, f) => {
+    const u = f.utility, d = utilityDef(u);
+    return n + (u.kind === 'healing' && u.condition > 0 ? d.charges[u.level - 1] : 0);
+  }, 0));
+}
+
+function vaultCapacity(broken = null) {
+  let bone = 0, mana = 0;
+  S.floors.forEach((f, i) => {
+    const u = f.utility, d = utilityDef(u);
+    if (u.kind !== 'vault' || u.condition <= 0) return;
+    const breachMult = broken?.[i] ? 0.5 : 1;
+    bone += Math.round(d.boneCap[u.level - 1] * breachMult);
+    mana += Math.round(d.manaCap[u.level - 1] * breachMult);
+  });
+  return { bone: Math.min(180, bone), mana: Math.min(40, mana) };
+}
+
+function dungeonEconomyPreview() {
+  const rows = S.floors.map((f, i) => ({ floor: i, kind: f.utility.kind, level: f.utility.level, condition: f.utility.condition, ...utilityOutput(i) }));
+  return {
+    rows,
+    bone: rows.reduce((n, x) => n + x.bone, 0),
+    mana: rows.reduce((n, x) => n + x.mana, 0),
+    vault: vaultCapacity(),
+  };
+}
+
+function utilityUpgradeCost(u) {
+  const d = utilityDef(u);
+  const mult = u.level === 1 ? 1.5 : 2.5;
+  return { bone: Math.round(d.bone * mult), mana: Math.round(d.mana * mult) };
+}
+
+function buildUtility(floorIndex, kind) {
+  const floor = S.floors[floorIndex], d = UTILITY_KINDS[kind];
+  if (!floor || !d || kind === 'none' || floor.utility.kind !== 'none') return;
+  if (S.bone < d.bone || S.mana < d.mana) { say('建造资源不足'); return; }
+  S.bone -= d.bone; S.mana -= d.mana;
+  floor.utility = { kind, level: 1, condition: 100, workerUid: null };
+  if (kind === 'healing') S.dungeon.healingCharges = Math.min(6, S.dungeon.healingCharges + 1);
+  persist(); playSfx('buy'); say(`${floorIndex + 1}层建成${d.name}`); render();
+}
+
+function upgradeUtility(floorIndex) {
+  const u = utilityAt(floorIndex);
+  if (!u || u.kind === 'none' || u.level >= 3) return;
+  const cost = utilityUpgradeCost(u);
+  if (S.bone < cost.bone || S.mana < cost.mana) { say('升级资源不足'); return; }
+  S.bone -= cost.bone; S.mana -= cost.mana; u.level++;
+  if (u.kind === 'healing') S.dungeon.healingCharges = Math.min(healingCapacity(), S.dungeon.healingCharges + 1);
+  persist(); playSfx('buy'); say(`${utilityDef(u).name}升到${u.level}级`); render();
+}
+
+function repairUtility(floorIndex) {
+  const u = utilityAt(floorIndex);
+  if (!u || u.kind === 'none' || u.condition >= 100) return;
+  const cost = Math.max(1, Math.ceil((100 - u.condition) * 0.8));
+  if (S.bone < cost) { say('维修骨币不足'); return; }
+  const wasStopped = u.condition <= 0;
+  S.bone -= cost; u.condition = 100;
+  if (wasStopped && u.kind === 'healing') S.dungeon.healingCharges = Math.min(healingCapacity(), S.dungeon.healingCharges + utilityDef(u).charges[u.level - 1]);
+  else S.dungeon.healingCharges = Math.min(S.dungeon.healingCharges, healingCapacity());
+  persist(); playSfx('place'); say(`${utilityDef(u).name}修复完成`); render();
+}
+
+function demolishUtility(floorIndex) {
+  const u = utilityAt(floorIndex);
+  if (!u || u.kind === 'none') return;
+  if (!(sel?.kind === 'utility' && sel.floor === floorIndex && sel.confirmDemolish)) {
+    sel = { kind: 'utility', floor: floorIndex, confirmDemolish: true };
+    say(`再次点击拆除将返还${Math.round(utilityDef(u).bone * 0.4)}骨币`); render(); return;
+  }
+  const name = utilityDef(u).name;
+  S.bone += Math.round(utilityDef(u).bone * 0.4);
+  S.floors[floorIndex].utility = freshUtilityRoom();
+  S.dungeon.healingCharges = Math.min(S.dungeon.healingCharges, healingCapacity());
+  sel = { kind: 'utility', floor: floorIndex };
+  persist(); playSfx('break'); say(`${name}已拆除`); render();
+}
+
+function expandFloor() {
+  if (S.floors.length >= MAX_FLOORS) { say('地牢已达到六层上限'); return; }
+  const cost = FLOOR_EXPAND[S.floors.length];
+  if (!cost || S.bone < cost.bone || S.mana < cost.mana) { say('扩层资源不足'); return; }
+  S.bone -= cost.bone; S.mana -= cost.mana;
+  S.floors.push(freshFloor(S.floors.length + 1));
+  syncRoomAlias();
+  pageState['dungeon-floors'] = Math.floor((S.floors.length - 1) / 3);
+  persist(); playSfx('buy'); say(`地牢扩建至${S.floors.length}层，恶名随之上升`); render();
+}
+
+function settleDungeonEconomy(b) {
+  const snap = b.dungeonEconomy ?? dungeonEconomyPreview();
+  const broken = b.rooms.map((r) => !!r.broken);
+  const cap = vaultCapacity(broken);
+  let boneShield = cap.bone, manaShield = cap.mana;
+  const rows = [...snap.rows].reverse().map((row) => {
+    const breached = broken[row.floor] ?? false;
+    let boneLoss = breached ? Math.round(row.bone * 0.6) : 0;
+    let manaLoss = breached ? Math.round(row.mana * 0.6) : 0;
+    const manaProtected = Math.min(manaShield, manaLoss); manaShield -= manaProtected; manaLoss -= manaProtected;
+    const boneProtected = Math.min(boneShield, boneLoss); boneShield -= boneProtected; boneLoss -= boneProtected;
+    const u = utilityAt(row.floor);
+    if (breached && u && u.kind !== 'none') u.condition = Math.max(0, u.condition - 15);
+    return { ...row, breached, boneLoss, manaLoss, boneProtected, manaProtected,
+      boneGot: row.bone - boneLoss, manaGot: row.mana - manaLoss, conditionAfter: u?.condition ?? 100 };
+  }).reverse();
+  const out = {
+    rows,
+    bone: rows.reduce((n, x) => n + x.boneGot, 0), mana: rows.reduce((n, x) => n + x.manaGot, 0),
+    boneLost: rows.reduce((n, x) => n + x.boneLoss, 0), manaLost: rows.reduce((n, x) => n + x.manaLoss, 0),
+    boneProtected: rows.reduce((n, x) => n + x.boneProtected, 0), manaProtected: rows.reduce((n, x) => n + x.manaProtected, 0),
+  };
+  S.bone += out.bone; S.mana += out.mana;
+  S.dungeon.healingCharges = healingCapacity();
+  S.dungeon.lastEconomy = out;
+  return out;
+}
+
+function dungeonRaidScale() {
+  const n = S.floors.length;
+  if (n >= 6) return { hp: 1.22, atk: 1.10, reward: 1.15 };
+  if (n === 5) return { hp: 1.12, atk: 1.05, reward: 1.08 };
+  if (n === 4) return { hp: 1.05, atk: 1, reward: 1.03 };
+  return { hp: 1, atk: 1, reward: 1 };
+}
 const monKind = (id        ) => ensureKindTex(graftKind(kindById(id) ?? MONSTERS[0]));
 const allKinds = () => [...MONSTERS.filter((m) => !m.legend), ...S.customs.map((d) => deriveKind(d))];
 const eliteOpen = (k                       ) => S.raidNo >= (k.eliteMin ?? 1) || S.overtime;
@@ -372,7 +579,7 @@ function tickUiPortraitEffects(dt) {
                                                      
 const SLOT_NAME                          = { leader: '统领', front: '前排', back: '后排', flank: '侧翼' };
 function roomOf(uid        ) {
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < S.rooms.length; i++) {
     const r = S.rooms[i];
     if (r.front === uid || r.back === uid || r.leader === uid || r.flank === uid) return i;
   }
@@ -2105,7 +2312,7 @@ function dismantle(uid        ) {
   if (!inst) return;
   const k = instKind(inst);
   const refund = Math.round(k.cost * 0.5);
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < S.rooms.length; i++) {
     if (S.rooms[i].front === uid) S.rooms[i].front = null;
     if (S.rooms[i].back === uid) S.rooms[i].back = null;
   }
@@ -2185,6 +2392,7 @@ function skullRow(g               , x        , y        , n        ) {
 
 function pageThrone(g               ) {
   const raid = currentRaid();
+  const economy = dungeonEconomyPreview();
   label(uiLayer, `下一波：${raid.title}`, 10, 42, 12, C.white);
   label(uiLayer, `${raid.members.length}名勇者`, 240, 42, 12, C.bone);
   // 勇者队列
@@ -2248,7 +2456,7 @@ function pageThrone(g               ) {
   labelC(uiLayer, sealEff === sealMax() ? `封印 ${sealEff}` : `封印 ${sealEff}（${sealMax()}）`, 405, 133, 12,
     sealEff < sealMax() ? C.red : C.purple);
   labelC(uiLayer, '突围勇者每名 -25', 405, 148, 12, C.stoneLit);
-  labelC(uiLayer, placed === 0 ? '空防必败' : '守军已就位', 405, 163, 12, placed === 0 ? C.red : C.green);
+  labelC(uiLayer, placed === 0 ? '空防必败' : cut(`待产＋${economy.bone}骨＋${economy.mana}魔`, 14), 405, 163, 11, placed === 0 ? C.red : C.gold);
   button(g, uiLayer, hits, 344, 181, 122, 30, '迎 战', () => startBattle(), { fill: C.redDark, border: C.red, color: C.white });
   labelC(uiLayer, 'Enter 开战', 405, 215, 12, C.stoneLit);
 }
@@ -2261,47 +2469,57 @@ function tutorialHint()         {
   return '';
 }
 
-const ROOM_BOX = (i        ) => ({ x: 6 + i * 82, y: 56, w: 76, h: 146 });
+const ROOM_BOX = (i        ) => ({ x: 6 + (i % 3) * 106, y: 54, w: 102, h: 162 });
 
 function pageDungeon(g               ) {
-  label(uiLayer, '地牢剖面  入口→', 8, 40, 12, C.white);
-  label(uiLayer, '→王座', 292, 40, 12, C.purple);
-  for (let i = 0; i < 4; i++) {
+  const eco = dungeonEconomyPreview();
+  label(uiLayer, `地牢 ${S.floors.length}层  预计＋${eco.bone}骨＋${eco.mana}魔`, 8, 40, 12, C.white);
+  if (S.floors.length < MAX_FLOORS) {
+    const cost = FLOOR_EXPAND[S.floors.length];
+    button(g, uiLayer, hits, 236, 39, 90, 14, `扩层${cost.bone}骨${cost.mana ? `${cost.mana}魔` : ''}`, () => expandFloor(),
+      { size: 10, enabled: S.bone >= cost.bone && S.mana >= cost.mana, border: C.goldDark, color: C.gold });
+  } else label(uiLayer, '已达六层', 272, 40, 10, C.gold);
+  const pf = paged('dungeon-floors', S.floors, 3);
+  const selectedFloor = sel?.kind === 'utility' ? sel.floor : sel?.kind === 'slot' ? sel.room : null;
+  if (selectedFloor != null && (selectedFloor < pf.from || selectedFloor >= pf.from + pf.view.length)) sel = null;
+  for (let local = 0; local < pf.view.length; local++) {
+    const i = pf.from + local;
     const b = ROOM_BOX(i);
     const cfg = S.rooms[i];
     panelF(g, uiLayer, 'stone', b.x, b.y, b.w, b.h, C.wall);
     g.rect(b.x + 1, b.y + 1, b.w - 2, 12).fill(C.wallLit);
-    labelC(uiLayer, `${i + 1}房 ${THEMES[cfg.theme].name}`, b.x + b.w / 2, b.y + 1, 12, C.white);
+    labelC(uiLayer, `${i + 1}层 ${THEMES[cfg.theme].name}`, b.x + b.w / 2, b.y + 1, 11, C.white);
     if (THEMES[cfg.theme].prop) {
-      const p = sprite(THEMES[cfg.theme].prop , b.x + 6, b.y + 100, 12);
+      const p = sprite(THEMES[cfg.theme].prop , b.x + 6, b.y + 83, 11);
       uiLayer.addChild(p);
     }
-    slotBox(g, b.x + 3, b.y + 15, 34, 38, cfg.back, i, 'back', '后排');
-    slotBox(g, b.x + 39, b.y + 15, 34, 38, cfg.leader, i, 'leader', '统领');
-    slotBox(g, b.x + 3, b.y + 55, 34, 38, cfg.front, i, 'front', '前排');
-    slotBox(g, b.x + 39, b.y + 55, 34, 38, cfg.flank, i, 'flank', '侧翼');
-    // 本房统领光环提示：这是"带兵"这件事在经营页唯一的读数
-    const ld = champById(cfg.leader);
-    label(uiLayer, ld ? cut(ld.name.split('·')[0], 4) : '无统领', b.x + 6, b.y + 95, 12, ld ? C.gold : C.stoneLit);
-    // 陷阱位
+    slotBox(g, b.x + 4, b.y + 15, 45, 32, cfg.back, i, 'back', '后排');
+    slotBox(g, b.x + 53, b.y + 15, 45, 32, cfg.leader, i, 'leader', '统领');
+    slotBox(g, b.x + 4, b.y + 49, 45, 32, cfg.front, i, 'front', '前排');
+    slotBox(g, b.x + 53, b.y + 49, 45, 32, cfg.flank, i, 'flank', '侧翼');
     const trapSelected = sel?.kind === 'slot' && sel.room === i && sel.which === 'trap';
-    g.rect(b.x + 3, b.y + 110, b.w - 6, 20).fill(C.ink).stroke({ width: 1, color: trapSelected ? C.gold : C.stoneLit, alignment: 0 });
-    if (cfg.trap !== 'none' && TRAPS[cfg.trap].tex) {
-      const ts = sprite(TRAPS[cfg.trap].tex , b.x + 13, b.y + 129, 14);
-      uiLayer.addChild(ts);
-      label(uiLayer, TRAPS[cfg.trap].name, b.x + 24, b.y + 113, 12, C.bone);
-    } else {
-      label(uiLayer, '＋陷阱', b.x + 14, b.y + 113, 12, C.stoneLit);
-    }
-    hits.add(b.x + 3, b.y + 110, b.w - 6, 20, () => { sel = { kind: 'slot', room: i, which: 'trap' }; playSfx('tab'); render(); });
+    button(g, uiLayer, hits, b.x + 4, b.y + 84, 46, 18, cfg.trap === 'none' ? '＋陷阱' : cut(TRAPS[cfg.trap].name, 4), () => {
+      sel = { kind: 'slot', room: i, which: 'trap' }; playSfx('tab'); render();
+    }, { size: 10, fill: C.ink, border: trapSelected ? C.gold : C.stoneLit, color: cfg.trap === 'none' ? C.stoneLit : C.bone });
     const themeSel = sel?.kind === 'slot' && sel.room === i && sel.which === 'theme';
-    button(g, uiLayer, hits, b.x + 3, b.y + 132, b.w - 6, 14, '改主题', () => {
+    button(g, uiLayer, hits, b.x + 52, b.y + 84, 46, 18, '主题', () => {
       sel = { kind: 'slot', room: i, which: 'theme' }; playSfx('tab'); render();
-    }, { size: 12, fill: themeSel ? C.wallLit : C.wall, border: themeSel ? C.gold : C.stoneLit });
+    }, { size: 10, fill: themeSel ? C.wallLit : C.wall, border: themeSel ? C.gold : C.stoneLit });
+
+    const u = utilityAt(i), ud = utilityDef(u), out = utilityOutput(i);
+    const selected = sel?.kind === 'utility' && sel.floor === i;
+    g.rect(b.x + 4, b.y + 106, b.w - 8, 50).fill(C.ink)
+      .stroke({ width: 1, color: selected ? C.gold : u.kind === 'none' ? C.wallLit : ud.color, alignment: 0 });
+    label(uiLayer, u.kind === 'none' ? '＋建后勤房' : `${ud.name} Lv${u.level}`, b.x + 8, b.y + 110, 11, u.kind === 'none' ? C.stoneLit : ud.color);
+    if (u.kind !== 'none') {
+      label(uiLayer, `耐久${u.condition}`, b.x + 8, b.y + 126, 10, u.condition <= 25 ? C.red : C.stoneLit);
+      const yieldText = out.bone ? `待产＋${out.bone}骨` : out.mana ? `待产＋${out.mana}魔` : u.kind === 'vault'
+        ? `护${ud.boneCap[u.level - 1]}骨/${ud.manaCap[u.level - 1]}魔` : `疗愈${ud.charges[u.level - 1]}次`;
+      label(uiLayer, cut(yieldText, 12), b.x + 8, b.y + 140, 10, C.bone);
+    }
+    hits.add(b.x + 4, b.y + 106, b.w - 8, 50, () => { sel = { kind: 'utility', floor: i }; playSfx('tab'); render(); });
   }
-  const chem = chemistry(S.champs, seatedChampUids());
-  label(uiLayer, chem.lines.length ? cut(`同僚：${chem.lines.join(' / ')}`, 44) : '统领席坐英雄，其光环加持同房兵种；统领在位才开侧翼',
-    8, 210, 12, chem.lines.length ? C.purple : C.stoneLit);
+  pager(g, 'dungeon-floors', pf.pages, 8, 219, 318, '楼层 ');
   drawSidePanel(g);
 }
 
@@ -2338,7 +2556,51 @@ let slotFlash = { room: -1, which: ''          , t: 0 };
 function drawSidePanel(g               ) {
   panelF(g, uiLayer, 'stone', 334, 40, 142, 194, C.wall);
   if (!sel) {
-    labelC(uiLayer, '选中一个位置', 405, 110, 12, C.stoneLit);
+    labelC(uiLayer, '选择战斗位或后勤房', 405, 110, 11, C.stoneLit);
+    return;
+  }
+  if (sel.kind === 'utility') {
+    const floor = sel.floor;
+    const u = utilityAt(floor);
+    if (!u) { sel = null; return; }
+    const d = utilityDef(u);
+    labelC(uiLayer, `${floor + 1}层 后勤房`, 405, 46, 12, C.white);
+    if (u.kind === 'none') {
+      label(uiLayer, '选择设施建造：', 340, 62, 11, C.bone);
+      const kinds = ['bone-yard', 'mana-well', 'vault', 'healing'];
+      let y = 80;
+      for (const kind of kinds) {
+        const k = UTILITY_KINDS[kind];
+        const can = S.bone >= k.bone && S.mana >= k.mana;
+        g.rect(340, y, 130, 31).fill(C.ink).stroke({ width: 1, color: can ? k.color : C.wallLit, alignment: 0 });
+        label(uiLayer, k.name, 344, y + 2, 11, can ? k.color : C.stoneLit);
+        label(uiLayer, `${k.bone}骨${k.mana ? `＋${k.mana}魔` : ''}`, 408, y + 2, 10, can ? C.bone : C.redDark);
+        boundedText(uiLayer, k.desc, 344, y + 17, 122, 11, 9, C.stoneLit);
+        if (can) hits.add(340, y, 130, 31, () => buildUtility(floor, kind));
+        y += 34;
+      }
+      return;
+    }
+    label(uiLayer, `${d.name}・Lv${u.level}`, 340, 64, 12, d.color);
+    boundedText(uiLayer, d.desc, 340, 82, 130, 34, 10, C.bone);
+    label(uiLayer, `设施耐久 ${u.condition}/100`, 340, 120, 11, u.condition <= 25 ? C.red : C.stoneLit);
+    bar(g, 340, 136, 130, 6, u.condition / 100, u.condition <= 25 ? C.red : C.green);
+    const out = utilityOutput(floor);
+    const detail = out.bone ? `本轮预计 ＋${out.bone}骨币` : out.mana ? `本轮预计 ＋${out.mana}魔质`
+      : u.kind === 'vault' ? `保护 ${d.boneCap[u.level - 1]}骨/${d.manaCap[u.level - 1]}魔`
+        : `疗愈 ${d.charges[u.level - 1]}次・剩${S.dungeon.healingCharges}`;
+    label(uiLayer, detail, 340, 148, 10, C.gold);
+    if (u.level < 3) {
+      const cost = utilityUpgradeCost(u);
+      button(g, uiLayer, hits, 340, 166, 130, 18, `升级 ${cost.bone}骨${cost.mana ? `＋${cost.mana}魔` : ''}`, () => upgradeUtility(floor),
+        { size: 10, enabled: S.bone >= cost.bone && S.mana >= cost.mana, border: d.color, color: C.white });
+    } else labelC(uiLayer, '设施已满级', 405, 168, 10, C.gold);
+    const repairCost = Math.max(1, Math.ceil((100 - u.condition) * 0.8));
+    button(g, uiLayer, hits, 340, 188, 64, 18, u.condition >= 100 ? '无需维修' : `维修${repairCost}骨`, () => repairUtility(floor),
+      { size: 9, enabled: u.condition < 100 && S.bone >= repairCost, border: C.green, color: C.green });
+    button(g, uiLayer, hits, 406, 188, 64, 18, sel.confirmDemolish ? '确认拆除' : '拆除', () => demolishUtility(floor),
+      { size: 9, border: C.red, color: C.red });
+    label(uiLayer, `深度产出 ${Math.round((DEPTH_MULT[floor] ?? 0.8) * 100)}%`, 340, 214, 10, C.stoneLit);
     return;
   }
   if (sel.kind === 'slot' && sel.which !== 'trap' && sel.which !== 'theme') {
@@ -2855,7 +3117,13 @@ function tickStoryMods() {
     return m.raids > 0;
   });
 }
-function battleMods() { return foldMods(S.story.mods); }
+function battleMods() {
+  const out = foldMods(S.story.mods);
+  const scale = dungeonRaidScale();
+  out.heroHpMult *= scale.hp;
+  out.heroAtkMult *= scale.atk;
+  return out;
+}
 
 // 混合事件源：接了外部叙事者就先问它，拿不到（关闭/超时/JSON 坏）立刻回落本地事件池。
 // 玩家永远能听到秘闻 —— LLM 只是内容来源之一，不是必需依赖。
@@ -3098,7 +3366,7 @@ function seatChamp(room        , uid        ) {
   const c = champById(uid);
   if (!c) return;
   if ((c.restTurns || 0) > 0) { say(`${c.name} 仍需休息 ${c.restTurns} 回合`); return; }
-  for (let i = 0; i < 4; i++) if (S.rooms[i].leader === uid) { S.rooms[i].leader = null; S.rooms[i].flank = null; }
+  for (let i = 0; i < S.rooms.length; i++) if (S.rooms[i].leader === uid) { S.rooms[i].leader = null; S.rooms[i].flank = null; }
   S.rooms[room].leader = uid;
   slotFlash = { room, which: 'leader', t: 0.45 };
   const bx = ROOM_BOX(room);
@@ -3118,7 +3386,7 @@ function assign(room        , which         , uid        ) {
   if (which === 'front' || which === 'back') {
     if (k.row !== 'any' && k.row !== which) { say(`${k.name}只能驻守${k.row === 'front' ? '前排' : '后排'}`); return; }
   }
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < S.rooms.length; i++) {
     for (const w of ['front', 'back', 'flank']             ) if (S.rooms[i][w] === uid) S.rooms[i][w] = null;
   }
   S.rooms[room][which] = uid;
@@ -3225,8 +3493,12 @@ function confirmTalent(c) {
 
 function restChamp(c       ) {
   if ((c.restTurns || 0) <= 0) { say(`${c.name} 当前不需要疗愈`); return; }
+  const capacity = healingCapacity();
+  if (capacity <= 0) { say('需要先建造并修复一座疗愈池'); return; }
+  if (S.dungeon.healingCharges <= 0) { say('疗愈池本轮服务次数已用完'); return; }
   if (S.mana < REST_MANA) { say('魔质不足'); return; }
   S.mana -= REST_MANA;
+  S.dungeon.healingCharges--;
   c.restTurns--;
   playSfx('place');
   persist();
@@ -3426,8 +3698,11 @@ function drawChampStat(g, c) {
   }
   button(g, uiLayer, hits, 174, 195, 130, 15, `重随特质 ${REROLL_TRAIT_BONE}骨+${REROLL_TRAIT_MANA}魔`, () => rerollChampTraits(c),
     { size: 10, enabled: S.bone >= REROLL_TRAIT_BONE && S.mana >= REROLL_TRAIT_MANA, border: C.purple, color: C.white });
-  button(g, uiLayer, hits, 306, 195, 48, 15, `疗愈${REST_MANA}魔`, () => restChamp(c),
-    { size: 10, enabled: c.restTurns > 0 && S.mana >= REST_MANA, border: c.restTurns ? C.purple : C.stoneLit, color: c.restTurns ? C.white : C.stoneLit });
+  const healCap = healingCapacity();
+  const healEnabled = c.restTurns > 0 && healCap > 0 && S.dungeon.healingCharges > 0 && S.mana >= REST_MANA;
+  const healLabel = healCap <= 0 ? '需疗愈池' : S.dungeon.healingCharges <= 0 ? '疗愈用尽' : `疗愈${REST_MANA}魔`;
+  button(g, uiLayer, hits, 306, 195, 48, 15, healLabel, () => restChamp(c),
+    { size: 9, enabled: healEnabled, border: healEnabled ? C.purple : C.stoneLit, color: healEnabled ? C.white : C.stoneLit });
   button(g, uiLayer, hits, 356, 195, 50, 15, `疗伤 ${HEAL_MANA}魔`, () => healChamp(c),
     { size: 10, enabled: wd > 0 && S.mana >= HEAL_MANA, border: wd ? C.red : C.stoneLit, color: wd ? C.white : C.stoneLit });
   button(g, uiLayer, hits, 174, 214, 70, 15, '同僚关系', () => sayChem(chem.lines), { size: 10, border: C.purple, color: C.purple });
@@ -3939,20 +4214,27 @@ function pageReport(g               ) {
   });
   label(uiLayer, `${r.title}：${r.win ? '守住' : '失守'}  封印${r.seal}  ${r.time.toFixed(1)}s`, 8, 64, 12, r.win ? C.green : C.red);
   skullRow(g, 250, 62, r.skulls);
+  const prooms = paged(`rep-rooms-${reportIdx}`, r.rooms, 3);
   let y = 82;
-  for (const rr of r.rooms) {
+  for (const rr of prooms.view) {
     g.rect(8, y, 200, 16).fill(C.wall);
-    label(uiLayer, `${rr.i + 1}房 ${rr.broken ? `失守 ${rr.t.toFixed(1)}s` : '守住'}`, 12, y + 2, 12, rr.broken ? C.red : C.green);
+    label(uiLayer, `${rr.i + 1}层 ${rr.broken ? `失守 ${rr.t.toFixed(1)}s` : '守住'}`, 12, y + 2, 12, rr.broken ? C.red : C.green);
     label(uiLayer, rr.broken ? rr.reason : '—', 96, y + 2, 12, C.stoneLit);
     y += 18;
   }
+  pager(g, `rep-rooms-${reportIdx}`, prooms.pages, 8, 138, 200, '楼层 ');
+  y = 158;
   label(uiLayer, '关键败因/结论：', 8, y + 4, 12, C.gold);
   button(g, uiLayer, hits, 132, y + 2, 76, 15, '完整战术复盘', () => {
     const review = Array.isArray(r.review) && r.review.length ? r.review : [r.firstCause];
+    const economy = r.economy;
+    const economyText = economy
+      ? `\n\n经营损益：结算${economy.bone}骨币、${economy.mana}魔质；损失${economy.boneLost}骨币、${economy.manaLost}魔质；宝库保护${economy.boneProtected}骨币、${economy.manaProtected}魔质。\n${economy.rows.filter((x) => x.kind !== 'none').map((x) => `第${x.floor + 1}层 ${utilityDef({ kind: x.kind }).name}：${x.breached ? '遭劫掠' : '安全'}，结算${x.boneGot}骨/${x.manaGot}魔，耐久${x.conditionAfter}`).join('\n')}`
+      : '';
     const quotes = Array.isArray(r.dialogue) && r.dialogue.length
       ? r.dialogue.slice(-18).map((d) => `${d.name}：${d.text}`)
       : r.logs.filter((l) => /^　/.test(l.text)).slice(0, 12).map((l) => l.text.trim());
-    openDetailPopup(`#${r.raidNo} 战术复盘`, `${review.join('\n\n')}${quotes.length ? `\n\n战场对白摘录：\n${quotes.join('\n')}` : ''}`, r.win ? C.green : C.red);
+    openDetailPopup(`#${r.raidNo} 战术复盘`, `${review.join('\n\n')}${economyText}${quotes.length ? `\n\n战场对白摘录：\n${quotes.join('\n')}` : ''}`, r.win ? C.green : C.red);
   }, { size: 9, fill: C.ink, border: C.goldDark, color: C.gold });
   boundedText(uiLayer, r.firstCause, 8, y + 20, 200, Math.max(15, 210 - (y + 20)), 11, C.bone);
   const pu = paged(`rep-units-${reportIdx}`, r.units, 4);
@@ -4050,6 +4332,7 @@ function startBattle() {
   const raid = currentRaid();
   battle = createBattle(raid, S.rooms, S.monsters,
     { sealMax: sealMax(), trapPower: trapPower(), mods: battleMods(), champs: champStatMap() });
+  battle.dungeonEconomy = dungeonEconomyPreview();
   pendingResultRaid = raid.no;
   screen = 'battle';
   uiPortraitFx.length = 0;
@@ -4485,6 +4768,9 @@ function finishBattle() {
   const r = b.result ;
   screen = 'result';
   resultLayerBuilt = false;
+  const rewardMult = dungeonRaidScale().reward;
+  r.bone = Math.round(r.bone * rewardMult);
+  r.mana = Math.round(r.mana * rewardMult);
   S.bone += r.bone;
   S.mana += r.mana;
   S.relic += r.relicLoot ?? 0;
@@ -4543,10 +4829,12 @@ function finishBattle() {
   const units = [...b.heroes.map((h) => ({ name: h.name, dmg: Math.round(h.dmgDealt), heal: Math.round(h.healed), kills: h.kills ?? 0, side: 'hero' })),
     ...b.rooms.flatMap((rm) => rm.mons.map((m) => ({ name: m.name, dmg: Math.round(m.dmgDealt), heal: Math.round(m.healed), kills: m.kills ?? 0, side: 'mon' })))]
     .sort((a, z) => z.dmg - a.dmg);
+  const economy = settleDungeonEconomy(b);
+  r.economy = economy;
   const report         = {
     raidNo: b.raid.no, title: b.raid.title, win: r.win, skulls: r.skulls, seal: r.seal, time: b.time,
     rooms: b.rooms.map((rm) => ({ i: rm.index, broken: rm.broken, t: rm.breachTime, reason: rm.breachReason })),
-    units, firstCause: r.firstCause, review: r.review ?? [], metrics: r.metrics ?? {},
+    units, firstCause: r.firstCause, review: r.review ?? [], metrics: r.metrics ?? {}, economy,
     dialogue: (b.dialogue ?? []).map((d) => ({ name: d.name, text: d.text, kind: d.kind, side: d.side, room: d.room, t: d.t })),
     logs: b.log.map((l) => ({ text: l.text, tone: l.tone })),
   };
@@ -4587,7 +4875,8 @@ function buildResultOverlay() {
       overlay.addChild(s);
     }
   }
-  labelC(overlay, `骨币 +${r.bone}   魔质 +${r.mana}`, 240, 104, 12, C.gold);
+  const eco = r.economy;
+  labelC(overlay, eco ? `战利＋${r.bone}骨/${r.mana}魔・经营＋${eco.bone}骨/${eco.mana}魔` : `骨币 +${r.bone}   魔质 +${r.mana}`, 240, 104, 10, C.gold);
   boundedText(overlay, r.firstCause, 90, 120, 300, 26, 9, r.win ? C.stoneLit : C.gold);
   let y = 148;
   const xpLines = r.xp.map((x) => {
@@ -4834,6 +5123,22 @@ window.__debug = {
   },
   get monsters() { return S.monsters.map((m) => ({ ...m, room: roomOf(m.uid) })); },
   get rooms() { return S.rooms; },
+  get floors() { return S.floors.map((f, i) => ({ id: f.id, battle: { ...f.battle }, utility: { ...f.utility }, output: utilityOutput(i) })); },
+  get dungeon() { return { ...S.dungeon, preview: dungeonEconomyPreview(), healingCapacity: healingCapacity() }; },
+  devUtility: (floor, kind, level = 1, condition = 100) => {
+    if (!S.floors[floor] || !(kind in UTILITY_KINDS)) return null;
+    S.floors[floor].utility = kind === 'none' ? freshUtilityRoom() : {
+      kind, level: Math.max(1, Math.min(3, Math.round(level))), condition: Math.max(0, Math.min(100, Math.round(condition))), workerUid: null,
+    };
+    S.dungeon.healingCharges = healingCapacity(); persist(); render();
+    return { ...S.floors[floor].utility };
+  },
+  devExpandFloor: () => { expandFloor(); return S.floors.length; },
+  devEconomySettle: (broken = []) => {
+    const snap = dungeonEconomyPreview();
+    const out = settleDungeonEconomy({ dungeonEconomy: snap, rooms: S.rooms.map((_, i) => ({ broken: broken.includes(i) })) });
+    persist(); render(); return out;
+  },
   get battle() {
     if (!battle) return null;
     return {
