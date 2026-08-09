@@ -263,10 +263,21 @@ export function createBattle(raid         , rooms           , insts             
         mons.push(u);
       }
     }
+    const utilityRow = opts.dungeonEconomy?.rows?.[i] ?? null;
+    const workerInst = utilityRow?.workerUid != null ? insts.find((m) => m.uid === utilityRow.workerUid) : null;
+    const worker = workerInst ? makeMonUnit(workerInst, 1, i, mod) : null;
+    if (worker) {
+      worker.utilityWorker = true;
+      worker.x = 356; worker.homeX = 356; worker.y = BACK_Y;
+    }
     return {
       index: i, theme: r.theme, trap: r.trap, trapUsed: false, trapDisarmed: false,
       trapArm: 0, spellLock: 0, reflectLeft: 0, reflectPct: 0, synergy: synergyOf(r.theme, r.trap)?.name ?? '',
       mons, leader, routed: false, heroKills: 0, broken: false, breachReason: '', breachTime: 0, doorShake: 0,
+      utility: utilityRow ? {
+        row: utilityRow, kind: utilityRow.kind ?? 'none', condition: utilityRow.condition ?? 100,
+        worker, workerState: worker ? 'working' : 'none', loot: null,
+      } : null,
     };
   });
   const heroes = raid.members.map((mm, i) => makeHeroUnit(mm.cls, mm.lv, i, raid.members.length, mod));
@@ -294,6 +305,7 @@ export function createBattle(raid         , rooms           , insts             
     roomTimer: limit,
     seal: sealCap, time: 0, moraleMult: 1,
     events: [], log: [], dialogue: [], result: null, throneIdx: 0,
+    dungeonEconomy: opts.dungeonEconomy ?? null,
     sealMax: sealCap, trapPower: (opts.trapPower ?? 1) * mod.trapMult,
     rng: mulberry(raid.no * 9176 + 13),
     metrics: { attacks: 0, skills: 0, hits: 0, heavyHits: 0, damage: 0, healing: 0,
@@ -1886,7 +1898,7 @@ export function stepBattle(b        , dt        ) {
     if (u.side === 'mon' && !u.legend && auraOf(b, u) === 'brood') rg += 3 * auraPow(b, u.room);
     if (rg > 0 && u.hp < u.maxHp) u.hp = Math.min(u.maxHp, u.hp + rg * dt);
     // 瘟疫什一（统领光环）：本房勇者持续中毒且受治疗大打折扣
-    if (u.side === 'hero' && u.room === b.roomIndex && b.phase === 'fight'
+    if (u.side === 'hero' && u.room === b.roomIndex && (b.phase === 'fight' || b.phase === 'workerFight')
         && roomAura(b, b.roomIndex) === 'tithe') {
       const pw = auraPow(b, b.roomIndex);
       u.hp -= 3 * pw * dt;
@@ -1914,13 +1926,14 @@ export function stepBattle(b        , dt        ) {
     return;
   }
 
-  if (b.phase === 'fight') {
+  if (b.phase === 'fight' || b.phase === 'workerFight') {
+    const workerFight = b.phase === 'workerFight';
     b.phaseT += dt;
-    b.roomTimer -= dt;
+    if (!workerFight) b.roomTimer -= dt;
     const room = b.rooms[b.roomIndex];
 
     if (room.spellLock > 0) room.spellLock -= dt;
-    if (room.trapArm > 0) {
+    if (!workerFight && room.trapArm > 0) {
       room.trapArm -= dt;
       if (room.trapArm <= 0) triggerTrap(b);
     }
@@ -1957,13 +1970,27 @@ export function stepBattle(b        , dt        ) {
       if (m.cd <= 0) { basicAttack(b, m); m.cd = interval(m, b); }
     }
 
-    if (!aliveHeroes(b).length) { finish(b); return; }
+    if (!aliveHeroes(b).length) {
+      if (workerFight) finalizeLoot(b, room);
+      finish(b); return;
+    }
     if (!aliveMons(b).length) {
+      if (workerFight) {
+        room.utility.workerState = 'fallen';
+        room.utility.row.workerState = 'fallen';
+        room.utility.row.workerFell = true;
+        b.events.push({ k: 'worker-fall', room: b.roomIndex, x: room.utility.worker?.x ?? 356 });
+        const hero = aliveHeroes(b)[0];
+        if (hero) speak(b, hero, '后勤也清干净了，继续搬！', 'loot');
+        log(b, `第${b.roomIndex + 1}层工作人员抵抗失败，勇者继续劫掠`, 'bad');
+        b.phase = 'loot'; b.phaseT = 0;
+        return;
+      }
       room.breachReason = room.mons.length ? '守军全灭' : '无人驻守';
       breach(b);
       return;
     }
-    if (b.roomTimer <= 0) {
+    if (!workerFight && b.roomTimer <= 0) {
       room.breachReason = '战斗超时（勇者士气下降）';
       b.moraleMult *= 0.9;
       log(b, `第${b.roomIndex + 1}房超时：勇者攻击-10%`, 'good');
@@ -1978,9 +2005,13 @@ export function stepBattle(b        , dt        ) {
     const room = b.rooms[b.roomIndex];
     room.doorShake = b.phaseT < 0.3 ? 2 : 0;
     if (b.phaseT >= 0.65) {
-      if (b.roomIndex >= b.rooms.length - 1) { b.phase = 'throne'; b.phaseT = 0; b.throneIdx = 0; }
-      else { b.phase = 'march'; b.phaseT = 0; }
+      beginLoot(b, room);
     }
+    return;
+  }
+
+  if (b.phase === 'loot') {
+    tickLoot(b, dt);
     return;
   }
 
@@ -2009,6 +2040,131 @@ export function stepBattle(b        , dt        ) {
     finish(b);
     return;
   }
+}
+
+const WORKER_DEPLOY_LINES = ['工钱得拿命挣了！', '后勤也是地牢的一道门！', '放下账本，拿起武器！'];
+const WORKER_EVAC_LINES = ['账本带走，设备不要了！', '活着才能重建，撤！', '封存仓库，从侧道撤离！'];
+const HERO_LOOT_LINES = ['砸开库门，能带走的全带走！', '五秒，搜光这里！', '先搬资源，再毁设备！'];
+
+function utilityServiceTotal(row) {
+  return (row.healingCharges ?? 0) + (row.forgeCharges ?? 0) + (row.hatcheryCharges ?? 0);
+}
+
+function advanceAfterLoot(b) {
+  if (b.roomIndex >= b.rooms.length - 1) {
+    b.phase = 'throne'; b.phaseT = 0; b.throneIdx = 0;
+  } else {
+    b.phase = 'march'; b.phaseT = 0;
+  }
+}
+
+function finalizeLoot(b, room) {
+  const utility = room?.utility;
+  const loot = utility?.loot;
+  if (!utility || !loot || loot.finalized) return;
+  loot.finalized = true;
+  const row = utility.row;
+  const complete = loot.progress >= 1;
+  const conditionDamage = Math.min(row.condition ?? 100, 15 + (complete ? 10 : 0));
+  row.realtime = {
+    breached: true,
+    duration: Number(loot.t.toFixed(2)), progress: Number(loot.progress.toFixed(3)),
+    boneLoss: loot.boneLoss, manaLoss: loot.manaLoss, xpLoss: loot.xpLoss,
+    repairLoss: loot.repairLoss, serviceLost: loot.serviceLost, conditionDamage,
+    workerState: utility.workerState,
+  };
+  b.events.push({ k: 'utility-break', room: room.index, complete, progress: loot.progress });
+  log(b, complete
+    ? `勇者洗劫了第${room.index + 1}层后勤房，并砸毁主要设施`
+    : `第${room.index + 1}层劫掠被中止，只来得及带走部分物资`, complete ? 'bad' : 'good');
+}
+
+function beginLoot(b, room) {
+  const utility = room.utility;
+  if (!utility || utility.kind === 'none' || utility.condition <= 0) {
+    advanceAfterLoot(b);
+    return;
+  }
+  const row = utility.row;
+  const totalService = utilityServiceTotal(row);
+  utility.loot = {
+    duration: 5, t: 0, progress: 0, lastEvent: -1,
+    boneLoss: 0, manaLoss: 0, xpLoss: 0, repairLoss: 0,
+    serviceLost: Math.min(totalService, 1), finalized: false,
+  };
+  row.workerState = utility.workerState;
+  b.phase = 'loot'; b.phaseT = 0;
+  const hero = aliveHeroes(b)[0];
+  const line = HERO_LOOT_LINES[Math.floor(b.rng() * HERO_LOOT_LINES.length)];
+  if (hero) speak(b, hero, line, 'loot');
+  b.events.push({ k: 'loot-start', room: room.index, x: 340, kind: utility.kind });
+  log(b, `勇者闯入第${room.index + 1}层后勤房：五秒劫掠开始`, 'bad');
+}
+
+function tickLoot(b, dt) {
+  const room = b.rooms[b.roomIndex];
+  const utility = room.utility;
+  const loot = utility?.loot;
+  if (!loot) { advanceAfterLoot(b); return; }
+  const worker = utility.worker;
+  const resistance = utility.workerState === 'working'
+    ? Math.max(0.65, 0.85 - Math.max(1, worker?.lv ?? 1) * 0.05) : 1;
+  loot.t = Math.min(loot.duration, loot.t + dt * resistance);
+  loot.progress = Math.min(1, loot.t / loot.duration);
+  const row = utility.row;
+  loot.boneLoss = Math.round((row.bone ?? 0) * Math.min(1, loot.t * 0.2));
+  loot.manaLoss = Math.round((row.mana ?? 0) * Math.min(0.6, loot.t * 0.12));
+  loot.xpLoss = Math.round((row.xp ?? 0) * Math.min(1, loot.t * 0.2));
+  loot.repairLoss = Math.round((row.repair ?? 0) * Math.min(1, loot.t * 0.2));
+  loot.serviceLost = Math.min(utilityServiceTotal(row), 1 + Math.floor(loot.t / 2));
+  aliveHeroes(b).forEach((h, i) => { h.x += (284 - i * 24 - h.x) * Math.min(1, dt * 4); });
+  const eventStep = Math.floor(loot.t * 2);
+  if (eventStep > loot.lastEvent) {
+    loot.lastEvent = eventStep;
+    b.events.push({ k: 'loot-tick', room: room.index, x: 340, progress: loot.progress,
+      boneLoss: loot.boneLoss, manaLoss: loot.manaLoss, xpLoss: loot.xpLoss, repairLoss: loot.repairLoss });
+  }
+  if (!aliveHeroes(b).length) { finalizeLoot(b, room); finish(b); return; }
+  if (loot.t >= loot.duration) {
+    finalizeLoot(b, room);
+    advanceAfterLoot(b);
+  }
+}
+
+export function deployUtilityWorker(b) {
+  const room = b?.rooms?.[b.roomIndex];
+  const utility = room?.utility;
+  if (!utility?.worker || utility.workerState !== 'working'
+      || !['enter', 'fight', 'loot'].includes(b.phase)) return false;
+  const worker = utility.worker;
+  utility.workerState = 'reinforced';
+  utility.row.workerState = 'reinforced';
+  utility.row.workerReinforced = true;
+  worker.alive = true; worker.hp = Math.max(1, worker.hp); worker.room = b.roomIndex;
+  worker.x = worker.homeX = 352; worker.y = BACK_Y; worker.cd = 0.5; worker.skillCd = 1.8;
+  if (!room.mons.includes(worker)) room.mons.push(worker);
+  const line = WORKER_DEPLOY_LINES[Math.floor(b.rng() * WORKER_DEPLOY_LINES.length)];
+  speak(b, worker, line, 'worker');
+  log(b, `${worker.name}放下工作，临时加入第${room.index + 1}层防守`, 'good');
+  b.events.push({ k: 'worker-deploy', room: room.index, unit: worker, x: worker.x });
+  if (b.phase === 'loot') { b.phase = 'workerFight'; b.phaseT = 0; }
+  return true;
+}
+
+export function evacuateUtilityWorker(b) {
+  const room = b?.rooms?.[b.roomIndex];
+  const utility = room?.utility;
+  if (!utility?.worker || utility.workerState !== 'working'
+      || !['enter', 'fight', 'loot'].includes(b.phase)) return false;
+  const worker = utility.worker;
+  utility.workerState = 'evacuated';
+  utility.row.workerState = 'evacuated';
+  utility.row.workerEvacuated = true;
+  const line = WORKER_EVAC_LINES[Math.floor(b.rng() * WORKER_EVAC_LINES.length)];
+  speak(b, worker, line, 'worker');
+  log(b, `${worker.name}携带账本从第${room.index + 1}层安全撤离`, 'good');
+  b.events.push({ k: 'worker-evacuate', room: room.index, unit: worker, x: worker.x });
+  return true;
 }
 
 function breach(b        ) {
@@ -2105,9 +2261,15 @@ function finish(b        ) {
     m.revives ? `复活${m.revives}次` : '',
     m.allyRevives ? `拉起队友${m.allyRevives}次` : '',
   ].filter(Boolean);
-  const roomStory = b.rooms.map((room) => room.broken
-    ? `第${room.index + 1}房在${Number(room.breachTime ?? b.time).toFixed(1)}秒失守，${room.breachReason}`
-    : `第${room.index + 1}房守到战斗结束`).join('；');
+  const roomStory = b.rooms.map((room) => {
+    if (!room.broken) return `第${room.index + 1}房守到战斗结束`;
+    const rt = room.utility?.row?.realtime;
+    const worker = rt?.workerState === 'evacuated' ? '，工作人员及时撤离'
+      : rt?.workerState === 'fallen' ? '，工作人员抵抗至倒下'
+        : rt?.workerState === 'reinforced' ? '，工作人员临时参战' : '';
+    const loot = rt ? `；勇者又用${rt.duration.toFixed(1)}秒洗劫后勤，设施损失${rt.conditionDamage}耐久${worker}` : '';
+    return `第${room.index + 1}房在${Number(room.breachTime ?? b.time).toFixed(1)}秒失守，${room.breachReason}${loot}`;
+  }).join('；');
   const review = [
     win
       ? `终场：${kills}/${total}名勇者倒在门与门之间，仍有${roomsHeld}间房保持完整；王座上方的封印最后停在${seal}%。`

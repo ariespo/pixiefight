@@ -2,7 +2,7 @@ import * as PIXI from 'pixi.js';
 import { C, VIEW_W, VIEW_H, MONSTERS, HERO_CLASSES, THEMES, TRAPS, RAIDS, AFFIXES, AURAS, LEVEL_MULT, UPGRADE_COST, XP_PER_LEVEL, TEXTURES, HERO_LV_MULT, SYNERGY, synergyOf, kindById, registerKinds, unregisterKind, isCustomKind, isEliteKind } from './data.js';
 import { GEARS, GEAR_SLOTS, GEAR_CAP, MELT_MANA, REFORGE_MANA, FRAMES, RUNES, TEMPERS, FORGED_CAP, craftCost, craftKind, craftName, frameById, runeById, runesFor, temperById, planValid, registerForged, gearById, gearEff, gearSet,                                                               } from './gear.js';
                                                                                         
-import { createBattle, stepBattle, ROOM_W, affixText, actionProgress } from './battle.js';
+import { createBattle, stepBattle, ROOM_W, affixText, actionProgress, deployUtilityWorker, evacuateUtilityWorker } from './battle.js';
                                                                       
 import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, AFFIX_BUDGET, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, clampAffixDraft, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, legendaryPartCount, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
                                                                                                                           
@@ -436,7 +436,7 @@ function utilityOutput(floorIndex) {
   const u = floor?.utility;
   const d = utilityDef(u);
   if (!u || u.kind === 'none' || u.condition <= 0) return {
-    bone: 0, mana: 0, xp: 0, repair: 0, forgeCharges: 0, forgeDiscount: 0,
+    bone: 0, mana: 0, xp: 0, repair: 0, healingCharges: 0, forgeCharges: 0, forgeDiscount: 0,
     hatcheryCharges: 0, hatcheryDiscount: 0, training: [],
   };
   const lv = Math.max(1, Math.min(3, u.level)) - 1;
@@ -450,6 +450,7 @@ function utilityOutput(floorIndex) {
     mana: d.yields && u.kind === 'mana-well' ? Math.max(0, Math.round(d.yields[lv] * mult)) : 0,
     xp: u.kind === 'training' && targets.length ? Math.max(0, Math.round(d.xp[lv] * condition)) : 0,
     repair: u.kind === 'workshop' ? Math.max(0, Math.round(d.repair[lv] * condition * staffed)) : 0,
+    healingCharges: u.kind === 'healing' ? Math.max(1, Math.round(d.charges[lv] * condition * staffed)) : 0,
     forgeCharges: u.kind === 'workshop' ? 1 : 0,
     forgeDiscount: u.kind === 'workshop' ? d.discount[lv] * Math.min(1, condition * staffed) : 0,
     hatcheryCharges: u.kind === 'hatchery' ? Math.max(1, Math.round(d.charges[lv] * condition * staffed)) : 0,
@@ -507,7 +508,8 @@ function vaultCapacity(broken = null) {
 }
 
 function dungeonEconomyPreview() {
-  const rows = S.floors.map((f, i) => ({ floor: i, kind: f.utility.kind, level: f.utility.level, condition: f.utility.condition, ...utilityOutput(i) }));
+  const rows = S.floors.map((f, i) => ({ floor: i, kind: f.utility.kind, level: f.utility.level,
+    condition: f.utility.condition, workerUid: f.utility.workerUid, ...utilityOutput(i) }));
   return {
     rows,
     bone: rows.reduce((n, x) => n + x.bone, 0),
@@ -642,17 +644,23 @@ function settleDungeonEconomy(b) {
     const breached = broken[row.floor] ?? false;
     const bone = row.bone ?? 0, mana = row.mana ?? 0, xp = row.xp ?? 0, repair = row.repair ?? 0;
     const training = Array.isArray(row.training) ? row.training : [];
-    let boneLoss = breached ? Math.round(bone * 0.6) : 0;
-    let manaLoss = breached ? Math.round(mana * 0.6) : 0;
-    const xpLoss = breached ? Math.round(xp * 0.6) : 0;
-    const repairLoss = breached ? Math.round(repair * 0.6) : 0;
+    const realtime = row.realtime;
+    let boneLoss = realtime ? realtime.boneLoss : breached ? Math.round(bone * 0.6) : 0;
+    let manaLoss = realtime ? realtime.manaLoss : breached ? Math.round(mana * 0.6) : 0;
+    const xpLoss = realtime ? realtime.xpLoss : breached ? Math.round(xp * 0.6) : 0;
+    const repairLoss = realtime ? realtime.repairLoss : breached ? Math.round(repair * 0.6) : 0;
     const manaProtected = Math.min(manaShield, manaLoss); manaShield -= manaProtected; manaLoss -= manaProtected;
     const boneProtected = Math.min(boneShield, boneLoss); boneShield -= boneProtected; boneLoss -= boneProtected;
     const u = utilityAt(row.floor);
-    if (breached && u && u.kind !== 'none') u.condition = Math.max(0, u.condition - 15);
+    const conditionDamage = row.kind === 'none' ? 0 : realtime?.conditionDamage ?? (breached ? 15 : 0);
+    if (conditionDamage && u && u.kind !== 'none') u.condition = Math.max(0, u.condition - conditionDamage);
     return { ...row, bone, mana, xp, repair, training, breached, boneLoss, manaLoss, xpLoss, repairLoss, boneProtected, manaProtected,
       boneGot: bone - boneLoss, manaGot: mana - manaLoss,
-      xpGot: xp - xpLoss, repairGot: repair - repairLoss, conditionAfter: u?.condition ?? 100 };
+      xpGot: xp - xpLoss, repairGot: repair - repairLoss, conditionDamage,
+      serviceLost: realtime?.serviceLost ?? (breached && row.kind !== 'none' ? (row.healingCharges ?? 0) + (row.forgeCharges ?? 0) + (row.hatcheryCharges ?? 0) : 0),
+      lootDuration: realtime?.duration ?? 0, lootProgress: realtime?.progress ?? (breached && row.kind !== 'none' ? 0.6 : 0),
+      workerState: realtime?.workerState ?? row.workerState ?? (row.workerUid ? 'working' : 'none'),
+      conditionAfter: u?.condition ?? 100 };
   }).reverse();
   const out = {
     rows,
@@ -675,13 +683,13 @@ function settleDungeonEconomy(b) {
     }
   }
   S.dungeon.repairPoints = Math.min(60, S.dungeon.repairPoints + out.repair);
-  const safeRows = rows.filter((row) => !row.breached && row.conditionAfter > 0);
-  S.dungeon.healingCharges = Math.min(6, safeRows.reduce((n, row) => row.kind === 'healing'
-    ? n + UTILITY_KINDS.healing.charges[row.level - 1] : n, 0));
-  S.dungeon.forgeCharges = Math.min(2, safeRows.reduce((n, row) => n + (row.forgeCharges ?? 0), 0));
-  S.dungeon.forgeDiscount = safeRows.reduce((n, row) => Math.max(n, row.forgeDiscount ?? 0), 0);
-  S.dungeon.hatcheryCharges = Math.min(3, safeRows.reduce((n, row) => n + (row.hatcheryCharges ?? 0), 0));
-  S.dungeon.hatcheryDiscount = safeRows.reduce((n, row) => Math.max(n, row.hatcheryDiscount ?? 0), 0);
+  const serviceRows = rows.filter((row) => row.conditionAfter > 0);
+  const remainingService = (row, key) => Math.max(0, (row[key] ?? 0) - (row.breached ? row.serviceLost : 0));
+  S.dungeon.healingCharges = Math.min(6, serviceRows.reduce((n, row) => n + remainingService(row, 'healingCharges'), 0));
+  S.dungeon.forgeCharges = Math.min(2, serviceRows.reduce((n, row) => n + remainingService(row, 'forgeCharges'), 0));
+  S.dungeon.forgeDiscount = serviceRows.reduce((n, row) => Math.max(n, remainingService(row, 'forgeCharges') ? (row.forgeDiscount ?? 0) : 0), 0);
+  S.dungeon.hatcheryCharges = Math.min(3, serviceRows.reduce((n, row) => n + remainingService(row, 'hatcheryCharges'), 0));
+  S.dungeon.hatcheryDiscount = serviceRows.reduce((n, row) => Math.max(n, remainingService(row, 'hatcheryCharges') ? (row.hatcheryDiscount ?? 0) : 0), 0);
   out.services = {
     healing: S.dungeon.healingCharges,
     forge: S.dungeon.forgeCharges,
@@ -4518,8 +4526,8 @@ function pageReport(g               ) {
   let y = 82;
   for (const rr of prooms.view) {
     g.rect(8, y, 200, 16).fill(C.wall);
-    label(uiLayer, `${rr.i + 1}层 ${rr.broken ? `失守 ${rr.t.toFixed(1)}s` : '守住'}`, 12, y + 2, 12, rr.broken ? C.red : C.green);
-    label(uiLayer, rr.broken ? rr.reason : '—', 96, y + 2, 12, C.stoneLit);
+    label(uiLayer, `${rr.i + 1}层 ${rr.broken ? `失守${rr.lootDuration ? `・劫${rr.lootDuration.toFixed(1)}s` : ''}` : '守住'}`, 12, y + 3, 10, rr.broken ? C.red : C.green);
+    label(uiLayer, rr.broken ? cut(rr.reason, 7) : '—', 128, y + 3, 9, C.stoneLit);
     y += 18;
   }
   pager(g, `rep-rooms-${reportIdx}`, prooms.pages, 8, 138, 200, '楼层 ');
@@ -4529,7 +4537,7 @@ function pageReport(g               ) {
     const review = Array.isArray(r.review) && r.review.length ? r.review : [r.firstCause];
     const economy = r.economy;
     const economyText = economy
-      ? `\n\n经营损益：结算${economy.bone}骨币、${economy.mana}魔质、${economy.xp ?? 0}训练经验与${economy.repair ?? 0}维修点；损失${economy.boneLost}骨币、${economy.manaLost}魔质、${economy.xpLost ?? 0}训练经验与${economy.repairLost ?? 0}维修点；宝库保护${economy.boneProtected}骨币、${economy.manaProtected}魔质。\n功能储备：疗愈${economy.services?.healing ?? 0}次，工坊${economy.services?.forge ?? 0}次（-${Math.round((economy.services?.forgeDiscount ?? 0) * 100)}%），孵化优惠${economy.services?.hatchery ?? 0}次（-${Math.round((economy.services?.hatcheryDiscount ?? 0) * 100)}%）。\n${economy.rows.filter((x) => x.kind !== 'none').map((x) => `第${x.floor + 1}层 ${utilityDef({ kind: x.kind }).name}：${x.breached ? '遭劫掠' : '安全'}，结算${x.boneGot}骨/${x.manaGot}魔/${(x.xpGot ?? 0) * (x.training?.length ?? 0)}经验/${x.repairGot ?? 0}维修点，耐久${x.conditionAfter}`).join('\n')}`
+      ? `\n\n经营损益：结算${economy.bone}骨币、${economy.mana}魔质、${economy.xp ?? 0}训练经验与${economy.repair ?? 0}维修点；损失${economy.boneLost}骨币、${economy.manaLost}魔质、${economy.xpLost ?? 0}训练经验与${economy.repairLost ?? 0}维修点；宝库保护${economy.boneProtected}骨币、${economy.manaProtected}魔质。\n功能储备：疗愈${economy.services?.healing ?? 0}次，工坊${economy.services?.forge ?? 0}次（-${Math.round((economy.services?.forgeDiscount ?? 0) * 100)}%），孵化优惠${economy.services?.hatchery ?? 0}次（-${Math.round((economy.services?.hatcheryDiscount ?? 0) * 100)}%）。\n${economy.rows.filter((x) => x.kind !== 'none').map((x) => `第${x.floor + 1}层 ${utilityDef({ kind: x.kind }).name}：${x.breached ? `遭劫${(x.lootDuration ?? 0).toFixed(1)}秒、设施-${x.conditionDamage ?? 0}耐久、功能损失${x.serviceLost ?? 0}次、员工${x.workerState === 'evacuated' ? '撤离' : x.workerState === 'fallen' ? '抵抗倒下' : x.workerState === 'reinforced' ? '参战' : x.workerUid ? '留守' : '无人'}` : '安全'}，结算${x.boneGot}骨/${x.manaGot}魔/${(x.xpGot ?? 0) * (x.training?.length ?? 0)}经验/${x.repairGot ?? 0}维修点，耐久${x.conditionAfter}`).join('\n')}`
       : '';
     const quotes = Array.isArray(r.dialogue) && r.dialogue.length
       ? r.dialogue.slice(-18).map((d) => `${d.name}：${d.text}`)
@@ -4630,9 +4638,9 @@ function startBattle() {
   for (const m of S.monsters) instKind(m);
   for (const c of S.champs) champKind(c);
   const raid = currentRaid();
+  const dungeonEconomy = dungeonEconomyPreview();
   battle = createBattle(raid, S.rooms, S.monsters,
-    { sealMax: sealMax(), trapPower: trapPower(), mods: battleMods(), champs: champStatMap() });
-  battle.dungeonEconomy = dungeonEconomyPreview();
+    { sealMax: sealMax(), trapPower: trapPower(), mods: battleMods(), champs: champStatMap(), dungeonEconomy });
   pendingResultRaid = raid.no;
   screen = 'battle';
   uiPortraitFx.length = 0;
@@ -4694,7 +4702,21 @@ function buildBattleScene() {
       trapSp = sprite(TRAPS[trapId].tex , rx + 250, FLOOR_Y + 2, 22);
       bgLayer.addChild(trapSp);
     }
-    roomVis.push({ door: g, trap: trapSp, broken: false });
+    let utilityGfx = null, utilityLabel = null;
+    const utility = b.rooms[i].utility;
+    if (utility && utility.kind !== 'none' && utility.condition > 0) {
+      utilityGfx = new PIXI.Graphics();
+      utilityGfx.rect(rx + 310, FLOOR_Y - 54, 66, 52).fill({ color: C.wall, alpha: 0.92 })
+        .stroke({ width: 2, color: C.goldDark, alignment: 0 });
+      utilityGfx.rect(rx + 316, FLOOR_Y - 40, 18, 30).fill(C.ink).stroke({ width: 1, color: C.leather, alignment: 0 });
+      utilityGfx.rect(rx + 340, FLOOR_Y - 32, 28, 22).fill(C.wallLit).stroke({ width: 1, color: C.stoneLit, alignment: 0 });
+      utilityGfx.circle(rx + 354, FLOOR_Y - 21, 4).fill(C.goldDark);
+      bgLayer.addChild(utilityGfx);
+      utilityLabel = txt(UTILITY_KINDS[utility.kind]?.name ?? '后勤房', 10, C.gold);
+      utilityLabel.x = rx + 314; utilityLabel.y = FLOOR_Y - 51;
+      bgLayer.addChild(utilityLabel);
+    }
+    roomVis.push({ door: g, trap: trapSp, broken: false, utilityGfx, utilityLabel });
   }
   // 王座
   const tx = b.rooms.length * ROOM_W;
@@ -4721,6 +4743,7 @@ function buildBattleScene() {
 
   for (const h of b.heroes) ensureSprite(h);
   for (const r of b.rooms) for (const m of r.mons) ensureSprite(m);
+  for (const r of b.rooms) if (r.utility?.worker) ensureSprite(r.utility.worker);
 }
 
 function ensureSprite(u      ) {
@@ -4812,6 +4835,38 @@ function consumeEvents() {
       spawnFloat(e.room * ROOM_W + ROOM_W - 60, FLOOR_Y - 70, '失守', C.red);
       playSfx('break');
       flashT = 0.1; flashCol = C.redDark;
+    } else if (e.k === 'loot-start') {
+      spawnFloat(e.room * ROOM_W + e.x, FLOOR_Y - 74, '勇者开始劫掠', C.red);
+      spawnParticles(e.room * ROOM_W + e.x, FLOOR_Y - 26, 8, C.goldDark, 42);
+      playSfx('break', 0.9);
+      flashT = 0.07; flashCol = C.goldDark;
+    } else if (e.k === 'loot-tick') {
+      const loss = [e.boneLoss ? `骨-${e.boneLoss}` : '', e.manaLoss ? `魔-${e.manaLoss}` : ''].filter(Boolean).join(' ');
+      if (loss) spawnFloat(e.room * ROOM_W + e.x, FLOOR_Y - 62, loss, C.red);
+      spawnParticles(e.room * ROOM_W + e.x, FLOOR_Y - 22, 4, C.leather, 55);
+      const rv = roomVis[e.room];
+      if (rv?.utilityGfx) rv.utilityGfx.alpha = 0.55 + (1 - e.progress) * 0.45;
+      playSfx('heavy', 0.45);
+    } else if (e.k === 'utility-break') {
+      const rv = roomVis[e.room];
+      if (rv?.utilityGfx) { rv.utilityGfx.tint = e.complete ? 0x7a3d46 : 0xb18468; rv.utilityGfx.alpha = 0.72; }
+      if (rv?.utilityLabel) rv.utilityLabel.text = e.complete ? '设施被毁' : '设施受损';
+      spawnParticles(e.room * ROOM_W + 342, FLOOR_Y - 22, e.complete ? 12 : 7, C.redDark, 85);
+      spawnFloat(e.room * ROOM_W + 342, FLOOR_Y - 82, e.complete ? '设施被砸毁' : '劫掠中断', e.complete ? C.red : C.green);
+      playSfx('break', 1.2);
+      shakeT = 0.14; shakeAmt = 3;
+    } else if (e.k === 'worker-deploy') {
+      ensureSprite(e.unit);
+      spawnParticles(e.room * ROOM_W + e.x, FLOOR_Y - 10, 8, C.green, 45);
+      spawnFloat(e.room * ROOM_W + e.x, FLOOR_Y - 60, '工作人员增援', C.green);
+      playSfx('trap', 0.9);
+    } else if (e.k === 'worker-evacuate') {
+      spawnFloat(e.room * ROOM_W + e.x, FLOOR_Y - 60, '工作人员撤离', C.gold);
+      spawnParticles(e.room * ROOM_W + e.x, FLOOR_Y - 10, 5, C.stoneLit, 30);
+      playSfx('coin', 0.8);
+    } else if (e.k === 'worker-fall') {
+      spawnFloat(e.room * ROOM_W + e.x, FLOOR_Y - 60, '抵抗失败', C.red);
+      flashT = 0.08; flashCol = C.redDark;
     } else if (e.k === 'throne') {
       playSfx('throne');
       flashT = 0.14; flashCol = C.redDark;
@@ -4828,7 +4883,7 @@ function consumeEvents() {
 
 function updateBattleVisuals(dt        ) {
   const b = battle ;
-  camTargetX = b.roomIndex * ROOM_W - 40;
+  camTargetX = b.roomIndex * ROOM_W - ((b.phase === 'loot' || b.phase === 'workerFight') ? 10 : 40);
   if (b.phase === 'throne') camTargetX = b.rooms.length * ROOM_W - 120;
   camX += (camTargetX - camX) * Math.min(1, dt * 7);
   let ox = -Math.round(camX), oy = 0;
@@ -4900,6 +4955,20 @@ function updateBattleVisuals(dt        ) {
   };
   b.heroes.forEach(drawUnit);
   b.rooms[b.roomIndex].mons.forEach(drawUnit);
+  for (const r of b.rooms) {
+    const worker = r.utility?.worker;
+    if (!worker || r.mons.includes(worker)) continue;
+    const node = unitPortraitNodes.get(worker);
+    if (!node) continue;
+    const show = r.index === b.roomIndex && r.utility.workerState === 'working'
+      && ['enter', 'fight', 'break', 'loot'].includes(b.phase);
+    node.visible = show;
+    if (show) {
+      node.x = Math.round(r.index * ROOM_W + 356);
+      node.y = Math.round(FLOOR_Y - 6 + Math.sin(b.time * 5) * 1.5);
+      node.alpha = b.phase === 'loot' ? 1 : 0.78;
+    }
+  }
   for (let i = 0; i < b.rooms.length; i++) {
     if (i === b.roomIndex) continue;
     b.rooms[i].mons.forEach((m) => {
@@ -4983,7 +5052,7 @@ function updateBattleVisuals(dt        ) {
 }
 
 function drawBattleTimeline(b        , g               , parent                ) {
-  if (b.phase !== 'fight') return;
+  if (b.phase !== 'fight' && b.phase !== 'workerFight') return;
   const units = [
     ...b.heroes.filter((h) => h.alive && h.room === b.roomIndex),
     ...b.rooms[b.roomIndex].mons.filter((m) => m.alive),
@@ -5027,7 +5096,9 @@ function drawBattleHud() {
   label(hudLayer, '封印', 6, 5, 12, C.purple);
   bar(hudGfx, 38, 8, 90, 8, b.seal / b.sealMax, C.purple);
   label(hudLayer, `${b.seal}/${b.sealMax}`, 132, 5, 12, C.bone);
-  label(hudLayer, b.phase === 'throne' ? '勇者已抵达王座' : `第${b.roomIndex + 1}房`, 186, 5, 12, C.white);
+  label(hudLayer, b.phase === 'throne' ? '勇者已抵达王座'
+    : b.phase === 'loot' ? `第${b.roomIndex + 1}层劫掠`
+      : b.phase === 'workerFight' ? `第${b.roomIndex + 1}层后勤抵抗` : `第${b.roomIndex + 1}房`, 186, 5, 12, C.white);
   if (b.phase === 'fight') label(hudLayer, `剩余 ${Math.max(0, b.roomTimer).toFixed(1)}s`, 240, 5, 12, b.roomTimer < 5 ? C.red : C.bone);
   const alive = b.heroes.filter((h) => h.alive).length;
   label(hudLayer, `勇者 ${alive}/${b.heroes.length}`, 316, 5, 12, C.red);
@@ -5043,6 +5114,24 @@ function drawBattleHud() {
   if (interactive) {
     button(hudGfx, hudLayer, hits, 384, 2, 42, 18, paused ? '继续' : '暂停', () => { paused = !paused; }, { size: 12 });
     button(hudGfx, hudLayer, hits, 430, 2, 42, 18, `${speed}×`, () => { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; }, { size: 12 });
+    const utility = b.rooms[b.roomIndex]?.utility;
+    if (utility?.worker && utility.workerState === 'working' && ['enter', 'fight', 'loot'].includes(b.phase)) {
+      if (b.phase === 'loot') {
+        button(hudGfx, hudLayer, hits, 348, 29, 58, 18, '留下抵抗', () => deployUtilityWorker(b), { size: 10, fill: C.greenDark, border: C.green });
+        button(hudGfx, hudLayer, hits, 410, 29, 58, 18, '立即撤离', () => evacuateUtilityWorker(b), { size: 10, fill: C.wall, border: C.gold });
+      } else {
+        button(hudGfx, hudLayer, hits, 394, 29, 74, 18, '后勤增援', () => deployUtilityWorker(b), { size: 10, fill: C.greenDark, border: C.green });
+      }
+    }
+  }
+  const utility = b.rooms[b.roomIndex]?.utility;
+  if (b.phase === 'loot' && utility?.loot) {
+    const loot = utility.loot;
+    hudGfx.rect(70, 192, 340, 30).fill({ color: C.ink, alpha: 0.9 }).stroke({ width: 1, color: C.redDark, alignment: 0 });
+    label(hudLayer, `劫掠 ${loot.t.toFixed(1)}/5.0秒`, 78, 195, 10, C.red);
+    const losses = `骨-${loot.boneLoss} 魔-${loot.manaLoss} 经验-${loot.xpLoss} 维修-${loot.repairLoss}`;
+    label(hudLayer, losses, 188, 195, 10, C.bone);
+    bar(hudGfx, 78, 211, 324, 5, loot.progress, C.red);
   }
   // 行动时间轴：本房所有可行动单位按 cd 排序，右到左为行动先后
   drawBattleTimeline(b, hudGfx, hudLayer);
@@ -5133,7 +5222,9 @@ function finishBattle() {
   r.economy = economy;
   const report         = {
     raidNo: b.raid.no, title: b.raid.title, win: r.win, skulls: r.skulls, seal: r.seal, time: b.time,
-    rooms: b.rooms.map((rm) => ({ i: rm.index, broken: rm.broken, t: rm.breachTime, reason: rm.breachReason })),
+    rooms: b.rooms.map((rm) => ({ i: rm.index, broken: rm.broken, t: rm.breachTime, reason: rm.breachReason,
+      lootDuration: rm.utility?.row?.realtime?.duration ?? 0, lootProgress: rm.utility?.row?.realtime?.progress ?? 0,
+      workerState: rm.utility?.row?.realtime?.workerState ?? rm.utility?.workerState ?? 'none' })),
     units, firstCause: r.firstCause, review: r.review ?? [], metrics: r.metrics ?? {}, economy,
     dialogue: (b.dialogue ?? []).map((d) => ({ name: d.name, text: d.text, kind: d.kind, side: d.side, room: d.room, t: d.t })),
     logs: b.log.map((l) => ({ text: l.text, tone: l.tone })),
@@ -5454,6 +5545,12 @@ window.__debug = {
       heroesAlive: battle.heroes.filter((h) => h.alive).length,
       heroHp: battle.heroes.map((h) => Math.round(h.hp)),
       monHp: battle.rooms.map((r) => r.mons.map((m) => Math.round(m.hp))),
+      loot: battle.rooms[battle.roomIndex]?.utility?.loot ? { ...battle.rooms[battle.roomIndex].utility.loot } : null,
+      utility: battle.rooms[battle.roomIndex]?.utility ? {
+        kind: battle.rooms[battle.roomIndex].utility.kind,
+        workerState: battle.rooms[battle.roomIndex].utility.workerState,
+        realtime: battle.rooms[battle.roomIndex].utility.row.realtime ?? null,
+      } : null,
       logs: battle.log.length,
     };
   },
@@ -5464,6 +5561,8 @@ window.__debug = {
       ...battle.rooms[battle.roomIndex].mons.filter((m) => m.alive),
     ].map((u) => ({ name: u.name, tex: u.tex, progress: actionProgress(u, battle) })),
   } : null,
+  deployWorker: () => battle ? deployUtilityWorker(battle) : false,
+  evacuateWorker: () => battle ? evacuateUtilityWorker(battle) : false,
   startBattle: () => { startBattle(); return screen; },
   get result() { return battle?.result ?? null; },
   get reports() { return S.reports; },
