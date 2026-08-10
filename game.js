@@ -101,7 +101,7 @@ function freshSave()       {
     customs: [], cstNext: 1,
     diy: [], diyNext: 1,
     diyAf: [], diyAfNext: 1,
-    muted: false, seenClasses: [], tutorial: 0,
+    muted: false, seenClasses: [], tutorial: { step: 0, visited: {} },
     champs: [], champNext: 1, cands: [], candRaid: 0, candNext: 1, champPot: {},
     vault: [], forged: [], fgNext: 1,
     story: { vars: {}, mods: [], unlocks: [], seen: [], credits: 1, leads: [], archive: [], leadNext: 1,
@@ -175,6 +175,12 @@ function syncForged() {
 // 旧版本/损坏存档可能带未知陷阱或悬空引用，清洗后再渲染，否则查表会 undefined 白屏
 function sanitizeSave() {
   syncForged();
+  const legacyTutorial = typeof S.tutorial === 'number' ? S.tutorial : 0;
+  if (!S.tutorial || typeof S.tutorial !== 'object') S.tutorial = { step: legacyTutorial, visited: {} };
+  S.tutorial.step = Math.max(0, Math.min(8, Math.round(S.tutorial.step || 0)));
+  if (!S.tutorial.visited || typeof S.tutorial.visited !== 'object') S.tutorial.visited = {};
+  // 旧档已越过第一轮时不重新触发强制新手流程。
+  if (S.raidNo > 1) S.tutorial.step = 8;
   if (!Array.isArray(S.floors) || !S.floors.length) {
     const legacy = Array.isArray(S.rooms) && S.rooms.length ? S.rooms : [freshBattleRoom(), freshBattleRoom()];
     S.floors = legacy.slice(0, MAX_FLOORS).map((room, i) => freshFloor(i + 1, room));
@@ -966,6 +972,76 @@ const TABS                              = [
   { id: 'shop', name: '工坊' }, { id: 'report', name: '战报' },
   { id: 'story', name: '秘闻' },
 ];
+const FEATURE_RAID = {
+  throne: 1, dungeon: 1, mob: 1,
+  report: 2, dungeonTools: 2,
+  hero: 3, facilities: 3,
+  shop: 4, monsterCreation: 4,
+  story: 5,
+};
+const featureOpen = (id) => S.overtime || S.raidNo >= (FEATURE_RAID[id] ?? 1);
+const visibleTabs = () => TABS.filter((item) => featureOpen(item.id));
+const tutorialData = () => {
+  if (!S.tutorial || typeof S.tutorial !== 'object') S.tutorial = { step: 0, visited: {} };
+  if (!S.tutorial.visited || typeof S.tutorial.visited !== 'object') S.tutorial.visited = {};
+  return S.tutorial;
+};
+const monsterOfKind = (kind) => S.monsters.find((m) => m.kind === kind);
+const tutorialDeploymentReady = () => {
+  const slime = monsterOfKind('slime');
+  const archer = monsterOfKind('archer');
+  return !!slime && !!archer && S.rooms.some((room) => room.front === slime.uid && room.back === archer.uid);
+};
+function syncTutorialProgress() {
+  const t = tutorialData();
+  if (S.raidNo > 1 || S.overtime) { t.step = 8; return t.step; }
+  if (t.step < 1 && tab === 'mob') t.step = 1;
+  if (monsterOfKind('slime')) t.step = Math.max(t.step, 2);
+  if (monsterOfKind('slime') && monsterOfKind('archer')) t.step = Math.max(t.step, 3);
+  if (t.step >= 3 && tab === 'dungeon') t.step = Math.max(t.step, 4);
+  if (tutorialDeploymentReady()) t.step = Math.max(t.step, 5);
+  if (t.step >= 5 && tab === 'throne') t.step = Math.max(t.step, 6);
+  return t.step;
+}
+function markTabVisited(id) {
+  tutorialData().visited[`${S.raidNo}:${id}`] = true;
+}
+function firstRaidRecruitKinds() {
+  const step = syncTutorialProgress();
+  if (S.raidNo !== 1 || step >= 8) return null;
+  if (step < 2) return ['slime'];
+  if (step < 3) return ['archer'];
+  return ['slime', 'archer'];
+}
+function roundGuide() {
+  if (S.raidNo === 1 && !S.overtime) {
+    const step = syncTutorialProgress();
+    const room = S.rooms.findIndex((r) => {
+      const slime = monsterOfKind('slime');
+      return slime && r.front === slime.uid;
+    });
+    const messages = [
+      ['mob', '进入怪群，建立你的第一支守军'],
+      ['mobRecruit', '选择并招募史莱姆：它负责前排承伤'],
+      ['mobRecruit', '继续招募骷髅弓箭手：它负责后排输出'],
+      ['dungeon', '进入地牢，学习前排与后排部署'],
+      [monsterOfKind('slime') && S.rooms.some((r) => r.front === monsterOfKind('slime').uid) ? 'backSlot' : 'frontSlot',
+        room >= 0 ? '再把骷髅弓箭手部署到同一房间的后排' : '先把史莱姆部署到第一层前排，再部署骷髅弓箭手到后排'],
+      ['throne', '守军就位：返回王座查看入侵者'],
+      ['battle', '准备完成，点击迎战'],
+    ];
+    return messages[Math.min(step, messages.length - 1)];
+  }
+  const milestones = {
+    2: ['report', '新功能：战报、扩层、房间主题与陷阱已开放'],
+    3: ['hero', '新功能：英雄统领与资源房已开放'],
+    4: ['shop', '新功能：工坊、怪物创造与全身改造已开放'],
+    5: ['story', '新功能：秘闻已开放，选择会持续影响后续袭击'],
+  };
+  const item = milestones[S.raidNo];
+  if (item && !tutorialData().visited[`${S.raidNo}:${item[0]}`]) return item;
+  return null;
+}
 let tab      = 'throne';
                                                         
 let screen         = 'manage';
@@ -1010,6 +1086,7 @@ const backdrop = new PIXI.Container();
 const uiLayer = new PIXI.Container();
 const uiGfx = new PIXI.Graphics();
 const battleLayer = new PIXI.Container();
+const guideLayer = new PIXI.Container();
 const modalLayer = new PIXI.Container();
 const modalGfx = new PIXI.Graphics();
 const overlay = new PIXI.Container();
@@ -1023,6 +1100,7 @@ let renderResolution = 1;
 let portraitContentBottom = 0;
 let portraitChromeKey = '';
 let portraitLayoutInfo = null;
+let guidePulseNodes = [];
 
 const loadingEl   = document.getElementById('loading');
 const loadingText = document.getElementById('loading-text');
@@ -1076,7 +1154,7 @@ async function boot() {
   hideLoading();
 
   app.stage.addChild(backdrop, root, portraitLayer);
-  root.addChild(battleLayer, uiLayer, modalLayer, overlay);
+  root.addChild(battleLayer, uiLayer, guideLayer, modalLayer, overlay);
   uiLayer.addChild(uiGfx);
   modalLayer.addChild(modalGfx);
   portraitLayer.addChild(portraitGfx);
@@ -1313,7 +1391,8 @@ function bindInput() {
         return;
       }
       const i = ['1', '2', '3', '4', '5', '6', '7'].indexOf(e.key);
-      if (i >= 0) { setTab(TABS[i].id); return; }
+      const openTabs = visibleTabs();
+      if (i >= 0 && openTabs[i]) { setTab(openTabs[i].id); return; }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         if (tab === 'story' && storyRun) return;   // 剧情选项里方向键留给剧情
         if (pagerKey(e.key === 'ArrowLeft' ? -1 : 1)) return;
@@ -1349,22 +1428,36 @@ function bindInput() {
 }
 
 function setTab(t     ) {
+  if (!featureOpen(t)) return;
   pagerFocus = null;
   confirmNew = false;
-  if (tab === t) { render(); return; }
   if (stitch) closeStitch();
   if (forge) closeForge();
   if (graft) closeGraft();
   relicForgeConfirm = false;
   tab = t;
   sel = null;
+  markTabVisited(t);
+  syncTutorialProgress();
+  if (S.raidNo === 1 && t === 'mob') {
+    const required = tutorialData().step < 2 ? 'slime' : tutorialData().step < 3 ? 'archer' : null;
+    if (required) sel = { kind: 'monkind', id: required };
+  }
+  if (S.raidNo === 1 && t === 'dungeon' && !tutorialDeploymentReady()) {
+    const slime = monsterOfKind('slime');
+    const hasFront = slime && S.rooms[0].front === slime.uid;
+    sel = { kind: 'slot', room: 0, which: hasFront ? 'back' : 'front' };
+  }
   playSfx('tab');
+  persist();
   render();
 }
 
 // ---------- 经营界面渲染 ----------
 function clearUi() {
   uiPortraitFx.length = 0;
+  guidePulseNodes = [];
+  for (const k of guideLayer.removeChildren()) k.destroy({ children: true });
   const kids = uiLayer.removeChildren();
   for (const k of kids) if (k !== uiGfx) k.destroy({ children: true });
   while (staleTex.length) { const t = staleTex.pop() ; try { t.destroy(true); } catch { /* 已释放 */ } }
@@ -1382,7 +1475,8 @@ function render() {
   if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !detailPopup ? 'block' : 'none';
   const modalOpen = screen === 'manage' && (!!stitch || !!forge || !!graft || !!smith);
   modalLayer.visible = modalOpen || !!detailPopup;
-  if (screen !== 'manage') { uiLayer.visible = false; if (storyInput) storyInput.style.display = 'none'; ensurePortraitChrome(); return; }
+  if (screen !== 'manage') { uiLayer.visible = false; guideLayer.visible = false; if (storyInput) storyInput.style.display = 'none'; ensurePortraitChrome(); return; }
+  if (!featureOpen(tab)) tab = 'throne';
   uiLayer.visible = true;
   clearUi();
   resetBoundedTextAudit();
@@ -1416,6 +1510,7 @@ function render() {
   else if (tab === 'shop') pageShop(g);
   else if (tab === 'story') pageStory(g);
   else pageReport(g);
+  drawProgressGuide();
   syncStoryInput();
   ensurePortraitChrome();
 }
@@ -2711,7 +2806,9 @@ function toggleMute() {
 
 function requestNewGame() {
   if (confirmNew) {
-    S = freshSave(); syncCustoms(); persist(); confirmNew = false; sel = null; say('已开启新档'); render();
+    S = freshSave(); syncCustoms(); persist(); confirmNew = false; sel = null; tab = 'throne'; screen = 'manage';
+    detailPopup = null; stitch = null; forge = null; graft = null; smith = null;
+    say('已开启新档'); render();
   } else {
     confirmNew = true; say('再点一次“新档”确认清空存档'); render();
   }
@@ -2743,7 +2840,8 @@ function drawTopBar(g               ) {
 let confirmNew = false;
 
 function ensurePortraitChrome() {
-  const key = [portrait, screen, tab, paused, speed, confirmNew, S.bone, S.mana, S.raidNo, S.overtime, app.screen.width, app.screen.height].join('|');
+  const key = [portrait, screen, tab, paused, speed, confirmNew, S.bone, S.mana, S.raidNo, S.overtime,
+    tutorialData().step, Object.keys(tutorialData().visited).length, app.screen.width, app.screen.height].join('|');
   if (key === portraitChromeKey) return;
   portraitChromeKey = key;
   portraitHits.clear();
@@ -2766,22 +2864,35 @@ function ensurePortraitChrome() {
   const gap = 5, margin = 8, cols = 4;
   const bw = Math.floor((w - margin * 2 - gap * (cols - 1)) / cols);
   const tabTop = top + 50;
-  TABS.forEach((item, i) => {
+  const tabs = visibleTabs();
+  const currentGuide = roundGuide();
+  tabs.forEach((item, i) => {
     const x = margin + (i % cols) * (bw + gap);
     const y = tabTop + Math.floor(i / cols) * 43;
+    const guided = screen === 'manage' && currentGuide?.[0] === item.id;
     button(portraitGfx, portraitLayer, portraitHits, x, y, bw, 38, item.name, () => setTab(item.id), {
       size: 14, enabled: screen === 'manage', fill: tab === item.id ? C.wallLit : C.wall,
-      border: tab === item.id ? C.gold : C.stoneLit, color: tab === item.id ? C.white : C.bone,
+      border: guided || tab === item.id ? C.gold : C.stoneLit, color: guided || tab === item.id ? C.white : C.bone,
     });
+    if (guided) {
+      const pulse = new PIXI.Graphics().roundRect(x - 2, y - 2, bw + 4, 42, 4)
+        .stroke({ width: 2, color: C.white, alignment: 0 });
+      portraitLayer.addChild(pulse); guidePulseNodes.push(pulse);
+    }
   });
 
-  const primaryY = tabTop + 91;
+  const primaryY = tabTop + Math.ceil(tabs.length / cols) * 43 + 5;
   const primaryLabel = screen === 'manage' ? '迎　战' : screen === 'battle' ? (paused ? '继续战斗' : '暂停战斗') : screen === 'result' ? '继续结算' : '进入加班勇者';
   const primaryAction = screen === 'manage' ? startBattle : screen === 'battle'
     ? () => { paused = !paused; portraitChromeKey = ''; }
     : screen === 'result' ? afterResult : enterOvertime;
   button(portraitGfx, portraitLayer, portraitHits, margin, primaryY, w - margin * 2, 44, primaryLabel, primaryAction,
     { size: 17, fill: C.greenDark, border: C.green, color: C.white });
+  if (screen === 'manage' && currentGuide?.[0] === 'battle') {
+    const pulse = new PIXI.Graphics().roundRect(margin - 2, primaryY - 2, w - margin * 2 + 4, 48, 4)
+      .stroke({ width: 2, color: C.gold, alignment: 0 });
+    portraitLayer.addChild(pulse); guidePulseNodes.push(pulse);
+  }
 
   const actionY = primaryY + 51;
   const aw = Math.floor((w - margin * 2 - gap * 2) / 3);
@@ -2800,8 +2911,9 @@ function ensurePortraitChrome() {
 }
 
 function drawTabs(g               ) {
-  const w = VIEW_W / TABS.length;
-  TABS.forEach((t, i) => {
+  const tabs = visibleTabs();
+  const w = VIEW_W / tabs.length;
+  tabs.forEach((t, i) => {
     const active = t.id === tab;
     const x = i * w;
     g.rect(x, 238, w, 32).fill(active ? C.wallLit : C.wall);
@@ -2900,10 +3012,7 @@ function pageThrone(g               ) {
 }
 
 function tutorialHint()         {
-  if (S.monsters.length === 0) return '提示：去“怪群”页招募一只史莱姆（30骨币）';
-  const placed = countPlaced();
-  if (placed === 0) return '提示：去“地牢”页把怪物放进入口房前排';
-  if (S.raidNo === 1 && !S.reports.length) return '提示：布防完成，点右侧“迎战”看它们自动作战';
+  if (S.raidNo === 1 && !S.overtime) return roundGuide()?.[1] ?? '';
   return '';
 }
 
@@ -2912,18 +3021,18 @@ const ROOM_BOX = (i        ) => ({ x: 34, y: 70 + (i % 3) * 48, w: 182, h: 44 })
 function pageDungeon(g               ) {
   const eco = dungeonEconomyPreview();
   label(uiLayer, `地牢 ${S.floors.length}层  预计＋${eco.bone}骨＋${eco.mana}魔`, 8, 40, 12, C.white);
-  if (S.floors.length < MAX_FLOORS) {
+  if (featureOpen('dungeonTools') && S.floors.length < MAX_FLOORS) {
     const cost = FLOOR_EXPAND[S.floors.length];
     button(g, uiLayer, hits, 236, 39, 90, 14, `扩层${cost.bone}骨${cost.mana ? `${cost.mana}魔` : ''}`, () => expandFloor(),
       { size: 10, enabled: S.bone >= cost.bone && S.mana >= cost.mana, border: C.goldDark, color: C.gold });
-  } else label(uiLayer, '已达六层', 272, 40, 10, C.gold);
+  } else if (featureOpen('dungeonTools')) label(uiLayer, '已达六层', 272, 40, 10, C.gold);
   const pf = paged('dungeon-floors', S.floors, 3);
   const selectedFloor = sel?.kind === 'utility' ? sel.floor : sel?.kind === 'slot' ? sel.room : null;
   if (selectedFloor != null && (selectedFloor < pf.from || selectedFloor >= pf.from + pf.view.length)) sel = null;
   // 地牢剖面：入口沿左侧竖井向下，战斗房在外侧，后勤房在更深的内侧。
   label(uiLayer, pf.from === 0 ? '入口门 ↓' : '继续深入 ↓', 8, 56, 10, C.gold);
   labelC(uiLayer, '外层防线', 124, 56, 9, C.red);
-  labelC(uiLayer, '→ 内层经营区', 271, 56, 9, C.green);
+  if (featureOpen('facilities')) labelC(uiLayer, '→ 内层经营区', 271, 56, 9, C.green);
   g.rect(19, 68, 3, 146).fill(C.leather);
   g.rect(18, 68, 5, 2).fill(C.goldDark);
   for (let local = 0; local < pf.view.length; local++) {
@@ -2936,19 +3045,22 @@ function pageDungeon(g               ) {
     panelF(g, uiLayer, 'stone', b.x, b.y, b.w, b.h, C.wall);
     g.rect(b.x + 1, b.y + 1, b.w - 2, 14).fill(C.wallLit);
     label(uiLayer, `${i + 1}层战斗房`, b.x + 5, b.y + 3, 10, C.white);
-    const trapSelected = sel?.kind === 'slot' && sel.room === i && sel.which === 'trap';
-    button(g, uiLayer, hits, b.x + 102, b.y + 2, 36, 12, cut(THEMES[cfg.theme].name, 3), () => {
-      sel = { kind: 'slot', room: i, which: 'theme' }; playSfx('tab'); render();
-    }, { size: 8, fill: C.ink, border: sel?.kind === 'slot' && sel.room === i && sel.which === 'theme' ? C.gold : C.wallLit, color: C.stoneLit });
-    button(g, uiLayer, hits, b.x + 140, b.y + 2, 38, 12, cfg.trap === 'none' ? '陷阱' : cut(TRAPS[cfg.trap].name, 3), () => {
-      sel = { kind: 'slot', room: i, which: 'trap' }; playSfx('tab'); render();
-    }, { size: 8, fill: C.ink, border: trapSelected ? C.gold : C.wallLit, color: cfg.trap === 'none' ? C.stoneLit : C.bone });
+    if (featureOpen('dungeonTools')) {
+      const trapSelected = sel?.kind === 'slot' && sel.room === i && sel.which === 'trap';
+      button(g, uiLayer, hits, b.x + 102, b.y + 2, 36, 12, cut(THEMES[cfg.theme].name, 3), () => {
+        sel = { kind: 'slot', room: i, which: 'theme' }; playSfx('tab'); render();
+      }, { size: 8, fill: C.ink, border: sel?.kind === 'slot' && sel.room === i && sel.which === 'theme' ? C.gold : C.wallLit, color: C.stoneLit });
+      button(g, uiLayer, hits, b.x + 140, b.y + 2, 38, 12, cfg.trap === 'none' ? '陷阱' : cut(TRAPS[cfg.trap].name, 3), () => {
+        sel = { kind: 'slot', room: i, which: 'trap' }; playSfx('tab'); render();
+      }, { size: 8, fill: C.ink, border: trapSelected ? C.gold : C.wallLit, color: cfg.trap === 'none' ? C.stoneLit : C.bone });
+    }
     dungeonSlotChip(g, b.x + 5, b.y + 17, 40, 23, cfg.back, i, 'back', '后');
-    dungeonSlotChip(g, b.x + 49, b.y + 17, 40, 23, cfg.leader, i, 'leader', '统');
     dungeonSlotChip(g, b.x + 93, b.y + 17, 40, 23, cfg.front, i, 'front', '前');
-    dungeonSlotChip(g, b.x + 137, b.y + 17, 40, 23, cfg.flank, i, 'flank', '翼');
+    if (featureOpen('hero')) dungeonSlotChip(g, b.x + 49, b.y + 17, 40, 23, cfg.leader, i, 'leader', '统');
+    if (featureOpen('hero')) dungeonSlotChip(g, b.x + 137, b.y + 17, 40, 23, cfg.flank, i, 'flank', '翼');
 
     const u = utilityAt(i), ud = utilityDef(u), out = utilityOutput(i);
+    if (!featureOpen('facilities')) continue;
     const selected = sel?.kind === 'utility' && sel.floor === i;
     const ux = 228, uw = 98;
     g.rect(b.x + b.w, b.y + 20, ux - (b.x + b.w), 3).fill(C.leather);
@@ -3323,10 +3435,10 @@ function drawSidePanel(g               ) {
       { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
 
     const gcount = (inst.graft ?? []).length;
-    if (isCustomKind(inst.kind)) {
+    if (isCustomKind(inst.kind) && featureOpen('monsterCreation')) {
       button(g, uiLayer, hits, 382, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
       button(g, uiLayer, hits, 432, 224, 38, 16, '拆', () => dismantle(inst.uid), { size: 12, border: C.red, color: C.red });
-    } else {
+    } else if (featureOpen('monsterCreation')) {
       button(g, uiLayer, hits, 382, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
       button(g, uiLayer, hits, 432, 224, 38, 16, '遣散', () => dismantle(inst.uid), { size: 10, border: C.red, color: C.red });
     }
@@ -3370,10 +3482,10 @@ function drawSidePanel(g               ) {
 
     button(g, uiLayer, hits, 340, 224, 40, 16, '返回', () => { monDetailMode = false; playSfx('tab'); render(); },
       { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
-    if (isCustomKind(inst.kind)) {
+    if (isCustomKind(inst.kind) && featureOpen('monsterCreation')) {
       button(g, uiLayer, hits, 382, 224, 38, 16, '重组', () => openStitch(inst.uid), { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
       button(g, uiLayer, hits, 422, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
-    } else {
+    } else if (featureOpen('monsterCreation')) {
       button(g, uiLayer, hits, 382, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
       button(g, uiLayer, hits, 432, 224, 38, 16, '遣散', () => dismantle(inst.uid), { size: 10, border: C.red, color: C.red });
     }
@@ -4028,6 +4140,42 @@ function chronicleItems() {
   });
 }
 
+function guideTargetRect(target) {
+  const tabs = visibleTabs();
+  const tabIndex = tabs.findIndex((item) => item.id === target);
+  if (tabIndex >= 0) return { x: tabIndex * (VIEW_W / tabs.length), y: 238, w: VIEW_W / tabs.length, h: 32 };
+  if (target === 'mobRecruit') return { x: 338, y: 174, w: 134, h: 22 };
+  if (target === 'frontSlot') return { x: 125, y: 85, w: 44, h: 27 };
+  if (target === 'backSlot') return { x: 37, y: 85, w: 44, h: 27 };
+  if (target === 'battle') return { x: 342, y: 179, w: 126, h: 34 };
+  return null;
+}
+
+function drawProgressGuide() {
+  const guide = roundGuide();
+  guideLayer.visible = !!guide;
+  if (!guide) return;
+  const [target, message] = guide;
+  const rect = guideTargetRect(target);
+  const pulse = new PIXI.Graphics();
+  if (rect) {
+    pulse.roundRect(rect.x - 2, rect.y - 2, rect.w + 4, rect.h + 4, 3)
+      .stroke({ width: 2, color: C.gold, alignment: 0 });
+    pulse.roundRect(rect.x - 5, rect.y - 5, rect.w + 10, rect.h + 10, 5)
+      .stroke({ width: 1, color: C.white, alignment: 0 });
+  }
+  guideLayer.addChild(pulse);
+  guidePulseNodes.push(pulse);
+
+  const plate = new PIXI.Graphics();
+  plate.roundRect(50, 36, 380, 19, 4).fill(C.ink).stroke({ width: 2, color: C.gold, alignment: 0 });
+  guideLayer.addChild(plate);
+  const node = txt(`◆ ${message}`, 11, C.white);
+  node.x = Math.round((VIEW_W - node.width) / 2);
+  node.y = 39;
+  guideLayer.addChild(node);
+}
+
 function drawChronicle(g) {
   label(uiLayer, '地牢编年史', 16, 42, 12, C.gold);
   label(uiLayer, `${S.story.archive.length}条永久记录`, 120, 42, 10, C.stoneLit);
@@ -4217,6 +4365,10 @@ function assign(room        , which         , uid        ) {
   const slotX = which === 'back' ? 25 : which === 'leader' ? 69 : which === 'front' ? 113 : 157;
   spawnDust(bx.x + slotX, bx.y + 39);
   playSfx('place');
+  syncTutorialProgress();
+  if (S.raidNo === 1 && room === 0 && which === 'front' && !tutorialDeploymentReady()) {
+    sel = { kind: 'slot', room: 0, which: 'back' };
+  }
   persist();
   render();
 }
@@ -4230,7 +4382,10 @@ function recruit(kindId        ) {
   consumeHatcheryCharge(quote);
   const inst              = { uid: S.uidNext++, kind: k.id, lv: 1, xp: 0 };
   S.monsters.push(inst);
-  sel = { kind: 'inst', uid: inst.uid };
+  syncTutorialProgress();
+  sel = S.raidNo === 1 && tutorialData().step === 2
+    ? { kind: 'monkind', id: 'archer' }
+    : { kind: 'inst', uid: inst.uid };
   playSfx('buy');
   persist();
   say(`招募了${k.name}${quote.discount ? `，孵化室节省${k.cost - quote.cost}骨币` : ''}`);
@@ -4920,7 +5075,8 @@ function drawRecruit(g               ) {
 }
 
 function pageMob(g               ) {
-  const kinds = allKinds();
+  const guidedKinds = firstRaidRecruitKinds();
+  const kinds = guidedKinds ? guidedKinds.map((id) => monKind(id)) : allKinds();
   const PER = 6;
   const pg = paged('mob-kinds', kinds, PER);
   label(uiLayer, '可招募兵种', 10, 40, 12, C.white);
@@ -4942,7 +5098,7 @@ function pageMob(g               ) {
     y += 22;
   }
   pager(g, 'mob-kinds', pg.pages, 6, 190, 152);
-  button(g, uiLayer, hits, 6, 208, 152, 16, '✦ 创造怪物', () => openStitch(), {
+  if (featureOpen('monsterCreation')) button(g, uiLayer, hits, 6, 208, 152, 16, '✦ 创造怪物', () => openStitch(), {
     size: 12, fill: C.purpleDark, border: C.purple, color: C.white,
   });
   const pm = paged('mob-owned', S.monsters, 7);
@@ -5203,6 +5359,18 @@ function initBattleLayers() {
 function startBattle() {
   if (screen !== 'manage') return;
   confirmNew = false;
+  if (S.raidNo === 1 && !S.overtime) {
+    const step = syncTutorialProgress();
+    if (step < 6 || !tutorialDeploymentReady()) {
+      if (step < 3) setTab('mob');
+      else if (step < 5 || !tutorialDeploymentReady()) setTab('dungeon');
+      else setTab('throne');
+      say(roundGuide()?.[1] ?? '先完成新手部署再迎战');
+      return;
+    }
+    tutorialData().step = 7;
+    persist();
+  }
   if (stitch) closeStitch();
   const unavailable = seatedChampUids().map(champById).filter((c) => c && (c.restTurns || 0) > 0);
   if (unavailable.length) {
@@ -5831,6 +5999,7 @@ function finishBattle() {
   if (S.reports.length > 5) S.reports.length = 5;
   reportIdx = 0;
   if (r.win) {
+    if (!S.overtime && b.raid.no === 1) tutorialData().step = 8;
     const prev = S.best[b.raid.no] || 0;
     if (r.skulls > prev) {
       S.best[b.raid.no] = r.skulls;
@@ -6005,6 +6174,10 @@ function tick(dt        ) {
   tickAudio();
   ensurePortraitChrome();
   if (screen === 'manage') tickUiPortraitEffects(dt);
+  if (guidePulseNodes.length) {
+    const glow = 0.42 + (Math.sin(portraitFxClock * 5) + 1) * 0.29;
+    for (const node of guidePulseNodes) if (node && !node.destroyed) node.alpha = glow;
+  }
   if (saveFlash > 0) {
     saveFlash -= dt;
     if (saveFlash <= 0 && screen === 'manage') render();
@@ -6094,6 +6267,9 @@ window.__debug = {
   setBattleSpeed: (v) => { if ([1, 2, 4].includes(v)) speed = v; return speed; },
   get tab() { return tab; },
   get save() { return S; },
+  get progression() { return { raid: S.raidNo, tutorialStep: tutorialData().step,
+    visibleTabs: visibleTabs().map((item) => item.id), guide: roundGuide(), deploymentReady: tutorialDeploymentReady(),
+    enemyClasses: currentRaid().members.map((member) => member.cls) }; },
   get bone() { return S.bone; },
   get mana() { return S.mana; },
   get detail() { return detailPopup ? { ...detailPopup } : null; },

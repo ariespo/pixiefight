@@ -340,7 +340,7 @@ export const AFFIXES                                                  = {
 const m = (cls        , lv        , n = 1) => Array.from({ length: n }, () => ({ cls, lv }));
 
 export const RAIDS            = [
-  { no: 1, title: '新手冒险队', members: [...m('knight', 1, 2), ...m('cleric', 1)], affixes: [], reward: { bone: 45, mana: 8 } },
+  { no: 1, title: '迷路的剑士', members: [...m('knight', 1)], affixes: [], reward: { bone: 45, mana: 8 } },
   { no: 2, title: '弓箭小队', members: [...m('knight', 1), ...m('archer', 1, 2)], affixes: [], reward: { bone: 55, mana: 10 } },
   { no: 3, title: '神殿巡礼', members: [...m('knight', 2), ...m('cleric', 1), ...m('archer', 1, 2)], affixes: [], reward: { bone: 65, mana: 12 } },
   { no: 4, title: '毒瓶侦察队', members: [...m('rogue', 2), ...m('knight', 2), ...m('alchemist', 2)], affixes: [], reward: { bone: 75, mana: 16 } },

@@ -31,6 +31,41 @@ try {
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__gpReady && window.__debug, null, { timeout: 20000 });
 
+  const onboarding = await page.evaluate(() => {
+    const initial = __debug.progression;
+    __debug.setTab('hero');
+    const hiddenRouteBlocked = __debug.currentTab === 'throne';
+    __debug.setTab('mob');
+    __debug.devBuyMonster('slime');
+    const afterSlime = __debug.progression;
+    __debug.devBuyMonster('archer');
+    const slime = __debug.monsters.find((m) => m.kind === 'slime');
+    const archer = __debug.monsters.find((m) => m.kind === 'archer');
+    __debug.setTab('dungeon');
+    __debug.devAssign(0, 'front', slime.uid);
+    __debug.devAssign(0, 'back', archer.uid);
+    __debug.setTab('throne');
+    const ready = __debug.progression;
+    __debug.startBattle();
+    const battle = __debug.battle;
+    __debug.backManage();
+    const unlocks = {};
+    for (const raid of [2, 3, 4, 5]) {
+      __debug.forceRaid(raid);
+      unlocks[raid] = __debug.progression.visibleTabs;
+    }
+    return { initial, hiddenRouteBlocked, afterSlime, ready, battle, unlocks };
+  });
+  assert(JSON.stringify(onboarding.initial.visibleTabs) === JSON.stringify(['throne', 'dungeon', 'mob']), 'First raid exposed locked pages.');
+  assert(onboarding.initial.enemyClasses.length === 1 && onboarding.initial.enemyClasses[0] === 'knight', 'First raid is not a single swordsman.');
+  assert(onboarding.hiddenRouteBlocked, 'A hidden page was still reachable directly.');
+  assert(onboarding.afterSlime.tutorialStep === 2 && onboarding.ready.tutorialStep === 6 && onboarding.ready.deploymentReady, 'Guided recruitment/deployment did not advance.');
+  assert(onboarding.battle?.heroesAlive === 1, 'Guided battle did not start against one enemy.');
+  assert(onboarding.unlocks[2].includes('report') && !onboarding.unlocks[2].includes('hero'), 'Raid 2 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[3].includes('hero') && !onboarding.unlocks[3].includes('shop'), 'Raid 3 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[4].includes('shop') && !onboarding.unlocks[4].includes('story'), 'Raid 4 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[5].includes('story'), 'Raid 5 did not unlock the final main page.');
+
   // A deliberately sparse legacy save must be upgraded, not rejected.
   await page.evaluate(() => localStorage.setItem('yqh-save-v2', JSON.stringify({ bone: 321, mana: 17, raidNo: 4, story: { archive: [] } })));
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -51,7 +86,7 @@ try {
     return __debug.story.archive.length > before && __debug.story.archive[0]?.source === '无主传闻';
   });
   assert(randomArchived, 'A random story was not recorded in the permanent chronicle.');
-  await page.evaluate(() => { __debug.storyLeave(); __debug.setTab('story'); });
+  await page.evaluate(() => { __debug.storyLeave(); __debug.forceRaid(5); __debug.setTab('story'); });
   const noCreditPoint = await page.evaluate(() => __debug.toScreen(120, 221));
   await page.mouse.click(noCreditPoint.x, noCreditPoint.y);
   await page.waitForTimeout(50);
@@ -89,7 +124,7 @@ try {
     const facility = __debug.floors[0].utility;
 
     // 同一主体同轮只保留一条线索；下一轮才允许该英雄产生新的专精秘闻。
-    __debug.forceRaid(5);
+    __debug.forceRaid(6);
     const lead = __debug.storyLeadQueue('smoke:talent', 'hero-talent-offense', '英雄秘闻', '烟雾测试专精', { ref: heroA, hero: '测试英雄', talent: '破阵', talentDesc: '攻击强化' });
     __debug.storyLeadOpen(lead.id);
     __debug.storyChoose(0);
