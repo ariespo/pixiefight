@@ -340,13 +340,13 @@ export const AFFIXES                                                  = {
 const m = (cls        , lv        , n = 1) => Array.from({ length: n }, () => ({ cls, lv }));
 
 export const RAIDS            = [
-  { no: 1, title: '迷路的剑士', members: [...m('knight', 1)], affixes: [], reward: { bone: 45, mana: 8 } },
-  { no: 2, title: '弓箭小队', members: [...m('knight', 1), ...m('archer', 1, 2)], affixes: [], reward: { bone: 55, mana: 10 } },
-  { no: 3, title: '神殿巡礼', members: [...m('knight', 2), ...m('cleric', 1), ...m('archer', 1, 2)], affixes: [], reward: { bone: 65, mana: 12 } },
-  { no: 4, title: '毒瓶侦察队', members: [...m('rogue', 2), ...m('knight', 2), ...m('alchemist', 2)], affixes: [], reward: { bone: 75, mana: 16 } },
-  { no: 5, title: '四职混编', members: [...m('knight', 3), ...m('archer', 3), ...m('cleric', 3), ...m('mage', 2)], affixes: [], reward: { bone: 85, mana: 18 } },
-  { no: 6, title: '苦修先行', members: [...m('monk', 4), ...m('berserker', 3), ...m('cleric', 3), ...m('mage', 3)], affixes: [], reward: { bone: 95, mana: 20 } },
-  { no: 7, title: '长枪猎队', members: [...m('lancer', 4), ...m('ranger', 4), ...m('rogue', 4), ...m('cleric', 4)], affixes: ['brave'], reward: { bone: 105, mana: 22 } },
+  { no: 1, title: '迷路的剑士', members: [...m('knight', 1)], affixes: [], reward: { bone: 100, mana: 15 } },
+  { no: 2, title: '谨慎的斥候', members: [...m('knight', 1), ...m('archer', 1)], affixes: [], reward: { bone: 150, mana: 20 } },
+  { no: 3, title: '临时救援队', members: [...m('knight', 1), ...m('cleric', 1), ...m('archer', 1)], affixes: [], reward: { bone: 170, mana: 25 } },
+  { no: 4, title: '杂牌探险队', members: [...m('rogue', 1), ...m('knight', 1), ...m('alchemist', 1)], affixes: [], reward: { bone: 190, mana: 30 } },
+  { no: 5, title: '初成编制', members: [...m('knight', 2, 2), ...m('archer', 2), ...m('cleric', 2)], affixes: [], reward: { bone: 210, mana: 35 } },
+  { no: 6, title: '苦修先行', members: [...m('monk', 2), ...m('berserker', 2), ...m('cleric', 2), ...m('mage', 2)], affixes: [], reward: { bone: 120, mana: 24 } },
+  { no: 7, title: '长枪猎队', members: [...m('lancer', 3), ...m('ranger', 3), ...m('rogue', 3), ...m('cleric', 3)], affixes: ['brave'], reward: { bone: 130, mana: 26 } },
   { no: 8, title: '圣殿铁壁', members: [...m('paladin', 5), ...m('knight', 5), ...m('cleric', 5), ...m('mage', 4)], affixes: ['shield'], reward: { bone: 120, mana: 26 } },
   { no: 9, title: '歌与咒火', members: [...m('bard', 5), ...m('berserker', 5), ...m('warlock', 6), ...m('lancer', 5)], affixes: ['haste'], reward: { bone: 135, mana: 28 } },
   { no: 10, title: '审判官', members: [...m('inquisitor', 6), ...m('paladin', 6), ...m('cleric', 6), ...m('mage', 6), ...m('rogue', 5)], affixes: ['holywater'], reward: { bone: 155, mana: 32 } },

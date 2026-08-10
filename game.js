@@ -101,7 +101,7 @@ function freshSave()       {
     customs: [], cstNext: 1,
     diy: [], diyNext: 1,
     diyAf: [], diyAfNext: 1,
-    muted: false, seenClasses: [], tutorial: { step: 0, visited: {} },
+    muted: false, seenClasses: [], tutorial: { step: 0, visited: {}, roundSteps: {} },
     champs: [], champNext: 1, cands: [], candRaid: 0, candNext: 1, champPot: {},
     vault: [], forged: [], fgNext: 1,
     story: { vars: {}, mods: [], unlocks: [], seen: [], credits: 1, leads: [], archive: [], leadNext: 1,
@@ -179,6 +179,7 @@ function sanitizeSave() {
   if (!S.tutorial || typeof S.tutorial !== 'object') S.tutorial = { step: legacyTutorial, visited: {} };
   S.tutorial.step = Math.max(0, Math.min(8, Math.round(S.tutorial.step || 0)));
   if (!S.tutorial.visited || typeof S.tutorial.visited !== 'object') S.tutorial.visited = {};
+  if (!S.tutorial.roundSteps || typeof S.tutorial.roundSteps !== 'object') S.tutorial.roundSteps = {};
   // 旧档已越过第一轮时不重新触发强制新手流程。
   if (S.raidNo > 1) S.tutorial.step = 8;
   if (!Array.isArray(S.floors) || !S.floors.length) {
@@ -242,6 +243,7 @@ function sanitizeSave() {
     }
   }
   S.traps = S.traps.filter((t) => t in TRAPS);
+  applyProgressionGrants();
   S.monsters = S.monsters.filter((m) => kindById(m.kind) != null || S.customs.some((d) => d.id === m.kind));
   // 改造件：清掉已不存在的部件 id（拆解 DIY 造件后旧存档里可能残留），并截到上限
   for (const m of S.monsters) {
@@ -975,15 +977,20 @@ const TABS                              = [
 const FEATURE_RAID = {
   throne: 1, dungeon: 1, mob: 1,
   report: 2, dungeonTools: 2,
-  hero: 3, facilities: 3,
-  shop: 4, monsterCreation: 4,
+  hero: 3,
+  shop: 4, facilities: 4,
+  monsterCreation: 5,
   story: 5,
 };
 const featureOpen = (id) => S.overtime || S.raidNo >= (FEATURE_RAID[id] ?? 1);
 const visibleTabs = () => TABS.filter((item) => featureOpen(item.id));
+function applyProgressionGrants() {
+  if ((S.overtime || S.raidNo >= 2) && !S.traps.includes('spike')) S.traps.push('spike');
+}
 const tutorialData = () => {
-  if (!S.tutorial || typeof S.tutorial !== 'object') S.tutorial = { step: 0, visited: {} };
+  if (!S.tutorial || typeof S.tutorial !== 'object') S.tutorial = { step: 0, visited: {}, roundSteps: {} };
   if (!S.tutorial.visited || typeof S.tutorial.visited !== 'object') S.tutorial.visited = {};
+  if (!S.tutorial.roundSteps || typeof S.tutorial.roundSteps !== 'object') S.tutorial.roundSteps = {};
   return S.tutorial;
 };
 const monsterOfKind = (kind) => S.monsters.find((m) => m.kind === kind);
@@ -1013,6 +1020,47 @@ function firstRaidRecruitKinds() {
   if (step < 3) return ['archer'];
   return ['slime', 'archer'];
 }
+function recruitKindOpen(k) {
+  if (S.overtime) return true;
+  if (isCustomKind(k.id)) return featureOpen('monsterCreation');
+  if (isEliteKind(k.id)) return S.raidNo >= Math.max(5, k.eliteMin ?? 5);
+  if (k.legend) return S.raidNo >= Math.max(5, k.legendMin ?? 5);
+  const raid = { slime: 1, archer: 1, goblin: 2, bat: 2, shaman: 3, ogre: 4 }[k.id] ?? 5;
+  return S.raidNo >= raid;
+}
+const ROUND_TUTORIALS = {
+  2: [
+    { page: 'report', target: 'reportPanel', title: '战报开放', detail: '战报会说明胜负原因、逐房表现和每个单位的贡献，先复盘再调整阵容。' },
+    { page: 'dungeon', target: 'dungeonTools', title: '房间机关开放', detail: '战斗房现在可以设置主题与陷阱；本轮赠送“尖刺”，让它成为另一种过关办法。' },
+    { page: 'mob', target: 'mobRoster', title: '新兵种开放', detail: '哥布林擅长快速补刀，蝙蝠能骚扰后排；也可以不招兵，保留资源升级旧部。' },
+  ],
+  3: [
+    { page: 'hero', target: 'heroRecruitTab', title: '英雄开放', detail: '英雄拥有成长、装备与专精，可以征召为长期统领；不买英雄也能继续使用纯怪物阵容。' },
+    { page: 'dungeon', target: 'leaderSlot', title: '统领与侧翼开放', detail: '英雄进入统领席后会带领本房守军，并开启侧翼位；前后排仍然可以独立作战。' },
+  ],
+  4: [
+    { page: 'dungeon', target: 'facilityArea', title: '资源房开放', detail: '每层内侧可建资源房：生产、训练、疗愈或保护资源。每轮最多建造或升级一次。' },
+    { page: 'shop', target: 'shopArea', title: '工坊开放', detail: '工坊出售主题、陷阱和永久强化。购买强化、扩充守军或培养英雄都能应对本轮。' },
+  ],
+  5: [
+    { page: 'mob', target: 'monsterCreation', title: '怪物创造开放', detail: '可以用四个部件创造或全身改造单位；这是高自由度方案，不是本轮强制消费。' },
+    { page: 'story', target: 'storyArea', title: '秘闻开放', detail: '经营与战斗会产生秘闻线索，选择会明确改变后续数轮的战斗或经营效果。' },
+  ],
+};
+function acknowledgeRoundGuide() {
+  const t = tutorialData();
+  const list = ROUND_TUTORIALS[S.raidNo] ?? [];
+  const step = Math.max(0, Math.round(t.roundSteps[S.raidNo] || 0));
+  if (!list[step] || tab !== list[step].page) return;
+  t.roundSteps[S.raidNo] = step + 1;
+  playSfx('tab');
+  persist();
+  render();
+}
+const roundTeachingComplete = () => {
+  const list = ROUND_TUTORIALS[S.raidNo] ?? [];
+  return Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0)) >= list.length;
+};
 function roundGuide() {
   if (S.raidNo === 1 && !S.overtime) {
     const step = syncTutorialProgress();
@@ -1032,14 +1080,13 @@ function roundGuide() {
     ];
     return messages[Math.min(step, messages.length - 1)];
   }
-  const milestones = {
-    2: ['report', '新功能：战报、扩层、房间主题与陷阱已开放'],
-    3: ['hero', '新功能：英雄统领与资源房已开放'],
-    4: ['shop', '新功能：工坊、怪物创造与全身改造已开放'],
-    5: ['story', '新功能：秘闻已开放，选择会持续影响后续袭击'],
-  };
-  const item = milestones[S.raidNo];
-  if (item && !tutorialData().visited[`${S.raidNo}:${item[0]}`]) return item;
+  const list = ROUND_TUTORIALS[S.raidNo] ?? [];
+  const step = Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0));
+  const item = list[step];
+  if (item) {
+    if (tab !== item.page) return [item.page, `新教学：${item.title}，请进入“${TABS.find((x) => x.id === item.page)?.name ?? item.page}”`, false];
+    return [item.target, `${item.title}：${item.detail}`, true];
+  }
   return null;
 }
 let tab      = 'throne';
@@ -2882,12 +2929,13 @@ function ensurePortraitChrome() {
   });
 
   const primaryY = tabTop + Math.ceil(tabs.length / cols) * 43 + 5;
-  const primaryLabel = screen === 'manage' ? '迎　战' : screen === 'battle' ? (paused ? '继续战斗' : '暂停战斗') : screen === 'result' ? '继续结算' : '进入加班勇者';
-  const primaryAction = screen === 'manage' ? startBattle : screen === 'battle'
+  const guideAck = screen === 'manage' && currentGuide?.[2];
+  const primaryLabel = screen === 'manage' ? (guideAck ? '明白，继续教学' : '迎　战') : screen === 'battle' ? (paused ? '继续战斗' : '暂停战斗') : screen === 'result' ? '继续结算' : '进入加班勇者';
+  const primaryAction = screen === 'manage' ? (guideAck ? acknowledgeRoundGuide : startBattle) : screen === 'battle'
     ? () => { paused = !paused; portraitChromeKey = ''; }
     : screen === 'result' ? afterResult : enterOvertime;
   button(portraitGfx, portraitLayer, portraitHits, margin, primaryY, w - margin * 2, 44, primaryLabel, primaryAction,
-    { size: 17, fill: C.greenDark, border: C.green, color: C.white });
+    { size: 17, fill: guideAck ? C.goldDark : C.greenDark, border: guideAck ? C.gold : C.green, color: C.white });
   if (screen === 'manage' && currentGuide?.[0] === 'battle') {
     const pulse = new PIXI.Graphics().roundRect(margin - 2, primaryY - 2, w - margin * 2 + 4, 48, 4)
       .stroke({ width: 2, color: C.gold, alignment: 0 });
@@ -4148,6 +4196,15 @@ function guideTargetRect(target) {
   if (target === 'frontSlot') return { x: 125, y: 85, w: 44, h: 27 };
   if (target === 'backSlot') return { x: 37, y: 85, w: 44, h: 27 };
   if (target === 'battle') return { x: 342, y: 179, w: 126, h: 34 };
+  if (target === 'reportPanel') return { x: 4, y: 38, w: 324, h: 196 };
+  if (target === 'dungeonTools') return { x: 134, y: 68, w: 82, h: 20 };
+  if (target === 'mobRoster') return { x: 4, y: 54, w: 156, h: 136 };
+  if (target === 'heroRecruitTab') return { x: 86, y: 36, w: 82, h: 20 };
+  if (target === 'leaderSlot') return { x: 81, y: 85, w: 44, h: 27 };
+  if (target === 'facilityArea') return { x: 226, y: 68, w: 102, h: 48 };
+  if (target === 'shopArea') return { x: 4, y: 38, w: 324, h: 148 };
+  if (target === 'monsterCreation') return { x: 4, y: 206, w: 156, h: 20 };
+  if (target === 'storyArea') return { x: 4, y: 38, w: 324, h: 190 };
   return null;
 }
 
@@ -4155,7 +4212,7 @@ function drawProgressGuide() {
   const guide = roundGuide();
   guideLayer.visible = !!guide;
   if (!guide) return;
-  const [target, message] = guide;
+  const [target, message, acknowledge] = guide;
   const rect = guideTargetRect(target);
   const pulse = new PIXI.Graphics();
   if (rect) {
@@ -4168,12 +4225,15 @@ function drawProgressGuide() {
   guidePulseNodes.push(pulse);
 
   const plate = new PIXI.Graphics();
-  plate.roundRect(50, 36, 380, 19, 4).fill(C.ink).stroke({ width: 2, color: C.gold, alignment: 0 });
+  plate.roundRect(20, 36, 440, acknowledge ? 48 : 24, 4).fill(C.ink).stroke({ width: 2, color: C.gold, alignment: 0 });
   guideLayer.addChild(plate);
-  const node = txt(`◆ ${message}`, 11, C.white);
-  node.x = Math.round((VIEW_W - node.width) / 2);
-  node.y = 39;
-  guideLayer.addChild(node);
+  boundedText(guideLayer, `◆ ${message}`, 28, acknowledge ? 40 : 41, acknowledge ? 350 : 424, acknowledge ? 40 : 17, acknowledge ? 9 : 11, C.white);
+  if (acknowledge) {
+    plate.roundRect(386, 49, 66, 24, 3).fill(C.goldDark).stroke({ width: 1, color: C.gold, alignment: 0 });
+    const ok = txt('明白，继续', 10, C.white);
+    ok.x = 394; ok.y = 56; guideLayer.addChild(ok);
+    hits.add(386, 49, 66, 24, acknowledgeRoundGuide);
+  }
 }
 
 function drawChronicle(g) {
@@ -5076,7 +5136,7 @@ function drawRecruit(g               ) {
 
 function pageMob(g               ) {
   const guidedKinds = firstRaidRecruitKinds();
-  const kinds = guidedKinds ? guidedKinds.map((id) => monKind(id)) : allKinds();
+  const kinds = guidedKinds ? guidedKinds.map((id) => monKind(id)) : allKinds().filter(recruitKindOpen);
   const PER = 6;
   const pg = paged('mob-kinds', kinds, PER);
   label(uiLayer, '可招募兵种', 10, 40, 12, C.white);
@@ -5370,6 +5430,13 @@ function startBattle() {
     }
     tutorialData().step = 7;
     persist();
+  }
+  if (!S.overtime && !roundTeachingComplete()) {
+    const guide = roundGuide();
+    const requiredPage = (ROUND_TUTORIALS[S.raidNo] ?? [])[Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0))]?.page;
+    if (requiredPage && tab !== requiredPage) setTab(requiredPage);
+    say(guide?.[2] ? '先阅读高光区域的说明，并点击“明白，继续”' : guide?.[1] ?? '请先完成本轮教学');
+    return;
   }
   if (stitch) closeStitch();
   const unavailable = seatedChampUids().map(champById).filter((c) => c && (c.restTurns || 0) > 0);
@@ -6077,8 +6144,33 @@ function buildResultOverlay() {
   labelC(overlay, lootLine, 240, y, 12, loot.length || r.relicLoot ? C.purple : C.stoneLit);
   const isFinal = r.win && !S.overtime && b.raid.no === 12;
   button(g, overlay, hits, 100, 196, 130, 28, r.win ? (isFinal ? '观看结局' : '继续') : '重试本轮', () => afterResult(), { fill: C.greenDark, border: C.green, color: C.white });
-  button(g, overlay, hits, 250, 196, 130, 28, '返回经营', () => { backToManage(); }, { fill: C.wallLit, border: C.bone });
+  button(g, overlay, hits, 250, 196, 130, 28, isFinal ? '观看结局' : '返回经营', returnFromResult, { fill: C.wallLit, border: C.bone });
   labelC(overlay, 'Enter 继续', 240, 228, 12, C.stoneLit);
+}
+
+function advanceWonResult() {
+  const b = battle;
+  if (!b?.result?.win) return false;
+  let changed = false;
+  if (S.overtime) {
+    if (S.otRaid <= b.raid.no) { S.otRaid = b.raid.no + 1; changed = true; }
+  } else if (S.raidNo <= b.raid.no) {
+    S.raidNo = b.raid.no + 1;
+    changed = true;
+  }
+  if (changed) {
+    applyProgressionGrants();
+    persist();
+  }
+  return changed;
+}
+
+function returnFromResult() {
+  const b = battle;
+  if (!b?.result) return;
+  if (b.result.win && !S.overtime && b.raid.no === 12) { afterResult(); return; }
+  if (b.result.win) advanceWonResult();
+  backToManage();
 }
 
 function afterResult() {
@@ -6094,9 +6186,7 @@ function afterResult() {
       persist();
       return;
     }
-    if (S.overtime) S.otRaid++;
-    else S.raidNo++;
-    persist();
+    advanceWonResult();
   }
   backToManage();
 }
@@ -6269,7 +6359,9 @@ window.__debug = {
   get save() { return S; },
   get progression() { return { raid: S.raidNo, tutorialStep: tutorialData().step,
     visibleTabs: visibleTabs().map((item) => item.id), guide: roundGuide(), deploymentReady: tutorialDeploymentReady(),
-    enemyClasses: currentRaid().members.map((member) => member.cls) }; },
+    enemyClasses: currentRaid().members.map((member) => member.cls), teachingComplete: roundTeachingComplete(),
+    roundStep: Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0)),
+    recruitKinds: allKinds().filter(recruitKindOpen).map((kind) => kind.id) }; },
   get bone() { return S.bone; },
   get mana() { return S.mana; },
   get detail() { return detailPopup ? { ...detailPopup } : null; },
@@ -6366,15 +6458,17 @@ window.__debug = {
     if (battle.phase === 'done' && battle.result) finishBattle();
     return { screen, steps, result: battle.result };
   },
+  returnResult: () => { returnFromResult(); return { screen, raid: S.raidNo, overtimeRaid: S.otRaid }; },
   get result() { return battle?.result ?? null; },
   get reports() { return S.reports; },
   get audio() { return audioSnapshot(); },
   get endingT() { return endingT; },
   setTab: (t     ) => setTab(t),
+  ackGuide: () => { acknowledgeRoundGuide(); return window.__debug.progression; },
   backManage: () => { backToManage(); return screen; },
   pagers: () => livePagers.map((p) => ({ ...p, page: pageState[p.key] ?? 0, focus: pagerFocus === p.key })),
   giveResources: (b        , m        ) => { S.bone += b; S.mana += m; render(); },
-  forceRaid: (n        ) => { S.raidNo = n; persist(); render(); },
+  forceRaid: (n        ) => { S.raidNo = n; applyProgressionGrants(); persist(); render(); },
   devRecruit: (kind        ) => { const inst              = { uid: S.uidNext++, kind, lv: 1, xp: 0 }; S.monsters.push(inst); render(); return inst.uid; },
   devAssign: (room, slot, uid) => { assign(room, slot, uid); return S.rooms[room]?.[slot] ?? null; },
   devPlace: (room        , which         , uid        ) => { S.rooms[room][which] = uid; persist(); render(); },

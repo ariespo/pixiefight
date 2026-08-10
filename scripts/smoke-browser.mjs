@@ -52,7 +52,15 @@ try {
     const unlocks = {};
     for (const raid of [2, 3, 4, 5]) {
       __debug.forceRaid(raid);
-      unlocks[raid] = __debug.progression.visibleTabs;
+      const before = __debug.progression;
+      while (!__debug.progression.teachingComplete) {
+        const target = __debug.progression.guide?.[0];
+        const taskPage = ['throne', 'dungeon', 'hero', 'mob', 'shop', 'report', 'story'].includes(target) ? target
+          : __debug.currentTab;
+        if (taskPage !== __debug.currentTab) __debug.setTab(taskPage);
+        __debug.ackGuide();
+      }
+      unlocks[raid] = { tabs: before.visibleTabs, kinds: before.recruitKinds, guide: before.guide, complete: __debug.progression.teachingComplete };
     }
     return { initial, hiddenRouteBlocked, afterSlime, ready, battle, unlocks };
   });
@@ -61,10 +69,14 @@ try {
   assert(onboarding.hiddenRouteBlocked, 'A hidden page was still reachable directly.');
   assert(onboarding.afterSlime.tutorialStep === 2 && onboarding.ready.tutorialStep === 6 && onboarding.ready.deploymentReady, 'Guided recruitment/deployment did not advance.');
   assert(onboarding.battle?.heroesAlive === 1, 'Guided battle did not start against one enemy.');
-  assert(onboarding.unlocks[2].includes('report') && !onboarding.unlocks[2].includes('hero'), 'Raid 2 unlock schedule is incorrect.');
-  assert(onboarding.unlocks[3].includes('hero') && !onboarding.unlocks[3].includes('shop'), 'Raid 3 unlock schedule is incorrect.');
-  assert(onboarding.unlocks[4].includes('shop') && !onboarding.unlocks[4].includes('story'), 'Raid 4 unlock schedule is incorrect.');
-  assert(onboarding.unlocks[5].includes('story'), 'Raid 5 did not unlock the final main page.');
+  assert(onboarding.unlocks[2].tabs.includes('report') && !onboarding.unlocks[2].tabs.includes('hero'), 'Raid 2 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[3].tabs.includes('hero') && !onboarding.unlocks[3].tabs.includes('shop'), 'Raid 3 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[4].tabs.includes('shop') && !onboarding.unlocks[4].tabs.includes('story'), 'Raid 4 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[5].tabs.includes('story'), 'Raid 5 did not unlock the final main page.');
+  assert(onboarding.unlocks[2].kinds.includes('goblin') && onboarding.unlocks[2].kinds.includes('bat') && !onboarding.unlocks[2].kinds.includes('shaman'), 'Raid 2 troop unlocks are incorrect.');
+  assert(onboarding.unlocks[3].kinds.includes('shaman') && !onboarding.unlocks[3].kinds.includes('ogre'), 'Raid 3 troop unlocks are incorrect.');
+  assert(onboarding.unlocks[4].kinds.includes('ogre') && !onboarding.unlocks[4].kinds.includes('lich'), 'Raid 4 troop unlocks are incorrect.');
+  assert(onboarding.unlocks[5].kinds.includes('elite-lich') && Object.values(onboarding.unlocks).every((x) => x.complete && x.guide), 'Round teaching did not complete or lacked guidance.');
 
   // A deliberately sparse legacy save must be upgraded, not rejected.
   await page.evaluate(() => localStorage.setItem('yqh-save-v2', JSON.stringify({ bone: 321, mana: 17, raidNo: 4, story: { archive: [] } })));
@@ -143,6 +155,8 @@ try {
     const battleRun = __debug.runBattleToEnd();
     const report = __debug.reports[0];
     const linkedArchive = __debug.story.archive.find((x) => x.id === archive?.id);
+    const returned = __debug.returnResult();
+    const returnAdvanced = returned.screen === 'manage' && returned.raid === report.raidNo + 1;
 
     __debug.devDismissHero(heroB);
     const exileLead = __debug.story.leads.find((x) => x.sceneId === 'hero-exile-encounter');
@@ -155,7 +169,7 @@ try {
     const facilityActionLock = built.level === 1 && blockedUpgrade.level === 1 && nextRoundUpgrade.level === 2;
     const audit = __debug.uiBounds();
     return { relationLead: !!relationLead, sameSubjectBlocked, facilityActionLock, facility, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
-      battleDone: battleRun?.screen === 'result', reportLinked: report?.storyRefs?.includes(archive?.id) && linkedArchive?.battleRefs?.includes(report.raidNo),
+      battleDone: battleRun?.screen === 'result', returnAdvanced, reportLinked: report?.storyRefs?.includes(archive?.id) && linkedArchive?.battleRefs?.includes(report.raidNo),
       exileLead: !!exileLead, exiles: __debug.story.exiles.length, violations: audit.violations };
   });
   assert(result.relationLead, 'Multi-hero relationship lead was not generated.');
@@ -165,6 +179,7 @@ try {
   assert(result.archive && result.chronicle, 'Story archive or hero chronicle filtering failed.');
   assert(result.exactImpact, 'Resolved story choice did not display its exact numeric battle effect and duration.');
   assert(result.battleDone && result.reportLinked, 'Battle completion or report/story bidirectional linking failed.');
+  assert(result.returnAdvanced, 'Returning to management after a win did not advance exactly one raid.');
   assert(result.exileLead && result.exiles === 1, 'Dismissed hero encounter was not retained.');
   assert(result.violations.length === 0, `Bounded text overflow: ${JSON.stringify(result.violations)}`);
 
