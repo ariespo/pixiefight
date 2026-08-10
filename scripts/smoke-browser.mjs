@@ -133,19 +133,36 @@ try {
   assert(result.exileLead && result.exiles === 1, 'Dismissed hero encounter was not retained.');
   assert(result.violations.length === 0, `Bounded text overflow: ${JSON.stringify(result.violations)}`);
 
-  for (const viewport of [{ width: 640, height: 360 }, { width: 360, height: 640 }]) {
+  await page.evaluate(() => __debug.backManage());
+  for (const viewport of [{ width: 640, height: 360 }, { width: 568, height: 320 }, { width: 390, height: 844 }, { width: 360, height: 640 }]) {
     await page.setViewportSize(viewport);
     await page.waitForTimeout(150);
     const metrics = await page.evaluate(() => __debug.viewport());
     assert(Math.abs(metrics.width - viewport.width) <= 1 && Math.abs(metrics.height - viewport.height) <= 1, `Renderer did not follow ${viewport.width}x${viewport.height}.`);
     assert(metrics.scale > 0 && metrics.scale <= Math.min(viewport.width / 480, viewport.height / 270) + 0.01, 'Logical canvas scaling is invalid.');
     assert(metrics.smallScreen, `Small-screen mode was not enabled at ${viewport.width}x${viewport.height}.`);
-    assert(metrics.rotateHint === (viewport.height > viewport.width * 1.15), 'Portrait rotation guidance is inconsistent.');
+    assert(!metrics.rotateHint, 'Legacy portrait rotation blocker is still visible.');
+    assert(metrics.portraitChrome === (viewport.height > viewport.width * 1.15), 'Portrait control console visibility is inconsistent.');
     assert(metrics.safeRect?.width > 0 && metrics.safeRect?.height > 0, 'Safe viewport was not measurable.');
+    if (viewport.width > viewport.height) {
+      const point = await page.evaluate(() => __debug.toScreen(458, 17));
+      assert(point.x < viewport.width && point.y < viewport.height, 'Landscape new-game button is outside the viewport.');
+      await page.mouse.click(point.x, point.y);
+      assert(await page.evaluate(() => __debug.newGameConfirm), 'Landscape new-game button did not receive the click.');
+      await page.evaluate(() => __debug.cancelNewGame());
+    } else {
+      assert(metrics.portraitLayout?.newY > metrics.portraitContentBottom, 'Portrait controls overlap the game view.');
+      const dungeonX = metrics.portraitLayout.margin + metrics.portraitLayout.buttonWidth + metrics.portraitLayout.gap + metrics.portraitLayout.buttonWidth / 2;
+      await page.mouse.click(dungeonX, metrics.portraitLayout.tabTop + 19);
+      assert(await page.evaluate(() => __debug.currentTab === 'dungeon'), 'Portrait tab navigation did not receive the click.');
+      await page.mouse.click(viewport.width / 2, metrics.portraitLayout.newY + 21);
+      assert(await page.evaluate(() => __debug.newGameConfirm), 'Portrait new-game button did not receive the click.');
+      await page.evaluate(() => __debug.cancelNewGame());
+    }
   }
 
   assert(errors.length === 0, `Browser errors:\n${errors.join('\n')}`);
-  console.log('Browser smoke passed: boot, legacy save, random-story archive, relationships, facility personality, battle/report links, exile, constrained text, desktop and small-screen layouts.');
+  console.log('Browser smoke passed: boot, legacy save, story/facility flows, battle/report links, constrained text, landscape touch targets and portrait controls.');
 } finally {
   await browser?.close();
   server.kill();

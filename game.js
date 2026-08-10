@@ -1013,10 +1013,16 @@ const battleLayer = new PIXI.Container();
 const modalLayer = new PIXI.Container();
 const modalGfx = new PIXI.Graphics();
 const overlay = new PIXI.Container();
+const portraitLayer = new PIXI.Container();
+const portraitGfx = new PIXI.Graphics();
+const portraitHits = new Hits();
 const hits = new Hits();
 let viewScale = 1;
 let smallScreen = false;
 let renderResolution = 1;
+let portraitContentBottom = 0;
+let portraitChromeKey = '';
+let portraitLayoutInfo = null;
 
 const loadingEl   = document.getElementById('loading');
 const loadingText = document.getElementById('loading-text');
@@ -1069,10 +1075,11 @@ async function boot() {
 
   hideLoading();
 
-  app.stage.addChild(backdrop, root);
+  app.stage.addChild(backdrop, root, portraitLayer);
   root.addChild(battleLayer, uiLayer, modalLayer, overlay);
   uiLayer.addChild(uiGfx);
   modalLayer.addChild(modalGfx);
+  portraitLayer.addChild(portraitGfx);
 
   loadSave();
   restoreBackend();
@@ -1190,17 +1197,21 @@ function layout() {
     app.renderer.resize(hostW, hostH);
   }
   const w = app.screen.width, h = app.screen.height;
-  viewScale = Math.max(0.1, Math.min(w / VIEW_W, h / VIEW_H));
+  portrait = h > w * 1.15;
+  viewScale = portrait
+    ? Math.max(0.1, Math.min((w - 8) / VIEW_W, (h * 0.44) / VIEW_H))
+    : Math.max(0.1, Math.min(w / VIEW_W, h / VIEW_H));
   smallScreen = w < 720 || h < 420 || viewScale < 1;
   const snap = (v) => Math.round(v * renderResolution) / renderResolution;
   root.scale.set(viewScale);
   root.x = snap((w - VIEW_W * viewScale) / 2);
-  root.y = snap((h - VIEW_H * viewScale) / 2);
+  root.y = portrait ? snap(4) : snap((h - VIEW_H * viewScale) / 2);
+  portraitContentBottom = root.y + VIEW_H * viewScale;
   setTextRes(Math.min(4, Math.max(1, Math.ceil(viewScale))));
   if (bdTile) { bdTile.width = w; bdTile.height = h; }
   bdFrame.clear();
   bdFrame.rect(root.x - 2, root.y - 2, VIEW_W * viewScale + 4, VIEW_H * viewScale + 4).stroke({ width: 2, color: C.ink, alignment: 0 });
-  portrait = h > w * 1.15;
+  portraitChromeKey = '';
   positionNameInput();
   positionForgeInput();
   positionStoryInput();
@@ -1236,13 +1247,13 @@ function bindInput() {
   canvas.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     unlockAndPlay();
-    if (portrait) { void requestLandscapeMode(); return; }
     const rect = canvas.getBoundingClientRect();
     const sx = (e.clientX - rect.left) * (app.screen.width / rect.width);
     const sy = (e.clientY - rect.top) * (app.screen.height / rect.height);
+    if (portrait && portraitHits.test(sx, sy, e.pointerType === 'touch' ? 8 : 0)) return;
     const x = (sx - root.x) / viewScale;
     const y = (sy - root.y) / viewScale;
-    const touchPad = e.pointerType === 'touch' ? Math.min(6, Math.max(2, 4 / viewScale)) : 0;
+    const touchPad = e.pointerType === 'touch' ? Math.min(10, Math.max(4, 8 / viewScale)) : 0;
     hits.test(x, y, touchPad);
   });
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1339,7 +1350,8 @@ function bindInput() {
 
 function setTab(t     ) {
   pagerFocus = null;
-  if (tab === t) return;
+  confirmNew = false;
+  if (tab === t) { render(); return; }
   if (stitch) closeStitch();
   if (forge) closeForge();
   if (graft) closeGraft();
@@ -1365,11 +1377,12 @@ function clearUi() {
 }
 
 function render() {
-  if (nameInput) nameInput.style.display = screen === 'manage' && (stitch || smith) && !detailPopup && !portrait ? 'block' : 'none';
-  if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !detailPopup && !portrait ? 'block' : 'none';
+  portraitChromeKey = '';
+  if (nameInput) nameInput.style.display = screen === 'manage' && (stitch || smith) && !detailPopup ? 'block' : 'none';
+  if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !detailPopup ? 'block' : 'none';
   const modalOpen = screen === 'manage' && (!!stitch || !!forge || !!graft || !!smith);
   modalLayer.visible = modalOpen || !!detailPopup;
-  if (screen !== 'manage') { uiLayer.visible = false; if (storyInput) storyInput.style.display = 'none'; return; }
+  if (screen !== 'manage') { uiLayer.visible = false; if (storyInput) storyInput.style.display = 'none'; ensurePortraitChrome(); return; }
   uiLayer.visible = true;
   clearUi();
   resetBoundedTextAudit();
@@ -1380,6 +1393,7 @@ function render() {
   if (detailPopup) {
     drawDetailPopup();
     syncStoryInput();
+    ensurePortraitChrome();
     return;
   }
   // 模态期间不画背后页面：0.88 遮罩压不住 12px 点阵字，两层文字会互相糊成一片
@@ -1389,6 +1403,7 @@ function render() {
     else if (smith) drawSmith();
     else drawForge();
     syncStoryInput();
+    ensurePortraitChrome();
     return;
   }
   drawTopBar(g);
@@ -1402,6 +1417,7 @@ function render() {
   else if (tab === 'story') pageStory(g);
   else pageReport(g);
   syncStoryInput();
+  ensurePortraitChrome();
 }
 
 function drawDetailPopup() {
@@ -2685,6 +2701,22 @@ function dismantle(uid        ) {
   render();
 }
 
+function addTestResources() {
+  S.bone += 1000; S.mana += 1000; playSfx('buy'); persist(); say('测试：骨币与魔质各 +1000'); render();
+}
+
+function toggleMute() {
+  S.muted = !S.muted; setMuted(S.muted); persist(); render();
+}
+
+function requestNewGame() {
+  if (confirmNew) {
+    S = freshSave(); syncCustoms(); persist(); confirmNew = false; sel = null; say('已开启新档'); render();
+  } else {
+    confirmNew = true; say('再点一次“新档”确认清空存档'); render();
+  }
+}
+
 function drawTopBar(g               ) {
   panelF(g, uiLayer, 'stone', 0, 0, VIEW_W, 34, C.wall);
   const ico = (name        , x        , size = 14) => {
@@ -2699,22 +2731,73 @@ function drawTopBar(g               ) {
   const raid = currentRaid();
   label(uiLayer, S.overtime ? `加班勇者 第${raid.no - 12}批` : `袭击 ${S.raidNo}/12`, 150, 12, 12, C.bone);
   label(uiLayer, '勇者请回', 240, 12, 12, C.stoneLit);
-  if (saveFlash > 0) label(uiLayer, '已保存', 300, 12, 12, C.green);
+  if (saveFlash > 0) label(uiLayer, '已保存', 266, 12, 10, C.green);
   // 测试按钮：一键补资源，方便试各种阵容
-  button(g, uiLayer, hits, 340, 6, 36, 22, '+1000', () => {
-    S.bone += 1000; S.mana += 1000; playSfx('buy'); persist(); say('测试：骨币与魔质各 +1000'); render();
-  }, { size: 12, fill: C.greenDark, border: C.green, color: C.white });
-  button(g, uiLayer, hits, 378, 6, 30, 22, '导出', () => { exportSave(); }, { size: 10 });
-  button(g, uiLayer, hits, 410, 6, 30, 22, '导入', () => { importSave(); }, { size: 10 });
-  button(g, uiLayer, hits, 442, 6, 30, 22, S.muted ? '静音' : '音量', () => {
-    S.muted = !S.muted; setMuted(S.muted); persist(); render();
-  }, { size: 10 });
-  button(g, uiLayer, hits, 474, 6, 36, 22, '新档', () => {
-    if (confirmNew) { S = freshSave(); syncCustoms(); persist(); confirmNew = false; sel = null; say('已开启新档'); render(); }
-    else { confirmNew = true; say('再点一次“新档”确认清空存档'); render(); }
-  }, { size: 12, border: confirmNew ? C.red : C.bone, color: confirmNew ? C.red : C.bone });
+  button(g, uiLayer, hits, 306, 6, 36, 22, '+1000', addTestResources, { size: 11, fill: C.greenDark, border: C.green, color: C.white });
+  button(g, uiLayer, hits, 344, 6, 30, 22, '导出', exportSave, { size: 10 });
+  button(g, uiLayer, hits, 376, 6, 30, 22, '导入', importSave, { size: 10 });
+  button(g, uiLayer, hits, 408, 6, 30, 22, S.muted ? '静音' : '音量', toggleMute, { size: 10 });
+  button(g, uiLayer, hits, 440, 6, 36, 22, '新档', requestNewGame,
+    { size: 12, border: confirmNew ? C.red : C.bone, color: confirmNew ? C.red : C.bone });
 }
 let confirmNew = false;
+
+function ensurePortraitChrome() {
+  const key = [portrait, screen, tab, paused, speed, confirmNew, S.bone, S.mana, S.raidNo, S.overtime, app.screen.width, app.screen.height].join('|');
+  if (key === portraitChromeKey) return;
+  portraitChromeKey = key;
+  portraitHits.clear();
+  const kids = portraitLayer.removeChildren();
+  for (const kid of kids) if (kid !== portraitGfx) kid.destroy({ children: true });
+  portraitLayer.addChild(portraitGfx);
+  portraitGfx.clear();
+  portraitLayer.visible = portrait;
+  portraitLayoutInfo = null;
+  if (!portrait) return;
+
+  const w = app.screen.width, h = app.screen.height;
+  const top = Math.min(h - 300, Math.ceil(portraitContentBottom + 6));
+  portraitGfx.rect(0, top, w, h - top).fill(C.bg).stroke({ width: 2, color: C.wallLit, alignment: 0 });
+  panelF(portraitGfx, portraitLayer, 'stone', 6, top + 6, w - 12, 38, C.wall);
+  const raid = currentRaid();
+  label(portraitLayer, `骨 ${S.bone}　魔 ${S.mana}`, 16, top + 15, 14, C.gold);
+  label(portraitLayer, S.overtime ? `加班 ${raid.no - 12}` : `袭击 ${S.raidNo}/12`, w - 94, top + 15, 14, C.bone);
+
+  const gap = 5, margin = 8, cols = 4;
+  const bw = Math.floor((w - margin * 2 - gap * (cols - 1)) / cols);
+  const tabTop = top + 50;
+  TABS.forEach((item, i) => {
+    const x = margin + (i % cols) * (bw + gap);
+    const y = tabTop + Math.floor(i / cols) * 43;
+    button(portraitGfx, portraitLayer, portraitHits, x, y, bw, 38, item.name, () => setTab(item.id), {
+      size: 14, enabled: screen === 'manage', fill: tab === item.id ? C.wallLit : C.wall,
+      border: tab === item.id ? C.gold : C.stoneLit, color: tab === item.id ? C.white : C.bone,
+    });
+  });
+
+  const primaryY = tabTop + 91;
+  const primaryLabel = screen === 'manage' ? '迎　战' : screen === 'battle' ? (paused ? '继续战斗' : '暂停战斗') : screen === 'result' ? '继续结算' : '进入加班勇者';
+  const primaryAction = screen === 'manage' ? startBattle : screen === 'battle'
+    ? () => { paused = !paused; portraitChromeKey = ''; }
+    : screen === 'result' ? afterResult : enterOvertime;
+  button(portraitGfx, portraitLayer, portraitHits, margin, primaryY, w - margin * 2, 44, primaryLabel, primaryAction,
+    { size: 17, fill: C.greenDark, border: C.green, color: C.white });
+
+  const actionY = primaryY + 51;
+  const aw = Math.floor((w - margin * 2 - gap * 2) / 3);
+  button(portraitGfx, portraitLayer, portraitHits, margin, actionY, aw, 38, '导出', exportSave, { size: 14 });
+  button(portraitGfx, portraitLayer, portraitHits, margin + aw + gap, actionY, aw, 38, screen === 'manage' ? '导入' : '导入锁定', importSave,
+    { size: 13, enabled: screen === 'manage' });
+  button(portraitGfx, portraitLayer, portraitHits, margin + (aw + gap) * 2, actionY, aw, 38, S.muted ? '开启声音' : '关闭声音', toggleMute, { size: 13 });
+
+  const newY = actionY + 45;
+  const canStartNew = screen === 'manage';
+  button(portraitGfx, portraitLayer, portraitHits, margin, newY, w - margin * 2, 42,
+    canStartNew ? (confirmNew ? '再次点按：清空并新建' : '开始新档') : '返回经营后可新建', requestNewGame,
+    { size: 15, enabled: canStartNew, fill: confirmNew ? C.redDark : C.wall, border: confirmNew ? C.red : C.bone, color: confirmNew ? C.white : C.bone });
+  labelC(portraitLayer, '竖屏控制区・横屏可获得完整战场视野', w / 2, Math.min(h - 20, newY + 50), 11, C.stoneLit);
+  portraitLayoutInfo = { top, tabTop, primaryY, actionY, newY, margin, gap, buttonWidth: bw };
+}
 
 function drawTabs(g               ) {
   const w = VIEW_W / TABS.length;
@@ -3894,8 +3977,7 @@ function removeStoryInput() {
 
 function syncStoryInput() {
   const spec = storyRun?.scene.input;
-  // 竖屏只显示旋转提示，此时 DOM 输入框不能浮在提示上面
-  if (screen === 'manage' && tab === 'story' && spec && !stitch && !forge && !portrait) {
+  if (screen === 'manage' && tab === 'story' && spec && !stitch && !forge) {
     ensureStoryInput();
     if (storyInput) {
       storyInput.maxLength = spec.max;
@@ -5120,6 +5202,7 @@ function initBattleLayers() {
 
 function startBattle() {
   if (screen !== 'manage') return;
+  confirmNew = false;
   if (stitch) closeStitch();
   const unavailable = seatedChampUids().map(champById).filter((c) => c && (c.restTurns || 0) > 0);
   if (unavailable.length) {
@@ -5920,6 +6003,7 @@ function enterOvertime() {
 let endingBuilt = false;
 function tick(dt        ) {
   tickAudio();
+  ensurePortraitChrome();
   if (screen === 'manage') tickUiPortraitEffects(dt);
   if (saveFlash > 0) {
     saveFlash -= dt;
@@ -5997,33 +6081,8 @@ function drawToast() {
 
 let rotateNode                        = null;
 function drawRotateHint() {
-  if (!portrait) {
-    if (rotateNode) rotateNode.visible = false;
-    return;
-  }
-  if (!rotateNode) {
-    rotateNode = new PIXI.Container();
-    const g = new PIXI.Graphics();
-    g.rect(0, 0, VIEW_W, VIEW_H).fill({ color: C.bg, alpha: 0.92 });
-    rotateNode.addChild(g);
-    const t = txt('请横屏游玩', 14, C.gold);
-    t.x = Math.round((VIEW_W - t.width) / 2);
-    t.y = 108;
-    rotateNode.addChild(t);
-    const t2 = txt('点按画面可尝试进入全屏横屏', 11, C.stoneLit);
-    t2.x = Math.round((VIEW_W - t2.width) / 2);
-    t2.y = 132;
-    rotateNode.addChild(t2);
-    const plate = new PIXI.Graphics();
-    plate.roundRect(174, 154, 132, 24, 3).fill(C.wallLit).stroke({ width: 1, color: C.gold, alignment: 0 });
-    rotateNode.addChild(plate);
-    const t3 = txt('进入横屏', 12, C.white);
-    t3.x = Math.round((VIEW_W - t3.width) / 2);
-    t3.y = 158;
-    rotateNode.addChild(t3);
-    overlay.addChild(rotateNode);
-  }
-  rotateNode.visible = true;
+  if (rotateNode) rotateNode.visible = false;
+  ensurePortraitChrome();
 }
 
 // 只读调试钩子（自测用）
@@ -6052,9 +6111,13 @@ window.__debug = {
     const host = document.getElementById('app');
     const rect = host?.getBoundingClientRect();
     return { width: app.screen.width, height: app.screen.height, scale: viewScale, portrait, smallScreen, rotateHint: !!rotateNode?.visible,
+      portraitChrome: portraitLayer.visible, portraitContentBottom, portraitLayout: portraitLayoutInfo ? { ...portraitLayoutInfo } : null,
       resolution: renderResolution, dpr: window.devicePixelRatio || 1,
       safeRect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null };
   },
+  get currentTab() { return tab; },
+  get newGameConfirm() { return confirmNew; },
+  cancelNewGame: () => { confirmNew = false; render(); return true; },
   get monsters() { return S.monsters.map((m) => ({ ...m, room: roomOf(m.uid) })); },
   get rooms() { return S.rooms; },
   get floors() { return S.floors.map((f, i) => ({ id: f.id, battle: { ...f.battle }, utility: { ...f.utility }, output: utilityOutput(i) })); },
@@ -6132,6 +6195,7 @@ window.__debug = {
   get audio() { return audioSnapshot(); },
   get endingT() { return endingT; },
   setTab: (t     ) => setTab(t),
+  backManage: () => { backToManage(); return screen; },
   pagers: () => livePagers.map((p) => ({ ...p, page: pageState[p.key] ?? 0, focus: pagerFocus === p.key })),
   giveResources: (b        , m        ) => { S.bone += b; S.mana += m; render(); },
   forceRaid: (n        ) => { S.raidNo = n; persist(); render(); },
