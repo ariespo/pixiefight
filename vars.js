@@ -100,8 +100,8 @@ export function applyEffects(b             , list                      )        
         break;
       }
       case 'var': {
-        if (e.add != null) { b.addVar(e.key, e.add); out.push(`【${e.key}】${e.add > 0 ? '+' : ''}${e.add}`); }
-        else if (e.set != null) { b.setVar(e.key, e.set); out.push(`【${e.key}】= ${e.set}`); }
+        if (e.add != null) { b.addVar(e.key, e.add); out.push('长期故事走向已改变'); }
+        else if (e.set != null) { b.setVar(e.key, e.set); out.push('长期故事走向已改变'); }
         break;
       }
       case 'monster': {
@@ -131,7 +131,7 @@ export function applyEffects(b             , list                      )        
       }
       case 'mod': {
         b.addMod(e.mod);
-        out.push(`战场变化：${e.mod.name}（${e.mod.raids < 0 ? '永久' : `${e.mod.raids}轮`}）`);
+        out.push(`战场变化：${e.mod.name}（${e.mod.raids < 0 ? '永久' : `${e.mod.raids}轮`}；${modSummary(e.mod)}）`);
         break;
       }
       case 'raid': {

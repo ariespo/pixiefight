@@ -69,6 +69,7 @@ try {
     const lead = __debug.storyLeadQueue('smoke:talent', 'hero-talent-offense', '英雄秘闻', '烟雾测试专精', { ref: heroA, hero: '测试英雄', talent: '破阵', talentDesc: '攻击强化' });
     __debug.storyLeadOpen(lead.id);
     __debug.storyChoose(0);
+    const impactText = __debug.storyScene.log.map((x) => x.text).join(' ');
     const archive = __debug.story.archive.find((x) => x.key === 'smoke:talent');
     const chronicleIds = __debug.storyChronicle('hero', heroA, null);
 
@@ -87,13 +88,14 @@ try {
     __debug.devDismissHero(heroB);
     const exileLead = __debug.story.leads.find((x) => x.sceneId === 'hero-exile-encounter');
     const audit = __debug.uiBounds();
-    return { relationLead: !!relationLead, facility, archive: !!archive, chronicle: chronicleIds.includes(archive?.id),
+    return { relationLead: !!relationLead, facility, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
       battleDone: battleRun?.screen === 'result', reportLinked: report?.storyRefs?.includes(archive?.id) && linkedArchive?.battleRefs?.includes(report.raidNo),
       exileLead: !!exileLead, exiles: __debug.story.exiles.length, violations: audit.violations };
   });
   assert(result.relationLead, 'Multi-hero relationship lead was not generated.');
   assert(result.facility.persona === 'scarred' && result.facility.nickname, 'Facility personality did not awaken after repeated damage.');
   assert(result.archive && result.chronicle, 'Story archive or hero chronicle filtering failed.');
+  assert(result.exactImpact, 'Resolved story choice did not display its exact numeric battle effect and duration.');
   assert(result.battleDone && result.reportLinked, 'Battle completion or report/story bidirectional linking failed.');
   assert(result.exileLead && result.exiles === 1, 'Dismissed hero encounter was not retained.');
   assert(result.violations.length === 0, `Bounded text overflow: ${JSON.stringify(result.violations)}`);
