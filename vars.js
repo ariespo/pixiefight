@@ -144,6 +144,16 @@ export function applyEffects(b             , list                      )        
         if (r.text) out.push(r.text);
         break;
       }
+      case 'hero': {
+        const r = b.alterHero(e);
+        if (r.text) out.push(r.text);
+        break;
+      }
+      case 'facility': {
+        const r = b.alterFacility(e);
+        if (r.text) out.push(r.text);
+        break;
+      }
     }
   }
   return out;

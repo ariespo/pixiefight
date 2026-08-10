@@ -385,7 +385,7 @@ export const SCENES          = [
     id: 'facility-mana-well', chained: true, who: '井底的回声',
     text: '第{ctx.floor}层的{ctx.facility}第一次涌流时，井底没有倒映出你，而是映出一座尚未建成的地牢。',
     choices: [
-      { label: '照着倒影扩渠', reply: '工人记下了倒影里的管线。魔质流得更稳，也把某种东西引得更近。', effects: [{ t: 'res', mana: 18 }, { t: 'mod', mod: { id: 'deep-current', name: '深井暗流', raids: 3, monHpMult: 1.08, heroAtkMult: 1.04 } }] },
+      { label: '照着倒影扩渠', reply: '工人记下了倒影里的管线。魔质流得更稳，也把某种东西引得更近。', effects: [{ t: 'res', mana: 18 }, { t: 'mod', mod: { id: 'deep-current', name: '深井暗流', raids: 3, monHpMult: 1.08, heroAtkMult: 1.04 } }], followup: { sceneId: 'echo-deep-current', title: '井底倒影再次改变', after: 2 } },
       { label: '封住倒影', reply: '井面重新映出你的脸。封口处析出的结晶足够支付一轮维护。', effects: [{ t: 'res', bone: 35, mana: 8 }] },
     ],
   },
@@ -433,7 +433,7 @@ export const SCENES          = [
     id: 'hero-healing', chained: true, who: '{ctx.hero}',
     text: '{ctx.hero}躺进疗愈池后，水面浮出一段属于{ctx.race}、却不属于这位英雄的记忆。“如果伤口都能合上，欠下的东西是不是也能？”',
     choices: [
-      { label: '让其说完', reply: '你听完了那段没有写进档案的败绩。{ctx.hero}离开池水时，脚步比来时更稳。', effects: [{ t: 'var', key: 'heroTrust', add: 1 }, { t: 'mod', mod: { id: 'hero-trust', name: '被倾听的旧伤', raids: 3, monHpMult: 1.08 } }] },
+      { label: '让其说完', reply: '你听完了那段没有写进档案的败绩。{ctx.hero}离开池水时，脚步比来时更稳。', effects: [{ t: 'var', key: 'heroTrust', add: 1 }, { t: 'mod', mod: { id: 'hero-trust', name: '被倾听的旧伤', raids: 3, monHpMult: 1.08 } }], followup: { sceneId: 'echo-hero-trust', title: '{ctx.hero}兑现了那次倾听', after: 2 } },
       { label: '只谈下一场战斗', reply: '旧事沉回池底。{ctx.hero}把沉默磨成了更锋利的决心。', effects: [{ t: 'mod', mod: { id: 'hero-resolve', name: '不谈旧事', raids: 2, monAtkMult: 1.14 } }] },
     ],
   },
@@ -457,7 +457,7 @@ export const SCENES          = [
     id: 'report-worker', chained: true, who: '幸存的搬运工',
     text: '第{ctx.raidNo}次袭击中，{ctx.worker}没有撤离{ctx.facility}。战后，人们在破门后找到它留下的工具，以及一行歪斜的字：“产出不能停。”',
     choices: [
-      { label: '把工具陈列起来', reply: '每个经过的工作人员都会放慢脚步。然后把手里的活做得更快一些。', effects: [{ t: 'mod', mod: { id: 'worker-memorial', name: '留守者的工具', raids: 4, monHpMult: 1.1 } }, { t: 'var', key: 'workerHonor', add: 1 }] },
+      { label: '把工具陈列起来', reply: '每个经过的工作人员都会放慢脚步。然后把手里的活做得更快一些。', effects: [{ t: 'mod', mod: { id: 'worker-memorial', name: '留守者的工具', raids: 4, monHpMult: 1.1 } }, { t: 'var', key: 'workerHonor', add: 1 }], followup: { sceneId: 'echo-worker-memorial', title: '陈列柜前多了一件工具', after: 2 } },
       { label: '继续使用工具', reply: '工具上的血没有擦净。它们仍旧合手，也仍旧能干活。', effects: [{ t: 'res', bone: 45, mana: 8 }] },
     ],
   },
@@ -467,6 +467,86 @@ export const SCENES          = [
     choices: [
       { label: '保留两次记录', reply: '从此以后，守军相信死亡也需要得到地牢的批准。', effects: [{ t: 'mod', mod: { id: 'twice-recorded', name: '名册上的第二次', raids: 3, monHpMult: 1.12 } }] },
       { label: '烧掉错误的一页', reply: '纸页烧成一缕紫烟，凝成了少量魔质。那个名字仍隐约留在下一页。', effects: [{ t: 'res', mana: 18 }] },
+    ],
+  },
+  {
+    id: 'hero-graft', chained: true, who: '{ctx.hero}',
+    text: '全身改造结束后，{ctx.hero}盯着新接上的{ctx.parts}看了很久。“这些部件以前属于谁不重要。问题是，醒来的还是不是我？”',
+    choices: [
+      { label: '让其亲自命名新身体', reply: '{ctx.hero}逐一为新部件取了名字。名字说完，陌生的关节终于开始服从同一个意志。', effects: [{ t: 'hero', xp: 22 }, { t: 'var', key: 'graftIdentity', add: 1 }, { t: 'mod', mod: { id: 'named-body', name: '被命名的新身体', raids: 3, monHpMult: 1.1 } }], followup: { sceneId: 'echo-graft-oath', title: '{ctx.hero}与新身体的约定', after: 2 } },
+      { label: '把部件当作武器', reply: '“身体只是最贴身的兵器。”{ctx.hero}重复了一遍，直到声音里不再有疑问。', effects: [{ t: 'hero', xp: 12, wounds: -1 }, { t: 'res', mana: 10 }, { t: 'var', key: 'graftIdentity', add: -1 }] },
+    ],
+  },
+  {
+    id: 'hero-talent', chained: true, who: '训练记录员',
+    text: '{ctx.hero}学会「{ctx.talent}」后，连续三夜修改同一页训练笔记。纸上原本写着效果：{ctx.talentDesc}',
+    choices: [
+      { label: '让其公开授课', reply: '旁听者未必学会了专精，却学会了那种毫不犹豫的节奏。', effects: [{ t: 'hero', xp: 16 }, { t: 'mod', mod: { id: 'open-lesson', name: '统领公开课', raids: 3, monSpdAdd: 0.08 } }] },
+      { label: '把笔记封存', reply: '笔记被收入内库。工坊从页边的演算里拆出了可用的魔质回路。', effects: [{ t: 'res', mana: 14 }, { t: 'var', key: 'sealedTalentNotes', add: 1 }] },
+    ],
+  },
+  {
+    id: 'hero-title', chained: true, who: '记账兵',
+    text: '第一次有人在走廊里高声称{ctx.hero}为“{ctx.title}”。回声传了三层，连不认识这位英雄的怪物也跟着喊了起来。',
+    choices: [
+      { label: '举行授名仪式', reply: '称号被刻上门楣。{ctx.hero}没有笑，但在所有人散去后独自看了很久。', effects: [{ t: 'hero', xp: 18 }, { t: 'mod', mod: { id: 'public-title', name: '众口授名', raids: 3, monAtkMult: 1.1 } }] },
+      { label: '让称号自然流传', reply: '没有仪式，也没有命令。真正留下来的称号，从来不需要解释。', effects: [{ t: 'res', bone: 35 }, { t: 'var', key: 'livingTitles', add: 1 }] },
+    ],
+  },
+  {
+    id: 'facility-growth', chained: true, who: '{ctx.facility}管理员',
+    text: '第{ctx.floor}层的{ctx.facility}扩建到Lv{ctx.level}后，多出一条图纸上不存在的窄廊。每天清晨，窄廊的长度都与前一天不同。',
+    choices: [
+      { label: '允许设施自行生长', reply: '你在门上刻下许可。窄廊缓慢舒展开，像整座地牢多出了一根血管。', effects: [{ t: 'facility', condition: -10 }, { t: 'mod', mod: { id: 'living-facility', name: '自行生长的设施', raids: 3, roomLimitAdd: 2 } }], followup: { sceneId: 'echo-facility-voice', title: '{ctx.facility}学会了说话', after: 2 } },
+      { label: '砌死未知窄廊', reply: '新墙比旧墙厚一倍。拆下的异质砖料被送进工坊研究。', effects: [{ t: 'facility', repair: 8 }, { t: 'res', mana: 10 }] },
+    ],
+  },
+  {
+    id: 'facility-repair', chained: true, who: '维修队长',
+    text: '第{ctx.floor}层的{ctx.facility}修复完成，但墙上仍能看见那次损坏留下的{ctx.damage}道深浅痕迹。工人问要不要把它们盖住。',
+    choices: [
+      { label: '保留伤痕', reply: '每一道痕迹都成了新的刻度。守军开始用它们估算勇者还能推进多远。', effects: [{ t: 'facility', repair: 10 }, { t: 'mod', mod: { id: 'measured-scars', name: '以伤痕丈量', raids: 3, roomLimitAdd: 3 } }] },
+      { label: '重新粉刷', reply: '墙面恢复如新。旧石灰被刮下，里面混着一点还能回收的魔质。', effects: [{ t: 'res', mana: 12 }, { t: 'var', key: 'hiddenScars', add: 1 }] },
+    ],
+  },
+  {
+    id: 'echo-deep-current', chained: true, who: '井底的第二个声音',
+    text: '两次袭击以后，{ctx.facility}的倒影终于建成了。倒影中的地牢比现实多一层，而那一层正有人从里面敲门。',
+    choices: [
+      { label: '回应敲门声', reply: '你敲回三下。井水涌出一批魔质，也带来下一支队伍已经动身的消息。', effects: [{ t: 'res', mana: 24 }, { t: 'raid', add: 1 }] },
+      { label: '抽干倒影', reply: '多出来的楼层随水位下降而消失，只在井底留下一枚陌生铆钉。', effects: [{ t: 'res', bone: 55 }, { t: 'facility', condition: 12 }] },
+    ],
+  },
+  {
+    id: 'echo-hero-trust', chained: true, who: '{ctx.hero}',
+    text: '两场战斗后，{ctx.hero}把你带到同一座疗愈池边：“上次你听了我的败绩。这次，我想让你看我怎么把它改写。”',
+    choices: [
+      { label: '准许其领队演练', reply: '演练没有掌声，只有一次次重来。最后一遍，旧败绩里所有错误都被逐一纠正。', effects: [{ t: 'hero', xp: 28 }, { t: 'mod', mod: { id: 'rewritten-defeat', name: '改写旧败绩', raids: 3, monAtkMult: 1.12 } }] },
+      { label: '让其先彻底休息', reply: '{ctx.hero}第一次没有争辩。池水安静下来，像替你保存了这份信任。', effects: [{ t: 'hero', rest: -1, wounds: -1 }, { t: 'res', mana: 8 }] },
+    ],
+  },
+  {
+    id: 'echo-worker-memorial', chained: true, who: '夜班工人',
+    text: '陈列柜前多出一件沾灰的工具。没人承认放过它，但握柄上刻着与留守者相同的那句话：“产出不能停。”',
+    choices: [
+      { label: '把新工具也陈列起来', reply: '柜子从纪念一个人，变成了记录所有无名劳动的地方。', effects: [{ t: 'facility', repair: 16, contextKey: 'facilityRef' }, { t: 'mod', mod: { id: 'workers-wall', name: '无名者之墙', raids: -1, monHpMult: 1.04 } }] },
+      { label: '追查工具来源', reply: '脚印通向一条废弃侧道。里面没有人，只有一小箱藏起来的骨币。', effects: [{ t: 'res', bone: 85 }] },
+    ],
+  },
+  {
+    id: 'echo-graft-oath', chained: true, who: '{ctx.hero}',
+    text: '两场战斗后，{ctx.hero}的新部件已经磨出与旧身体相同的习惯痕迹。“现在它们属于我了。不是因为装上了，而是因为一起活了下来。”',
+    choices: [
+      { label: '把这句话写入档案', reply: '改造档案第一次记录的不是材料与成本，而是一句关于归属的话。', effects: [{ t: 'hero', xp: 30 }, { t: 'var', key: 'graftOaths', add: 1 }] },
+      { label: '为新身体举行祝圣', when: [{ path: 'mana', cmp: '>=', value: 12 }], lockText: '需要12魔质', reply: '魔质沿接缝流过，所有部件短暂发出同一种金光。', effects: [{ t: 'res', mana: -12 }, { t: 'hero', wounds: -1 }, { t: 'mod', mod: { id: 'graft-blessing', name: '同一束金光', raids: 4, monHpMult: 1.12 } }] },
+    ],
+  },
+  {
+    id: 'echo-facility-voice', chained: true, who: '{ctx.facility}',
+    text: '两次袭击后，第{ctx.floor}层的{ctx.facility}真的开口了。它没有嘴，只让墙与管道同时震动：“我守住了。现在轮到你维护我。”',
+    choices: [
+      { label: '正式列入员工名册', reply: '记账兵给一座房间发了编号。荒唐，但那一夜设施运转得格外卖力。', effects: [{ t: 'facility', condition: 18, repair: 8 }, { t: 'var', key: 'livingFacilities', add: 1 }] },
+      { label: '命令它保持沉默', reply: '震动停了。拆下的共鸣管被换成魔质，墙里仍偶尔传来叹气声。', effects: [{ t: 'res', mana: 20 }, { t: 'facility', condition: -8 }] },
     ],
   },
   {
