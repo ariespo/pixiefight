@@ -374,6 +374,102 @@ export const SCENES          = [
     ],
   },
   {
+    id: 'facility-bone-yard', chained: true, who: '骨料场管理员',
+    text: '第{ctx.floor}层的{ctx.facility}深处，工人挖出一排仍在轻轻敲击的指骨。它们像在替某支早已覆灭的队伍打拍子。',
+    choices: [
+      { label: '按节拍分拣', reply: '骨料沿着旧军阵的节奏被码放整齐，连最迟钝的搬运工也学会了配合。', effects: [{ t: 'res', bone: 45 }, { t: 'mod', mod: { id: 'bone-march', name: '骨阵节拍', raids: 2, monSpdAdd: 0.08 } }] },
+      { label: '熔掉这批骨头', reply: '敲击声在炉火里停了。余烬凝成一小块纯净魔质。', effects: [{ t: 'res', mana: 14 }, { t: 'var', key: 'buriedMarch', set: 1 }] },
+    ],
+  },
+  {
+    id: 'facility-mana-well', chained: true, who: '井底的回声',
+    text: '第{ctx.floor}层的{ctx.facility}第一次涌流时，井底没有倒映出你，而是映出一座尚未建成的地牢。',
+    choices: [
+      { label: '照着倒影扩渠', reply: '工人记下了倒影里的管线。魔质流得更稳，也把某种东西引得更近。', effects: [{ t: 'res', mana: 18 }, { t: 'mod', mod: { id: 'deep-current', name: '深井暗流', raids: 3, monHpMult: 1.08, heroAtkMult: 1.04 } }] },
+      { label: '封住倒影', reply: '井面重新映出你的脸。封口处析出的结晶足够支付一轮维护。', effects: [{ t: 'res', bone: 35, mana: 8 }] },
+    ],
+  },
+  {
+    id: 'facility-training', chained: true, who: '训练场教头',
+    text: '第{ctx.floor}层的{ctx.facility}墙上多了一套没人承认画过的战术：每一笔都在教守军如何假装溃退。',
+    choices: [
+      { label: '列入训练', reply: '怪物们学会在后撤时留出诱敌的缝隙。勇者会以为那是机会。', effects: [{ t: 'xp', sel: 'all', add: 10 }, { t: 'mod', mod: { id: 'feigned-retreat', name: '佯退战术', raids: 3, roomLimitAdd: 2 } }] },
+      { label: '擦掉图案', reply: '粉尘落下时，墙缝里掉出一袋旧骨币。', effects: [{ t: 'res', bone: 50 }] },
+    ],
+  },
+  {
+    id: 'facility-healing', chained: true, who: '疗愈池看守',
+    text: '第{ctx.floor}层的{ctx.facility}今夜泛起金光。每一道旧伤都在水面留下一个没有名字的影子。',
+    choices: [
+      { label: '让守军浸泡武器', reply: '池水记住了伤口，也记住了制造伤口的方法。', effects: [{ t: 'mod', mod: { id: 'remembered-wounds', name: '伤痕记忆', raids: 3, monAtkMult: 1.12 } }] },
+      { label: '净化池水', reply: '那些影子散去，留下可收集的温和魔质。', effects: [{ t: 'res', mana: 16 }, { t: 'var', key: 'mercy', add: 1 }] },
+    ],
+  },
+  {
+    id: 'facility-workshop', chained: true, who: '工坊里的锤声',
+    text: '第{ctx.floor}层的{ctx.facility}停工以后，锤砧仍自行敲了十三下。第十三下，台面上出现了一枚不属于任何图纸的铆钉。',
+    choices: [
+      { label: '装进下一件甲', reply: '铆钉咬住护甲，像一颗不肯停跳的心。', effects: [{ t: 'mod', mod: { id: 'thirteenth-rivet', name: '第十三枚铆钉', raids: 3, monHpMult: 1.14 } }] },
+      { label: '拆解研究', reply: '铆钉一层层剥开，内里全是细密的魔质纹路。', effects: [{ t: 'res', mana: 20 }] },
+    ],
+  },
+  {
+    id: 'facility-hatchery', chained: true, who: '孵化室饲育员',
+    text: '第{ctx.floor}层的{ctx.facility}里，一枚空壳开始模仿附近怪物的叫声。它没有生命，却懂得召集同类。',
+    choices: [
+      { label: '把空壳挂起来', reply: '叫声沿通风道传远了。第二天，有一只迷路的怪物循声而来。', effects: [{ t: 'monster', kind: 'bat' }, { t: 'res', bone: -10 }] },
+      { label: '磨成饲料', reply: '孵化物吃得格外干净，连最弱的那只也壮了一圈。', effects: [{ t: 'levelup', sel: 'weakest', add: 1 }] },
+    ],
+  },
+  {
+    id: 'facility-vault', chained: true, who: '宝库守门人',
+    text: '第{ctx.floor}层的{ctx.facility}账上多出一笔不存在的存款。数目不大，落款却是下一次袭击的日期。',
+    choices: [
+      { label: '把它留在账上', reply: '那笔钱真的出现了。与此同时，门外也响起了比预期更早的脚步。', effects: [{ t: 'res', bone: 70 }, { t: 'raid', add: 1 }] },
+      { label: '划掉这笔账', reply: '墨迹渗进纸背，变成一张标着安全侧道的简图。', effects: [{ t: 'mod', mod: { id: 'vault-route', name: '宝库侧道', raids: 3, roomLimitAdd: 3 } }] },
+    ],
+  },
+  {
+    id: 'hero-healing', chained: true, who: '{ctx.hero}',
+    text: '{ctx.hero}躺进疗愈池后，水面浮出一段属于{ctx.race}、却不属于这位英雄的记忆。“如果伤口都能合上，欠下的东西是不是也能？”',
+    choices: [
+      { label: '让其说完', reply: '你听完了那段没有写进档案的败绩。{ctx.hero}离开池水时，脚步比来时更稳。', effects: [{ t: 'var', key: 'heroTrust', add: 1 }, { t: 'mod', mod: { id: 'hero-trust', name: '被倾听的旧伤', raids: 3, monHpMult: 1.08 } }] },
+      { label: '只谈下一场战斗', reply: '旧事沉回池底。{ctx.hero}把沉默磨成了更锋利的决心。', effects: [{ t: 'mod', mod: { id: 'hero-resolve', name: '不谈旧事', raids: 2, monAtkMult: 1.14 } }] },
+    ],
+  },
+  {
+    id: 'hero-fatigue', chained: true, who: '轮值记录员',
+    text: '{ctx.hero}完成第四次连续出战后，被从第{ctx.floor}层的统领席上强制撤下。记录员发现，其盔甲内侧刻着四道新鲜划痕。',
+    choices: [
+      { label: '准许完整休整', reply: '名册上留下了空位。守军看见了：在这座地牢里，活着回来也算功绩。', effects: [{ t: 'mod', mod: { id: 'earned-rest', name: '应得的休整', raids: 3, monHpMult: 1.1 } }, { t: 'var', key: 'restHonored', add: 1 }] },
+      { label: '把划痕描成金色', reply: '四道划痕成了轮值勋记。其他统领开始计算自己的下一道。', effects: [{ t: 'res', bone: -25 }, { t: 'mod', mod: { id: 'golden-marks', name: '四战勋记', raids: 3, monAtkMult: 1.12 } }] },
+    ],
+  },
+  {
+    id: 'report-breach', chained: true, who: '战后清点员',
+    text: '第{ctx.raidNo}次袭击后，第{ctx.floor}层的{ctx.facility}门口只剩拖拽痕迹。损失已经入账，但勇者落下了一张标着撤退路线的地图。',
+    choices: [
+      { label: '沿图设伏', reply: '下一批勇者会发现，回去的路比进来时更长。', effects: [{ t: 'mod', mod: { id: 'loot-route-ambush', name: '劫掠路线伏击', raids: 3, monAtkMult: 1.1, roomLimitAdd: 2 } }] },
+      { label: '卖掉地图', reply: '兜帽商人没有问地图从哪来。他只数了骨币。', effects: [{ t: 'res', bone: 55 }] },
+    ],
+  },
+  {
+    id: 'report-worker', chained: true, who: '幸存的搬运工',
+    text: '第{ctx.raidNo}次袭击中，{ctx.worker}没有撤离{ctx.facility}。战后，人们在破门后找到它留下的工具，以及一行歪斜的字：“产出不能停。”',
+    choices: [
+      { label: '把工具陈列起来', reply: '每个经过的工作人员都会放慢脚步。然后把手里的活做得更快一些。', effects: [{ t: 'mod', mod: { id: 'worker-memorial', name: '留守者的工具', raids: 4, monHpMult: 1.1 } }, { t: 'var', key: 'workerHonor', add: 1 }] },
+      { label: '继续使用工具', reply: '工具上的血没有擦净。它们仍旧合手，也仍旧能干活。', effects: [{ t: 'res', bone: 45, mana: 8 }] },
+    ],
+  },
+  {
+    id: 'report-revival', chained: true, who: '战地记录员',
+    text: '第{ctx.raidNo}次袭击的名单上，{ctx.hero}先被划掉，又被重新写回。没人能解释那次复活，只知道第二个名字的笔迹不是记录员的。',
+    choices: [
+      { label: '保留两次记录', reply: '从此以后，守军相信死亡也需要得到地牢的批准。', effects: [{ t: 'mod', mod: { id: 'twice-recorded', name: '名册上的第二次', raids: 3, monHpMult: 1.12 } }] },
+      { label: '烧掉错误的一页', reply: '纸页烧成一缕紫烟，凝成了少量魔质。那个名字仍隐约留在下一页。', effects: [{ t: 'res', mana: 18 }] },
+    ],
+  },
+  {
     id: 'quiet-night',
     weight: 2,
     text: '什么都没发生的一夜。走廊里只有滴水声，和某只怪物翻身的动静。',
