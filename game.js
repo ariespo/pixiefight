@@ -459,6 +459,19 @@ function utilityOutput(floorIndex) {
   };
 }
 
+function utilityBuildDetail(kind, floorIndex) {
+  const d = UTILITY_KINDS[kind];
+  const depth = Math.round((DEPTH_MULT[floorIndex] ?? 0.8) * 100);
+  const effect = kind === 'bone-yard' ? `Lv1基础每轮10骨币；本层深度效率${depth}%，可指派员工。`
+    : kind === 'mana-well' ? `Lv1基础每轮3魔质；本层深度效率${depth}%，可指派员工。`
+      : kind === 'training' ? 'Lv1提供1个训练位，每名未参战单位每轮获得8经验。'
+        : kind === 'healing' ? 'Lv1每轮提供1次疗愈资格；没有可用疗愈池时不能疗愈英雄。'
+          : kind === 'workshop' ? 'Lv1每轮提供10维修点，并提供1次5%的锻造或改造优惠。'
+            : kind === 'hatchery' ? 'Lv1每轮提供1次普通怪物招募优惠，骨币消耗降低8%。'
+              : 'Lv1保护20骨币与5魔质；被攻破后保护能力会随损坏下降。';
+  return `${d.desc}\n${effect}\n建造成本：${d.bone}骨币${d.mana ? `＋${d.mana}魔质` : ''}。`;
+}
+
 function repairQuote(u) {
   const missing = Math.max(0, 100 - u.condition);
   const points = Math.min(S.dungeon.repairPoints, missing);
@@ -870,6 +883,7 @@ let champTitleExpand                     = '';         // 详情页当前展开�
 let gearSlotSel           = 'crown';                 // 装备页当前编辑的槽
 let talentPreview = null;                            // 专精页预览；确认前不写存档
 let detailPopup = null;                              // 统一长说明弹层
+let relicForgeConfirm = false;                       // 英雄遗物熔铸二次确认
 let monDetailMode = false;                             // 已招募魔物卡片默认/详情切换
 let monSkillTip = null;                                // 已招募魔物默认卡片上弹出的技能详情 uid
 let monKindSkillTip = null;                            // 可招募魔物详情上弹出的技能详情 id
@@ -1216,6 +1230,7 @@ function bindInput() {
         return;
       }
       if (e.key === 'Escape') {
+        if (relicForgeConfirm) { relicForgeConfirm = false; render(); return; }
         if (tab === 'story' && storyRun) { closeStory(); return; }
         sel = null; render(); return;
       }
@@ -1236,6 +1251,7 @@ function setTab(t     ) {
   if (stitch) closeStitch();
   if (forge) closeForge();
   if (graft) closeGraft();
+  relicForgeConfirm = false;
   tab = t;
   sel = null;
   playSfx('tab');
@@ -2835,21 +2851,36 @@ function drawSidePanel(g               ) {
     const d = utilityDef(u);
     labelC(uiLayer, `${floor + 1}层 后勤房`, 405, 46, 12, C.white);
     if (u.kind === 'none') {
-      label(uiLayer, '选择设施建造：', 340, 62, 11, C.bone);
+      label(uiLayer, '选择设施（仅预览）：', 340, 62, 10, C.bone);
       const kinds = ['bone-yard', 'mana-well', 'training', 'healing', 'workshop', 'hatchery', 'vault'];
-      const pk = paged('utility-build', kinds, 4);
-      let y = 80;
+      const pk = paged('utility-build', kinds, 2);
+      let y = 76;
       for (const kind of pk.view) {
         const k = UTILITY_KINDS[kind];
         const can = S.bone >= k.bone && S.mana >= k.mana;
-        g.rect(340, y, 130, 31).fill(C.ink).stroke({ width: 1, color: can ? k.color : C.wallLit, alignment: 0 });
-        label(uiLayer, k.name, 344, y + 2, 11, can ? k.color : C.stoneLit);
-        label(uiLayer, `${k.bone}骨${k.mana ? `＋${k.mana}魔` : ''}`, 408, y + 2, 10, can ? C.bone : C.redDark);
-        label(uiLayer, cut(k.desc, 14), 344, y + 17, 8, C.stoneLit);
-        if (can) hits.add(340, y, 130, 31, () => buildUtility(floor, kind));
-        y += 34;
+        const active = sel.buildKind === kind;
+        g.rect(340, y, 130, 21).fill(active ? C.wallLit : C.ink)
+          .stroke({ width: 1, color: active ? C.gold : can ? k.color : C.wallLit, alignment: 0 });
+        label(uiLayer, k.name, 344, y + 4, 10, active ? C.gold : can ? k.color : C.stoneLit);
+        label(uiLayer, `${k.bone}骨${k.mana ? `＋${k.mana}魔` : ''}`, 408, y + 4, 9, can ? C.bone : C.redDark);
+        hits.add(340, y, 130, 21, () => { sel = { kind: 'utility', floor, buildKind: kind }; playSfx('tab'); render(); });
+        y += 23;
       }
-      pager(g, 'utility-build', pk.pages, 340, 216, 130, '设施 ');
+      pager(g, 'utility-build', pk.pages, 340, 124, 130, '设施 ');
+      const previewKind = sel.buildKind;
+      if (!previewKind) {
+        boundedText(uiLayer, '点击设施名称查看完整介绍。预选不会消耗资源。', 340, 160, 130, 52, 9, C.stoneLit);
+        return;
+      }
+      const preview = UTILITY_KINDS[previewKind];
+      const body = utilityBuildDetail(previewKind, floor);
+      const canBuild = S.bone >= preview.bone && S.mana >= preview.mana;
+      label(uiLayer, `${preview.name}・建造预览`, 340, 146, 10, preview.color);
+      boundedText(uiLayer, body, 340, 159, 130, 52, 7, C.bone);
+      button(g, uiLayer, hits, 340, 214, 36, 16, '全文', () => openDetailPopup(`${preview.name}・设施介绍`, body, preview.color),
+        { size: 9, fill: C.ink, border: preview.color, color: preview.color });
+      button(g, uiLayer, hits, 378, 214, 92, 16, canBuild ? '确认建造' : '资源不足', () => buildUtility(floor, previewKind),
+        { size: 9, enabled: canBuild, fill: C.greenDark, border: canBuild ? C.green : C.redDark, color: canBuild ? C.white : C.redDark });
       return;
     }
     if (sel.people) {
@@ -4527,15 +4558,38 @@ function pageShop(g               ) {
     g.rect(x, y, 158, 20).fill(selected ? C.wallLit : C.wall).stroke({ width: 1, color: selected ? C.gold : C.ink, alignment: 0 });
     label(uiLayer, it.name, x + 4, y + 4, 12, it.owned ? C.green : C.bone);
     label(uiLayer, it.owned ? '已拥有' : `${it.cost}魔`, x + 116, y + 4, 12, it.owned ? C.stoneLit : canBuy ? C.purple : C.redDark);
-    hits.add(x, y, 158, 20, () => { sel = { kind: 'shop', id: it.id }; playSfx('tab'); render(); });
+    hits.add(x, y, 158, 20, () => { relicForgeConfirm = false; sel = { kind: 'shop', id: it.id }; playSfx('tab'); render(); });
   });
   pager(g, 'shop', ps.pages, 6, 146, 158, '解锁 ');
-  button(g, uiLayer, hits, 170, 146, 158, 18, '熔铸遗物 5000骨+5000魔', () => {
-    if (S.bone < 5000 || S.mana < 5000) { say('熔铸英雄遗物需要5000骨币与5000魔质'); return; }
-    S.bone -= 5000; S.mana -= 5000; S.relic += 1;
-    playSfx('buy'); persist(); say('英雄遗物熔铸完成'); render();
-  }, { size: 10, enabled: S.bone >= 5000 && S.mana >= 5000, fill: C.purpleDark, border: C.gold, color: C.gold });
+  const canForgeRelic = S.bone >= 5000 && S.mana >= 5000;
+  if (!relicForgeConfirm) {
+    button(g, uiLayer, hits, 170, 146, 158, 18, '熔铸遗物 5000骨+5000魔', () => beginRelicForge(),
+      { size: 10, enabled: canForgeRelic, fill: C.purpleDark, border: C.gold, color: C.gold });
+  } else {
+    button(g, uiLayer, hits, 170, 146, 104, 18, '确认熔铸', () => confirmRelicForge(),
+      { size: 10, fill: C.redDark, border: C.red, color: C.white });
+    button(g, uiLayer, hits, 276, 146, 52, 18, '取消', () => { relicForgeConfirm = false; playSfx('tab'); render(); },
+      { size: 10, fill: C.wall, border: C.bone, color: C.bone });
+    label(uiLayer, '将扣除5000骨币＋5000魔质', 170, 166, 9, C.red);
+  }
   drawSidePanel(g);
+}
+
+function beginRelicForge() {
+  if (S.bone < 5000 || S.mana < 5000) { say('熔铸英雄遗物需要5000骨币与5000魔质'); return false; }
+  relicForgeConfirm = true;
+  playSfx('tab'); say('高额消耗：再次确认才会熔铸英雄遗物'); render();
+  return true;
+}
+
+function confirmRelicForge() {
+  if (!relicForgeConfirm) return false;
+  if (S.bone < 5000 || S.mana < 5000) {
+    relicForgeConfirm = false; say('熔铸英雄遗物需要5000骨币与5000魔质'); render(); return false;
+  }
+  S.bone -= 5000; S.mana -= 5000; S.relic += 1; relicForgeConfirm = false;
+  playSfx('buy'); persist(); say('英雄遗物熔铸完成'); render();
+  return true;
 }
 
 function pageReport(g               ) {
@@ -5557,6 +5611,12 @@ window.__debug = {
     S.dungeon.healingCharges = healingCapacity(); persist(); render();
     return { ...S.floors[floor].utility };
   },
+  previewUtilityBuild: (floor, kind) => {
+    if (!S.floors[floor] || S.floors[floor].utility.kind !== 'none' || !(kind in UTILITY_KINDS) || kind === 'none') return null;
+    tab = 'dungeon'; sel = { kind: 'utility', floor, buildKind: kind }; render();
+    return { kind, detail: utilityBuildDetail(kind, floor), bone: S.bone, mana: S.mana };
+  },
+  confirmUtilityBuild: (floor, kind) => { buildUtility(floor, kind); return { ...S.floors[floor]?.utility, bone: S.bone, mana: S.mana }; },
   devExpandFloor: () => { expandFloor(); return S.floors.length; },
   devEconomySettle: (broken = []) => {
     const snap = dungeonEconomyPreview();
@@ -5567,6 +5627,9 @@ window.__debug = {
   devTrain: (floor, type, uid) => { toggleTrainingTarget(floor, type, uid); return utilityAt(floor)?.trainTargets ?? []; },
   devRepairUtility: (floor) => { repairUtility(floor); return { utility: { ...utilityAt(floor) }, repairPoints: S.dungeon.repairPoints, bone: S.bone }; },
   economyQuotes: (bone = 100, mana = 20, kind = 'slime') => ({ workshop: workshopQuote(bone, mana), recruit: recruitQuote(monKind(kind)) }),
+  get relicConfirm() { return relicForgeConfirm; },
+  previewRelicForge: () => { tab = 'shop'; render(); return { armed: beginRelicForge(), bone: S.bone, mana: S.mana, relic: S.relic }; },
+  confirmRelicForge: () => ({ ok: confirmRelicForge(), bone: S.bone, mana: S.mana, relic: S.relic }),
   devBuyMonster: (kind = 'slime') => { const before = { bone: S.bone, charges: S.dungeon.hatcheryCharges }; recruit(kind); return { before, bone: S.bone, charges: S.dungeon.hatcheryCharges, count: S.monsters.length }; },
   devSelectUtility: (floor, people = false) => { tab = 'dungeon'; sel = { kind: 'utility', floor, people }; render(); return true; },
   devPage: (key, page) => { pageState[key] = Math.max(0, Math.round(page || 0)); render(); return pageState[key]; },
