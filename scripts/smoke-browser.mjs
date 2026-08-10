@@ -51,6 +51,14 @@ try {
     return __debug.story.archive.length > before && __debug.story.archive[0]?.source === '无主传闻';
   });
   assert(randomArchived, 'A random story was not recorded in the permanent chronicle.');
+  await page.evaluate(() => { __debug.storyLeave(); __debug.setTab('story'); });
+  const noCreditPoint = await page.evaluate(() => __debug.toScreen(120, 221));
+  await page.mouse.click(noCreditPoint.x, noCreditPoint.y);
+  await page.waitForTimeout(50);
+  const noCreditDetail = await page.evaluate(() => __debug.detail);
+  assert(noCreditDetail?.title === '暂无无主秘闻' && noCreditDetail.body.includes('失守 +1 次'), 'Zero-credit random-story button gave no actionable feedback.');
+  const closePoint = await page.evaluate(() => __debug.toScreen(470, 250));
+  await page.mouse.click(closePoint.x, closePoint.y);
 
   const result = await page.evaluate(() => {
     __debug.giveResources(20000, 20000);

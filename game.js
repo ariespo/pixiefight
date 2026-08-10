@@ -3762,8 +3762,12 @@ const hybridProvider                = {
   name: '地牢秘闻＋外部叙事者',
   async next(snap, pick) {
     if (hasBackend()) {
-      const sc = await llmScene(snap, String(S.story.vars.lairName ?? ''));
-      if (sc) return sc;
+      try {
+        const sc = await llmScene(snap, String(S.story.vars.lairName ?? ''));
+        if (sc) return sc;
+      } catch {
+        console.warn('外部叙事者不可用，已自动切换到本地秘闻');
+      }
     }
     return localProvider.next(snap, pick);
   },
@@ -4005,8 +4009,10 @@ function pageStory(g               ) {
     const can = S.story.credits > 0;
     label(uiLayer, `战场变化 ${S.story.mods.length}・剧情记录 ${Object.keys(S.story.vars).length}`, 20, 180, 11, C.stoneLit);
     label(uiLayer, can ? `另有 ${S.story.credits} 次无主传闻可追查` : '无主传闻会在下一场袭击后补充', 20, 194, 11, can ? C.gold : C.wall);
-    button(g, uiLayer, hits, 20, 210, 200, 22, storyBusy ? '正在追查…' : '追查无主传闻', () => { void drawStoryScene(); },
-      { enabled: can && !storyBusy, fill: C.purpleDark, border: C.purple, color: C.white });
+    button(g, uiLayer, hits, 20, 210, 200, 22, storyBusy ? '正在追查…' : can ? '追查无主传闻' : '暂无次数・查看说明', () => {
+      if (can) void drawStoryScene();
+      else openDetailPopup('暂无无主秘闻', '当前可追查次数为 0。\n\n每场袭击结束后都会补充：守住地牢 +2 次，失守 +1 次。英雄、设施和战报产生的具体线索不消耗次数。', C.purple);
+    }, { enabled: !storyBusy, fill: can ? C.purpleDark : C.ink, border: can ? C.purple : C.stoneLit, color: can ? C.white : C.stoneLit });
     label(uiLayer, '具体线索不消耗次数', 232, 216, 10, C.stoneLit);
     button(g, uiLayer, hits, 356, 210, 100, 22, '打开地牢编年史', () => openChronicle(), { size: 9, border: C.gold, color: C.gold });
     return;
