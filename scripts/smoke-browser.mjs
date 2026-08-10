@@ -80,6 +80,7 @@ try {
     __debug.devHeroRelations([heroA, heroB]);
     __debug.devHeroRelations([heroA, heroB]);
     const relationLead = __debug.story.leads.find((x) => x.sceneId === 'heroes-mentor');
+    const sameSubjectBlocked = !__debug.storyLeadQueue('smoke:same-subject', 'hero-talent-offense', '英雄秘闻', '同轮重复主体', { ref: heroA, hero: '测试英雄', talent: '重复', talentDesc: '不应出现' });
 
     __debug.devUtility(0, 'bone-yard', 1, 100);
     __debug.devEconomySettle([0]);
@@ -87,6 +88,8 @@ try {
     __debug.devEconomySettle([0]);
     const facility = __debug.floors[0].utility;
 
+    // 同一主体同轮只保留一条线索；下一轮才允许该英雄产生新的专精秘闻。
+    __debug.forceRaid(5);
     const lead = __debug.storyLeadQueue('smoke:talent', 'hero-talent-offense', '英雄秘闻', '烟雾测试专精', { ref: heroA, hero: '测试英雄', talent: '破阵', talentDesc: '攻击强化' });
     __debug.storyLeadOpen(lead.id);
     __debug.storyChoose(0);
@@ -108,12 +111,21 @@ try {
 
     __debug.devDismissHero(heroB);
     const exileLead = __debug.story.leads.find((x) => x.sceneId === 'hero-exile-encounter');
+    __debug.devUtility(1, 'none');
+    __debug.forceRaid(30);
+    const built = __debug.confirmUtilityBuild(1, 'mana-well');
+    const blockedUpgrade = __debug.devUpgradeUtility(1);
+    __debug.forceRaid(31);
+    const nextRoundUpgrade = __debug.devUpgradeUtility(1);
+    const facilityActionLock = built.level === 1 && blockedUpgrade.level === 1 && nextRoundUpgrade.level === 2;
     const audit = __debug.uiBounds();
-    return { relationLead: !!relationLead, facility, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
+    return { relationLead: !!relationLead, sameSubjectBlocked, facilityActionLock, facility, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
       battleDone: battleRun?.screen === 'result', reportLinked: report?.storyRefs?.includes(archive?.id) && linkedArchive?.battleRefs?.includes(report.raidNo),
       exileLead: !!exileLead, exiles: __debug.story.exiles.length, violations: audit.violations };
   });
   assert(result.relationLead, 'Multi-hero relationship lead was not generated.');
+  assert(result.sameSubjectBlocked, 'The same hero generated more than one lead in a single raid.');
+  assert(result.facilityActionLock, 'Facility build/upgrade was not limited to one action per raid.');
   assert(result.facility.persona === 'scarred' && result.facility.nickname, 'Facility personality did not awaken after repeated damage.');
   assert(result.archive && result.chronicle, 'Story archive or hero chronicle filtering failed.');
   assert(result.exactImpact, 'Resolved story choice did not display its exact numeric battle effect and duration.');

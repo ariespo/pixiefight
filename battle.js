@@ -1564,7 +1564,7 @@ function heroSkill(b        , u      ) {
   note(b, 'skills');
   const nature = ({ cleric: 'heal', mage: 'fire', knight: 'strike', captain: 'strike', archer: 'pierce', rogue: 'pierce',
     paladin: 'guard', berserker: 'strike', ranger: 'pierce', bard: u.phase === 0 ? 'rally' : 'heal',
-    inquisitor: 'strike', swordmaster: 'strike' })[u.kind] ?? 'strike';
+    inquisitor: 'strike', swordmaster: 'strike', alchemist: 'poison', monk: 'heal', lancer: 'pierce', warlock: 'fire' })[u.kind] ?? 'strike';
   if (!u.silenced) skillSpeech(b, u, nature, '技能！');
   if (u.kind === 'cleric') {
     if (u.silenced) {
@@ -1633,6 +1633,48 @@ function heroSkill(b        , u      ) {
       logHit(b, u, t, bf - (t.hp + t.shield), '使用背刺', false, b.rng);
     }
     u.skillCd = 5;
+    return;
+  }
+  if (u.kind === 'alchemist') {
+    const mons = aliveMons(b);
+    b.events.push({ k: 'cast', room: b.roomIndex, x: u.x, y: u.y, color: 0x78a53f });
+    mons.forEach((m) => {
+      applyPoison(b, m, Math.max(3, u.atk * 0.34 * b.moraleMult), 5);
+      damage(b, u, m, u.atk * 0.45 * b.moraleMult, false);
+    });
+    log(b, `炼金术师的毒瓶碎裂，${mons.length}名守军开始中毒`, 'bad');
+    u.skillCd = 7;
+    return;
+  }
+  if (u.kind === 'monk') {
+    if (u.silenced) { u.silenced = false; u.skillCd = 6; log(b, '沉默截断了武僧的调息', 'good'); return; }
+    const t = lowest(aliveHeroes(b));
+    if (t) {
+      const r = healHero(b, u, t, 10 * HERO_LV_MULT(u.lv) * mirrorMult(b));
+      u.shield += Math.round(8 * HERO_LV_MULT(u.lv));
+      log(b, `武僧为${t.name}调息恢复${r.got}点，并凝聚护体真气`, 'bad');
+    }
+    u.skillCd = 6;
+    return;
+  }
+  if (u.kind === 'lancer') {
+    const targets = [...aliveMons(b)].sort((a, z) => a.row - z.row).slice(0, 2);
+    targets.forEach((t, i) => {
+      const before = t.hp + t.shield;
+      damage(b, u, t, u.atk * (i ? 1.05 : 1.45) * b.moraleMult, i === 0, 0.55);
+      logHit(b, u, t, before - (t.hp + t.shield), i ? '被枪势贯穿' : '遭到破阵突刺', i === 0, b.rng);
+    });
+    if (targets.length > 1) note(b, 'backline');
+    u.skillCd = 6;
+    return;
+  }
+  if (u.kind === 'warlock') {
+    if (u.silenced) { u.silenced = false; u.skillCd = 7; log(b, '沉默吞掉了咒术师的咒火', 'good'); return; }
+    const mons = aliveMons(b);
+    b.events.push({ k: 'cast', room: b.roomIndex, x: u.x, y: u.y, color: 0x8b4ab8 });
+    mons.forEach((m) => { applyBurn(m, Math.max(3, u.atk * 0.32), 6); m.skillCd += 1.5; });
+    log(b, `咒火缠住${mons.length}名守军，并拖慢了它们的技能`, 'bad');
+    u.skillCd = 8;
     return;
   }
   if (u.kind === 'paladin') {
@@ -2009,7 +2051,6 @@ export function stepBattle(b        , dt        ) {
     }
     return;
   }
-
   if (b.phase === 'loot') {
     tickLoot(b, dt);
     return;
