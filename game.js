@@ -101,7 +101,7 @@ function freshSave()       {
     customs: [], cstNext: 1,
     diy: [], diyNext: 1,
     diyAf: [], diyAfNext: 1,
-    muted: false, seenClasses: [], tutorial: { step: 0, visited: {}, roundSteps: {} },
+    muted: false, seenClasses: [], tutorial: { step: 0, visited: {}, roundSteps: {}, heroGift: false },
     champs: [], champNext: 1, cands: [], candRaid: 0, candNext: 1, champPot: {},
     vault: [], forged: [], fgNext: 1,
     story: { vars: {}, mods: [], unlocks: [], seen: [], credits: 1, leads: [], archive: [], leadNext: 1,
@@ -180,6 +180,7 @@ function sanitizeSave() {
   S.tutorial.step = Math.max(0, Math.min(8, Math.round(S.tutorial.step || 0)));
   if (!S.tutorial.visited || typeof S.tutorial.visited !== 'object') S.tutorial.visited = {};
   if (!S.tutorial.roundSteps || typeof S.tutorial.roundSteps !== 'object') S.tutorial.roundSteps = {};
+  S.tutorial.heroGift = !!S.tutorial.heroGift;
   // 旧档已越过第一轮时不重新触发强制新手流程。
   if (S.raidNo > 1) S.tutorial.step = 8;
   if (!Array.isArray(S.floors) || !S.floors.length) {
@@ -977,18 +978,31 @@ const TABS                              = [
 const FEATURE_RAID = {
   throne: 1, dungeon: 1, mob: 1,
   report: 2, dungeonTools: 2,
-  hero: 3,
+  hero: 6,
   shop: 4, facilities: 4,
   monsterCreation: 5,
   story: 5,
+  equipmentForge: 7,
+  heroTalent: 8,
+  heroGraft: 9,
 };
 const featureOpen = (id) => S.overtime || S.raidNo >= (FEATURE_RAID[id] ?? 1);
 const visibleTabs = () => TABS.filter((item) => featureOpen(item.id));
 function applyProgressionGrants() {
   if ((S.overtime || S.raidNo >= 2) && !S.traps.includes('spike')) S.traps.push('spike');
+  const t = tutorialData();
+  if ((S.overtime || S.raidNo >= 6) && !t.heroGift && S.champs.length < CHAMP_CAP) {
+    const gift = newChamp(S.champNext++, {
+      id: -6, race: 'lich', name: randomName('lich', () => 0.36, S.champs.map((c) => c.name)), traits: ['loyal'], potential: 0,
+    });
+    gift.introGift = true;
+    S.champs.push(gift);
+    S.champPot[gift.uid] = 0;
+    t.heroGift = true;
+  }
 }
 const tutorialData = () => {
-  if (!S.tutorial || typeof S.tutorial !== 'object') S.tutorial = { step: 0, visited: {}, roundSteps: {} };
+  if (!S.tutorial || typeof S.tutorial !== 'object') S.tutorial = { step: 0, visited: {}, roundSteps: {}, heroGift: false };
   if (!S.tutorial.visited || typeof S.tutorial.visited !== 'object') S.tutorial.visited = {};
   if (!S.tutorial.roundSteps || typeof S.tutorial.roundSteps !== 'object') S.tutorial.roundSteps = {};
   return S.tutorial;
@@ -1035,8 +1049,8 @@ const ROUND_TUTORIALS = {
     { page: 'mob', target: 'mobRoster', title: '新兵种开放', detail: '哥布林擅长快速补刀，蝙蝠能骚扰后排；也可以不招兵，保留资源升级旧部。' },
   ],
   3: [
-    { page: 'hero', target: 'heroRecruitTab', title: '英雄开放', detail: '英雄拥有成长、装备与专精，可以征召为长期统领；不买英雄也能继续使用纯怪物阵容。' },
-    { page: 'dungeon', target: 'leaderSlot', title: '统领与侧翼开放', detail: '英雄进入统领席后会带领本房守军，并开启侧翼位；前后排仍然可以独立作战。' },
+    { page: 'mob', target: 'mobRoster', title: '支援兵种开放', detail: '蘑菇巫医能在毒雾与治疗间轮换；也可以继续升级旧部，用成长代替扩编。' },
+    { page: 'dungeon', target: 'frontSlot', title: '多房防线', detail: '勇者会逐层深入。可以集中守住入口，也可以把前后排分配到不同楼层消耗敌人。' },
   ],
   4: [
     { page: 'dungeon', target: 'facilityArea', title: '资源房开放', detail: '每层内侧可建资源房：生产、训练、疗愈或保护资源。每轮最多建造或升级一次。' },
@@ -1046,13 +1060,53 @@ const ROUND_TUTORIALS = {
     { page: 'mob', target: 'monsterCreation', title: '怪物创造开放', detail: '可以用四个部件创造或全身改造单位；这是高自由度方案，不是本轮强制消费。' },
     { page: 'story', target: 'storyArea', title: '秘闻开放', detail: '经营与战斗会产生秘闻线索，选择会明确改变后续数轮的战斗或经营效果。' },
   ],
+  6: [
+    { page: 'hero', target: 'heroRoster', title: '获赠巫妖英雄', detail: '地牢获赠一名资质丙的巫妖英雄。英雄是有名字的长期个体，资质影响基础成长，但培养方向更重要。' },
+    { page: 'hero', target: 'heroTraits', title: '特性与档案', detail: '详情页记录英雄特性、性格和背景；特性会改变战斗方式，也可以支付资源重新随机。' },
+    { page: 'hero', target: 'heroGear', title: '装备系统', detail: '英雄有冠、铠、饰三个装备槽。战斗会掉落装备，第7轮才开放主动锻造。' },
+    { page: 'hero', target: 'heroTitle', title: '称号系统', detail: '称号由战斗履历解锁，可反复切换并提供不同加成；未达成的称号会显示下一目标。' },
+    { page: 'hero', target: 'heroStat', title: '等级与成长', detail: '英雄获得经验后需要消耗骨币升级；专精将在第8轮开放。第6轮暂不开放英雄全身改造。' },
+    { page: 'dungeon', target: 'leaderSlot', title: '统领与侧翼开放', detail: '把英雄放入统领席即可带领本房守军并开启侧翼位；本轮也可以继续使用纯怪物阵容。' },
+  ],
+  7: [
+    { page: 'throne', target: 'raidPanel', title: '勇者词缀・无畏', detail: '从本轮起勇者会携带团队词缀。“无畏”会强化进攻，战前应先在王座确认敌方规则。' },
+    { page: 'report', target: 'reportPanel', title: '装备缴获', detail: '战报会列出本轮缴获的装备；品质与词条不同，先看完整效果再决定给谁穿戴。' },
+    { page: 'hero', target: 'heroGear', title: '装备锻造开放', detail: '装备页现在开放锻造台，可以组合胚体、铭文与淬火；直接使用战利品同样是可行路线。' },
+  ],
+  8: [
+    { page: 'throne', target: 'raidPanel', title: '勇者词缀・护盾', detail: '本轮勇者携带护盾词缀，爆发会被吸收；持续伤害、快速攻击或更长防线更有效。' },
+    { page: 'hero', target: 'heroStat', title: '英雄升级', detail: '检查经验并升级英雄。升级提高基础属性，并在3、5、7、10级依次获得专精选择。' },
+    { page: 'hero', target: 'heroTalent', title: '英雄专精开放', detail: '点击专精名称只会预览效果，确认后才学习；每层五选一，可塑造输出、防守或指挥路线。' },
+  ],
+  9: [
+    { page: 'throne', target: 'raidPanel', title: '勇者词缀・迅捷', detail: '本轮勇者行动更快。减速、控制、前排拖延和多房分层都能抵消速度优势。' },
+    { page: 'hero', target: 'heroGraft', title: '英雄全身改造开放', detail: '英雄现在可以替换核心、头部、肢臂和足部，消耗为怪物改造的两倍；预览不会立即扣费。' },
+    { page: 'dungeon', target: 'leaderSlot', title: '改造后的统领', detail: '英雄改造后的外观与属性会同步用于名册、地牢部署和战斗，不会回退成原始立绘。' },
+  ],
+  10: [
+    { page: 'throne', target: 'raidPanel', title: '勇者词缀・圣水', detail: '圣水会削弱部分持续伤害效果，检查战报并准备物理输出或控制作为替代方案。' },
+    { page: 'hero', target: 'heroRest', title: '四战轮休', detail: '英雄累计出战4场后必须休息3回合。轮换统领能避免关键房间在下一轮突然空缺。' },
+    { page: 'dungeon', target: 'facilityArea', title: '疗愈与轮换', detail: '建造疗愈池后，英雄页可花20魔质减少1回合休息；没有疗愈池时按钮不会开放。' },
+  ],
 };
+function prepareRoundGuideView() {
+  const list = ROUND_TUTORIALS[S.raidNo] ?? [];
+  const step = Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0));
+  const item = list[step];
+  if (!item || item.page !== 'hero' || tab !== 'hero') return;
+  if (item.target === 'heroTraits') heroView = 'info';
+  else if (item.target === 'heroGear') heroView = 'gear';
+  else if (item.target === 'heroTitle') heroView = 'title';
+  else if (item.target === 'heroTalent') heroView = 'talent';
+  else heroView = 'stat';
+}
 function acknowledgeRoundGuide() {
   const t = tutorialData();
   const list = ROUND_TUTORIALS[S.raidNo] ?? [];
   const step = Math.max(0, Math.round(t.roundSteps[S.raidNo] || 0));
   if (!list[step] || tab !== list[step].page) return;
   t.roundSteps[S.raidNo] = step + 1;
+  prepareRoundGuideView();
   playSfx('tab');
   persist();
   render();
@@ -1495,6 +1549,7 @@ function setTab(t     ) {
     const hasFront = slime && S.rooms[0].front === slime.uid;
     sel = { kind: 'slot', room: 0, which: hasFront ? 'back' : 'front' };
   }
+  prepareRoundGuideView();
   playSfx('tab');
   persist();
   render();
@@ -1586,6 +1641,7 @@ function drawDetailPopup() {
 let graft               = null;
 
 function openGraft(uid        , target = 'monster') {
+  if (target === 'hero' && !featureOpen('heroGraft')) { say('英雄全身改造将在第9轮开放'); return; }
   const inst = target === 'hero' ? champById(uid) : instById(uid);
   if (!inst) return;
   graft = { uid, target, cat: 'core', picks: [...(inst.graft ?? [])], preview: null };
@@ -4196,10 +4252,19 @@ function guideTargetRect(target) {
   if (target === 'frontSlot') return { x: 125, y: 85, w: 44, h: 27 };
   if (target === 'backSlot') return { x: 37, y: 85, w: 44, h: 27 };
   if (target === 'battle') return { x: 342, y: 179, w: 126, h: 34 };
+  if (target === 'raidPanel') return { x: 6, y: 58, w: 324, h: 100 };
   if (target === 'reportPanel') return { x: 4, y: 38, w: 324, h: 196 };
   if (target === 'dungeonTools') return { x: 134, y: 68, w: 82, h: 20 };
   if (target === 'mobRoster') return { x: 4, y: 54, w: 156, h: 136 };
   if (target === 'heroRecruitTab') return { x: 86, y: 36, w: 82, h: 20 };
+  if (target === 'heroRoster') return { x: 164, y: 56, w: 314, h: 180 };
+  if (target === 'heroTraits') return { x: 354, y: 58, w: 34, h: 18 };
+  if (target === 'heroStat') return { x: 324, y: 58, w: 34, h: 18 };
+  if (target === 'heroTalent') return { x: 384, y: 58, w: 34, h: 18 };
+  if (target === 'heroGear') return { x: featureOpen('heroTalent') ? 414 : 384, y: 58, w: 34, h: 18 };
+  if (target === 'heroTitle') return { x: featureOpen('heroTalent') ? 444 : 414, y: 58, w: 34, h: 18 };
+  if (target === 'heroGraft') return { x: 244, y: 212, w: 104, h: 19 };
+  if (target === 'heroRest') return { x: 172, y: 108, w: 188, h: 104 };
   if (target === 'leaderSlot') return { x: 81, y: 85, w: 44, h: 27 };
   if (target === 'facilityArea') return { x: 226, y: 68, w: 102, h: 48 };
   if (target === 'shopArea') return { x: 4, y: 38, w: 324, h: 148 };
@@ -4769,7 +4834,7 @@ function drawChampStat(g, c) {
     directLead ? openStoryLead(directLead.id) : openChronicle('hero', c.uid),
   { size: 9, fill: directLead ? C.purpleDark : C.ink, border: C.purple, color: directLead ? C.white : C.purple });
   button(g, uiLayer, hits, 174, 214, 70, 15, '同僚关系', () => sayChem(chem.lines), { size: 10, border: C.purple, color: C.purple });
-  button(g, uiLayer, hits, 246, 214, 100, 15, (c.graft ?? []).length ? `全身改造 ${(c.graft ?? []).length}/4` : '全身改造', () => openGraft(c.uid, 'hero'),
+  if (featureOpen('heroGraft')) button(g, uiLayer, hits, 246, 214, 100, 15, (c.graft ?? []).length ? `全身改造 ${(c.graft ?? []).length}/4` : '全身改造', () => openGraft(c.uid, 'hero'),
     { size: 10, border: (c.graft ?? []).length ? C.gold : C.purple, color: (c.graft ?? []).length ? C.gold : C.white });
   button(g, uiLayer, hits, 348, 214, 112, 15, '遣退英雄', () => dismissChamp(c), { size: 10, border: C.red, color: C.red });
 }
@@ -4887,9 +4952,12 @@ function drawChampInfo(g, c) {
 function drawChampDetail(g, c) {
   panelF(g, uiLayer, 'gold', 166, 58, 310, 176, C.wall);
   const pend = pendingTier(c);
-  if (pend && heroView === 'stat') heroView = 'talent';
+  if (pend && heroView === 'stat' && featureOpen('heroTalent')) heroView = 'talent';
+  if (heroView === 'talent' && !featureOpen('heroTalent')) heroView = 'stat';
   const vaultDot = S.vault.length > 0;
-  const tabs = [['stat', '状态'], ['info', '详情'], ['talent', pend ? '专精●' : '专精'], ['gear', vaultDot ? '装备●' : '装备'], ['title', '称号']];
+  const tabs = [['stat', '状态'], ['info', '详情']];
+  if (featureOpen('heroTalent')) tabs.push(['talent', pend ? '专精●' : '专精']);
+  tabs.push(['gear', vaultDot ? '装备●' : '装备'], ['title', '称号']);
   for (const [i, v] of tabs.entries()) {
     const on = heroView === v[0];
     button(g, uiLayer, hits, 326 + i * 30, 60, 28, 14, v[1], () => {
@@ -5008,7 +5076,7 @@ function drawChampGear(g               , c       ) {
   const rf = curSel ? REFORGE_MANA : 0;
   button(g, uiLayer, hits, 224, 214, 46, 15, `重铸${REFORGE_MANA}`, () => reforgeGear(c, gearSlotSel),
     { size: 12, enabled: !!curSel && !curSel.forged && S.mana >= rf, border: C.purple, color: C.white });
-  button(g, uiLayer, hits, 274, 214, 50, 15, '锻造台', () => openSmith(),
+  if (featureOpen('equipmentForge')) button(g, uiLayer, hits, 274, 214, 50, 15, '锻造台', () => openSmith(),
     { size: 12, fill: C.purpleDark, border: C.gold, color: C.white });
   // 仓库：只列当前槽能穿的
   const slotName = GEAR_SLOTS.find((x) => x.id === gearSlotSel) .name;
@@ -6361,7 +6429,10 @@ window.__debug = {
     visibleTabs: visibleTabs().map((item) => item.id), guide: roundGuide(), deploymentReady: tutorialDeploymentReady(),
     enemyClasses: currentRaid().members.map((member) => member.cls), teachingComplete: roundTeachingComplete(),
     roundStep: Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0)),
-    recruitKinds: allKinds().filter(recruitKindOpen).map((kind) => kind.id) }; },
+    recruitKinds: allKinds().filter(recruitKindOpen).map((kind) => kind.id),
+    features: { hero: featureOpen('hero'), equipmentForge: featureOpen('equipmentForge'), heroTalent: featureOpen('heroTalent'), heroGraft: featureOpen('heroGraft') },
+    heroGift: S.champs.find((c) => c.introGift) ? { uid: S.champs.find((c) => c.introGift).uid,
+      race: S.champs.find((c) => c.introGift).race, potential: S.champPot[S.champs.find((c) => c.introGift).uid] ?? 0 } : null }; },
   get bone() { return S.bone; },
   get mana() { return S.mana; },
   get detail() { return detailPopup ? { ...detailPopup } : null; },

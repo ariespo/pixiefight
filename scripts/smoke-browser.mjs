@@ -50,7 +50,7 @@ try {
     const battle = __debug.battle;
     __debug.backManage();
     const unlocks = {};
-    for (const raid of [2, 3, 4, 5]) {
+    for (const raid of [2, 3, 4, 5, 6, 7, 8, 9, 10]) {
       __debug.forceRaid(raid);
       const before = __debug.progression;
       while (!__debug.progression.teachingComplete) {
@@ -60,7 +60,8 @@ try {
         if (taskPage !== __debug.currentTab) __debug.setTab(taskPage);
         __debug.ackGuide();
       }
-      unlocks[raid] = { tabs: before.visibleTabs, kinds: before.recruitKinds, guide: before.guide, complete: __debug.progression.teachingComplete };
+      unlocks[raid] = { tabs: before.visibleTabs, kinds: before.recruitKinds, guide: before.guide, features: before.features,
+        heroGift: before.heroGift, complete: __debug.progression.teachingComplete };
     }
     return { initial, hiddenRouteBlocked, afterSlime, ready, battle, unlocks };
   });
@@ -70,13 +71,19 @@ try {
   assert(onboarding.afterSlime.tutorialStep === 2 && onboarding.ready.tutorialStep === 6 && onboarding.ready.deploymentReady, 'Guided recruitment/deployment did not advance.');
   assert(onboarding.battle?.heroesAlive === 1, 'Guided battle did not start against one enemy.');
   assert(onboarding.unlocks[2].tabs.includes('report') && !onboarding.unlocks[2].tabs.includes('hero'), 'Raid 2 unlock schedule is incorrect.');
-  assert(onboarding.unlocks[3].tabs.includes('hero') && !onboarding.unlocks[3].tabs.includes('shop'), 'Raid 3 unlock schedule is incorrect.');
-  assert(onboarding.unlocks[4].tabs.includes('shop') && !onboarding.unlocks[4].tabs.includes('story'), 'Raid 4 unlock schedule is incorrect.');
-  assert(onboarding.unlocks[5].tabs.includes('story'), 'Raid 5 did not unlock the final main page.');
+  assert(!onboarding.unlocks[3].tabs.includes('hero') && !onboarding.unlocks[3].tabs.includes('shop'), 'Raid 3 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[4].tabs.includes('shop') && !onboarding.unlocks[4].tabs.includes('story') && !onboarding.unlocks[4].tabs.includes('hero'), 'Raid 4 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[5].tabs.includes('story') && !onboarding.unlocks[5].tabs.includes('hero'), 'Raid 5 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[6].tabs.includes('hero') && onboarding.unlocks[6].guide?.[0] === 'hero', 'Raid 6 did not introduce the hero page.');
   assert(onboarding.unlocks[2].kinds.includes('goblin') && onboarding.unlocks[2].kinds.includes('bat') && !onboarding.unlocks[2].kinds.includes('shaman'), 'Raid 2 troop unlocks are incorrect.');
   assert(onboarding.unlocks[3].kinds.includes('shaman') && !onboarding.unlocks[3].kinds.includes('ogre'), 'Raid 3 troop unlocks are incorrect.');
   assert(onboarding.unlocks[4].kinds.includes('ogre') && !onboarding.unlocks[4].kinds.includes('lich'), 'Raid 4 troop unlocks are incorrect.');
   assert(onboarding.unlocks[5].kinds.includes('elite-lich') && Object.values(onboarding.unlocks).every((x) => x.complete && x.guide), 'Round teaching did not complete or lacked guidance.');
+  assert(onboarding.unlocks[6].heroGift?.race === 'lich' && onboarding.unlocks[6].heroGift?.potential === 0, 'Raid 6 did not grant the potential-C lich hero.');
+  assert(!onboarding.unlocks[6].features.equipmentForge && !onboarding.unlocks[6].features.heroTalent && !onboarding.unlocks[6].features.heroGraft, 'Raid 6 exposed advanced hero systems too early.');
+  assert(onboarding.unlocks[7].features.equipmentForge && !onboarding.unlocks[7].features.heroTalent, 'Raid 7 forge unlock is incorrect.');
+  assert(onboarding.unlocks[8].features.heroTalent && !onboarding.unlocks[8].features.heroGraft, 'Raid 8 talent unlock is incorrect.');
+  assert(onboarding.unlocks[9].features.heroGraft, 'Raid 9 hero graft did not unlock.');
 
   // A deliberately sparse legacy save must be upgraded, not rejected.
   await page.evaluate(() => localStorage.setItem('yqh-save-v2', JSON.stringify({ bone: 321, mana: 17, raidNo: 4, story: { archive: [] } })));
@@ -137,6 +144,11 @@ try {
 
     // 同一主体同轮只保留一条线索；下一轮才允许该英雄产生新的专精秘闻。
     __debug.forceRaid(6);
+    while (!__debug.progression.teachingComplete) {
+      const target = __debug.progression.guide?.[0];
+      if (['throne', 'dungeon', 'hero', 'mob', 'shop', 'report', 'story'].includes(target) && target !== __debug.currentTab) __debug.setTab(target);
+      __debug.ackGuide();
+    }
     const lead = __debug.storyLeadQueue('smoke:talent', 'hero-talent-offense', '英雄秘闻', '烟雾测试专精', { ref: heroA, hero: '测试英雄', talent: '破阵', talentDesc: '攻击强化' });
     __debug.storyLeadOpen(lead.id);
     __debug.storyChoose(0);
