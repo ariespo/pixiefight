@@ -973,10 +973,7 @@ let talentPreview = null;                            // 专精页预览；确认
 let detailPopup = null;                              // 统一长说明弹层
 let relicForgeConfirm = false;                       // 英雄遗物熔铸二次确认
 let monDetailMode = false;                             // 已招募魔物卡片默认/详情切换
-let monSkillTip = null;                                // 已招募魔物默认卡片上弹出的技能详情 uid
-let monKindSkillTip = null;                            // 可招募魔物详情上弹出的技能详情 id
 let lastSelInstUid        = null;                      // 用于切换魔物实例时重置详情模式
-let lastSelMonKind        = null;                      // 用于切换可招募魔物时重置技能弹窗
 let reportIdx = 0;
 let battle                = null;
 let speed = 1;
@@ -1372,6 +1369,12 @@ function render() {
   livePagers = [];
   const g = uiGfx;
   g.rect(0, 0, VIEW_W, VIEW_H).fill(C.bg);
+  // 详情弹层独占画面，避免背后页面或其他模态的文字透过遮罩，与正文叠在一起。
+  if (detailPopup) {
+    drawDetailPopup();
+    syncStoryInput();
+    return;
+  }
   // 模态期间不画背后页面：0.88 遮罩压不住 12px 点阵字，两层文字会互相糊成一片
   if (modalOpen) {
     if (stitch) drawStitch();
@@ -1391,7 +1394,6 @@ function render() {
   else if (tab === 'shop') pageShop(g);
   else if (tab === 'story') pageStory(g);
   else pageReport(g);
-  if (detailPopup) drawDetailPopup();
   syncStoryInput();
 }
 
@@ -1400,7 +1402,7 @@ function drawDetailPopup() {
   if (!d) return;
   const g = modalGfx;
   // 最后注册遮罩热区，Hits 从后向前命中，因此不会点穿到背后页面。
-  g.rect(0, 0, VIEW_W, VIEW_H).fill({ color: C.bg, alpha: 0.78 });
+  g.rect(0, 0, VIEW_W, VIEW_H).fill(C.bg);
   hits.add(0, 0, VIEW_W, VIEW_H, () => closeDetailPopup());
   panelF(g, modalLayer, 'scroll', 96, 48, 288, 170, C.wall);
   hits.add(96, 48, 288, 170, () => { /* 弹层内部不点穿，也不误关闭 */ });
@@ -3187,7 +3189,6 @@ function drawSidePanel(g               ) {
     if (lastSelInstUid !== sel.uid) {
       lastSelInstUid = sel.uid;
       monDetailMode = false;
-      monSkillTip = null;
     }
     const inst = instById(sel.uid);
     if (!inst) { sel = null; return; }
@@ -3208,11 +3209,10 @@ function drawSidePanel(g               ) {
     label(uiLayer, `防御 ${Math.round(k.def * mult)}  速度 ${k.spd.toFixed(1)}`, 340, 114, 12, C.bone);
     const post = monsterPost(inst.uid);
     label(uiLayer, `去向：${post.text}`, 340, 128, 12, post.kind === 'free' ? C.stoneLit : post.kind === 'guard' ? C.gold : C.purple);
-    // 技能名可点击，点击弹出详情小卡片
-    button(g, uiLayer, hits, 340, 142, 130, 14, `技能 ${k.skill}`, () => {
-      monSkillTip = monSkillTip === inst.uid ? null : inst.uid;
-      playSfx('tab'); render();
-    }, { size: 12, fill: C.ink, border: C.purple, color: C.purple });
+    // 技能使用统一独占详情层，避免局部卡片压住原页面信息。
+    button(g, uiLayer, hits, 340, 142, 130, 14, `技能 ${k.skill}`,
+      () => openDetailPopup(`技能・${k.skill}`, k.skillDesc, C.purple),
+      { size: 12, fill: C.ink, border: C.purple, color: C.purple });
     if (inst.lv < 5) {
       const need = XP_PER_LEVEL[inst.lv - 1];
       bar(uiGfx, 340, 164, 130, 6, inst.xp / need, C.green);
@@ -3228,16 +3228,6 @@ function drawSidePanel(g               ) {
     button(g, uiLayer, hits, 340, 224, 40, 16, '详情', () => { monDetailMode = true; playSfx('tab'); render(); },
       { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
 
-    // 技能详情弹出卡片
-    if (monSkillTip === inst.uid) {
-      const tipX = 180, tipY = 80, tipW = 140, tipH = 120;
-      g.rect(tipX, tipY, tipW, tipH).fill(C.wall).stroke({ width: 1, color: C.purple, alignment: 0 });
-      label(uiLayer, `技能・${k.skill}`, tipX + 6, tipY + 6, 12, C.purple);
-      boundedText(uiLayer, k.skillDesc, tipX + 6, tipY + 24, tipW - 12, tipH - 34, 11, C.bone);
-      hits.add(tipX, tipY, tipW, tipH, () => { /* 点卡片本身不穿透 */ });
-      button(g, uiLayer, hits, tipX + tipW - 28, tipY + 4, 22, 12, '×', () => { monSkillTip = null; playSfx('tab'); render(); },
-        { size: 10, border: C.red, color: C.red });
-    }
     const gcount = (inst.graft ?? []).length;
     if (isCustomKind(inst.kind)) {
       button(g, uiLayer, hits, 382, 224, 48, 16, gcount ? `改造${gcount}` : '改造', () => openGraft(inst.uid), { size: 12, border: gcount ? C.gold : C.purple, color: gcount ? C.gold : C.purple });
@@ -3295,10 +3285,6 @@ function drawSidePanel(g               ) {
     }
   }
   if (sel.kind === 'monkind') {
-    if (lastSelMonKind !== sel.id) {
-      lastSelMonKind = sel.id;
-      monKindSkillTip = null;
-    }
     const k = monKind(sel.id);
     const rq = recruitQuote(k);
     labelC(uiLayer, k.name, 405, 44, 12, isCustomKind(k.id) ? C.purple : C.white);
@@ -3306,11 +3292,9 @@ function drawSidePanel(g               ) {
     label(uiLayer, `防御 ${k.def}  速度 ${k.spd.toFixed(1)}`, 340, 117, 12, C.bone);
     label(uiLayer, `站位 ${k.row === 'front' ? '前排' : k.row === 'back' ? '后排' : '任意'}`, 340, 136, 12, C.bone);
 
-    // 技能名可点击，点击弹出详情小卡片
-    button(g, uiLayer, hits, 340, 155, 130, 14, `技能 ${k.skill}`, () => {
-      monKindSkillTip = monKindSkillTip === sel.id ? null : sel.id;
-      playSfx('tab'); render();
-    }, { size: 12, fill: C.ink, border: C.purple, color: C.purple });
+    button(g, uiLayer, hits, 340, 155, 130, 14, `技能 ${k.skill}`,
+      () => openDetailPopup(`技能・${k.skill}`, k.skillDesc, C.purple),
+      { size: 12, fill: C.ink, border: C.purple, color: C.purple });
 
     button(g, uiLayer, hits, 340, 176, 130, 18, `${isCustomKind(k.id) ? '再缝一只' : '招募'} ${rq.cost}骨${rq.discount ? `(-${Math.round(rq.discount * 100)}%)` : ''}`,
       () => recruit(k.id),
@@ -3323,16 +3307,6 @@ function drawSidePanel(g               ) {
     button(g, uiLayer, hits, 442, 200, 26, 20, '详', () => openDetailPopup(`怪物被动・${k.name}`, passiveBody, C.gold),
       { size: 10, fill: C.ink, border: C.goldDark, color: C.gold });
 
-    // 技能详情弹出卡片
-    if (monKindSkillTip === sel.id) {
-      const tipX = 180, tipY = 80, tipW = 140, tipH = 120;
-      g.rect(tipX, tipY, tipW, tipH).fill(C.wall).stroke({ width: 1, color: C.purple, alignment: 0 });
-      label(uiLayer, `技能・${k.skill}`, tipX + 6, tipY + 6, 12, C.purple);
-      boundedText(uiLayer, k.skillDesc, tipX + 6, tipY + 24, tipW - 12, tipH - 34, 11, C.bone);
-      hits.add(tipX, tipY, tipW, tipH, () => { /* 点卡片本身不穿透 */ });
-      button(g, uiLayer, hits, tipX + tipW - 28, tipY + 4, 22, 12, '×', () => { monKindSkillTip = null; playSfx('tab'); render(); },
-        { size: 10, border: C.red, color: C.red });
-    }
     return;
   }
   if (sel.kind === 'shop') {
@@ -6025,6 +5999,10 @@ window.__debug = {
   get detail() { return detailPopup ? { ...detailPopup } : null; },
   openDetail: (title, body) => { openDetailPopup(title, body); return true; },
   uiBounds: () => boundedTextAudit(),
+  layerText: () => ({
+    ui: uiLayer.children.filter((node) => node instanceof PIXI.Text).map((node) => node.text),
+    modal: modalLayer.children.filter((node) => node instanceof PIXI.Text).map((node) => node.text),
+  }),
   portraitFx: () => ({
     ui: uiPortraitFx.filter((r) => !r.node.destroyed).map((r) => ({ maxed: r.maxed, selected: r.selected, y: r.node.y, baseY: r.baseY, glow: r.glow?.alpha ?? 0, motes: r.motes.length })),
     battle: battlePortraitFx.filter((r) => !r.node.destroyed).map((r) => ({ maxed: r.maxed, glow: r.glow?.alpha ?? 0, motes: r.motes.length })),

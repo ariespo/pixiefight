@@ -60,6 +60,19 @@ try {
   const closePoint = await page.evaluate(() => __debug.toScreen(470, 250));
   await page.mouse.click(closePoint.x, closePoint.y);
 
+  const skillPoint = await page.evaluate(() => {
+    const uid = __debug.monsters[0]?.uid ?? __debug.devRecruit('slime');
+    __debug.setTab('mob');
+    __debug.devSelInst(uid);
+    return __debug.toScreen(405, 149);
+  });
+  await page.mouse.click(skillPoint.x, skillPoint.y);
+  await page.waitForTimeout(50);
+  const skillDetail = await page.evaluate(() => ({ detail: __debug.detail, layers: __debug.layerText() }));
+  assert(skillDetail.detail?.title.startsWith('技能・'), 'Monster skill did not open the shared detail layer.');
+  assert(skillDetail.layers.ui.length === 0 && skillDetail.layers.modal.some((text) => text.startsWith('技能・')), 'Detail layer still rendered underlying page text.');
+  await page.mouse.click(closePoint.x, closePoint.y);
+
   const result = await page.evaluate(() => {
     __debug.giveResources(20000, 20000);
     const heroA = __debug.devChamp('lich', 8, []);
