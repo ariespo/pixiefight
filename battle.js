@@ -2107,8 +2107,9 @@ function tickLoot(b, dt) {
   const loot = utility?.loot;
   if (!loot) { advanceAfterLoot(b); return; }
   const worker = utility.worker;
-  const resistance = utility.workerState === 'working'
+  const workerResistance = utility.workerState === 'working'
     ? Math.max(0.65, 0.85 - Math.max(1, worker?.lv ?? 1) * 0.05) : 1;
+  const resistance = workerResistance * (utility.row.lootResist ?? 1);
   loot.t = Math.min(loot.duration, loot.t + dt * resistance);
   loot.progress = Math.min(1, loot.t / loot.duration);
   const row = utility.row;

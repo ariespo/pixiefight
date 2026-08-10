@@ -1,0 +1,14 @@
+{
+  "name": "dark-dungeon",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "check": "node scripts/check.mjs",
+    "smoke": "node scripts/smoke-browser.mjs",
+    "verify": "npm run check && npm run smoke"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.54.2"
+  }
+}

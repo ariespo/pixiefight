@@ -154,6 +154,11 @@ export function applyEffects(b             , list                      )        
         if (r.text) out.push(r.text);
         break;
       }
+      case 'exile': {
+        const r = b.resolveExile(e);
+        if (r.text) out.push(r.text);
+        break;
+      }
     }
   }
   return out;

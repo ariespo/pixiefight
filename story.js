@@ -68,6 +68,7 @@ export function fillText(s        , b             )         {
 export const SCENES          = [
   {
     id: 'name-lair',
+    followup: { sceneId: 'echo-lair-name', title: '地牢名号传到了更远的地方', after: 3 },
     once: true,
     weight: 3,
     who: '记账兵',
@@ -111,6 +112,7 @@ export const SCENES          = [
   },
   {
     id: 'sign-board',
+    followup: { sceneId: 'echo-sign-board', title: '入口木牌收到了一条回信', after: 2 },
     once: true,
     weight: 2,
     when: [{ path: 'raidNo', cmp: '>=', value: 2 }],
@@ -165,6 +167,7 @@ export const SCENES          = [
   },
   {
     id: 'merchant',
+    followup: { sceneId: 'echo-merchant-route', title: '兜帽商人的第二次来访', after: 2 },
     weight: 3,
     when: [{ path: 'bone', cmp: '>=', value: 60 }],
     who: '兜帽商人',
@@ -174,11 +177,12 @@ export const SCENES          = [
         reply: '碎晶在你手里发热。他数完骨料就消失在侧道里。', effects: [{ t: 'res', bone: -60, mana: 22 }] },
       { label: '抢了他', reply: '兜帽下什么都没有。骨料撒了一地，魔质碎晶碎成了粉——但侧道从此没人再走。',
         effects: [{ t: 'res', bone: 35, mana: -4 }, { t: 'var', key: 'greedy', add: 1 }] },
-      { label: '让他走', reply: '他行了个礼。下次他会带更好的东西来。', effects: [{ t: 'var', key: 'trade', add: 1 }, { t: 'res', mana: 5 }] },
+      { label: '让他走', reply: '他行了个礼。下次他会带更好的东西来。', effects: [{ t: 'var', key: 'trade', add: 1 }, { t: 'res', mana: 5 }], followup: { sceneId: 'echo-merchant-route', title: '兜帽商人的第二次来访', after: 2 } },
     ],
   },
   {
     id: 'stray-monster',
+    followup: { sceneId: 'echo-stray-monster', title: '走失怪物带来了旧主人', after: 2 },
     weight: 3,
     text: '走廊尽头蹲着一只没人认领的野怪，正在啃你的储备骨料。',
     choices: [
@@ -217,6 +221,7 @@ export const SCENES          = [
   },
   {
     id: 'seal-crack',
+    followup: { sceneId: 'echo-seal-crack', title: '封印裂缝再次发出声音', after: 2 },
     weight: 2,
     when: [{ path: 'raidNo', cmp: '>=', value: 4 }],
     text: '王座后的封印裂了一道细缝，缝里往外渗魔质。',
@@ -230,6 +235,7 @@ export const SCENES          = [
   },
   {
     id: 'trap-salesman',
+    followup: { sceneId: 'echo-trap-salesman', title: '地精工程师来验收工程', after: 2 },
     weight: 2,
     when: [{ path: 'mana', cmp: '>=', value: 25 }],
     who: '地精工程师',
@@ -245,12 +251,13 @@ export const SCENES          = [
   },
   {
     id: 'monster-quarrel',
+    followup: { sceneId: 'echo-monster-quarrel', title: '那场争位并没有结束', after: 2 },
     weight: 3,
     when: [{ path: 'monsters', cmp: '>=', value: 3 }],
     text: '两只怪物为了走廊的站位打起来了。旁边的同伴在下注。',
     choices: [
       { label: '让它们打完', reply: '赢的那只更凶了，输的那只在角落里养伤。',
-        effects: [{ t: 'levelup', sel: 'strongest', add: 1 }, { t: 'xp', sel: 'random', add: -4 }] },
+        effects: [{ t: 'levelup', sel: 'strongest', add: 1 }, { t: 'xp', sel: 'random', add: -4 }], followup: { sceneId: 'echo-monster-quarrel', title: '那场争位并没有结束', after: 2 } },
       { label: '各打一顿', reply: '两只都老实了。地牢的纪律换来了效率。',
         effects: [{ t: 'mod', mod: { id: 'drill', name: '被操练过', raids: 2, monSpdAdd: 0.14 } }] },
       { label: '重排站位', reply: '你亲手把它们摆回位置。它们记住了顺序。',
@@ -259,13 +266,14 @@ export const SCENES          = [
   },
   {
     id: 'overworked',
+    followup: { sceneId: 'echo-rested-shift', title: '休班表留下了一行空白', after: 2 },
     weight: 2,
     when: [{ path: 'raidNo', cmp: '>=', value: 6 }],
     who: '记账兵',
     text: '“大人，怪物们连续值了六班。有的开始在岗上睡觉了。”',
     choices: [
       { label: '休一轮', reply: '你让下一波晚点来。走廊里第一次有了呼噜声。',
-        effects: [{ t: 'raid', add: -1 }, { t: 'xp', sel: 'all', add: 12 }] },
+        effects: [{ t: 'raid', add: -1 }, { t: 'xp', sel: 'all', add: 12 }], followup: { sceneId: 'echo-rested-shift', title: '休班表留下了一行空白', after: 2 } },
       { label: '加骨料继续值班', reply: '骨料堆到走廊上。没人再睡了，但也没人再说话。',
         effects: [{ t: 'res', bone: -50 }, { t: 'mod', mod: { id: 'overtime-shift', name: '连班加骨料', raids: 2, monAtkMult: 1.2, monHpMult: 0.94 } }] },
       { label: '你自己守一班', reply: '你在王座上坐了一整夜。什么都没来，但怪物们看你的眼神变了。',
@@ -274,6 +282,7 @@ export const SCENES          = [
   },
   {
     id: 'ask-fear',
+    followup: { sceneId: 'echo-fear-answer', title: '那个答案传遍了走廊', after: 2 },
     weight: 2,
     when: [{ path: 'raidNo', cmp: '>=', value: 5 }],
     text: '一只年轻的怪物挡在你面前，问了个不该问的问题：“大人，我们到底在怕什么？”',
@@ -293,6 +302,7 @@ export const SCENES          = [
   },
   {
     id: 'lost-blueprint',
+    followup: { sceneId: 'echo-lost-blueprint', title: '失落图纸还有第二张', after: 3 },
     weight: 2,
     when: [{ path: 'raidNo', cmp: '>=', value: 4 }],
     text: '骨料堆里翻出一张被血糊住的图纸，画的是某种从没见过的部件接法。',
@@ -305,6 +315,7 @@ export const SCENES          = [
   },
   {
     id: 'captain-letter',
+    followup: { sceneId: 'echo-captain-letter', title: '勇者队长送来了最后一封信', after: 2 },
     once: true,
     weight: 4,
     when: [{ path: 'raidNo', cmp: '>=', value: 9 }],
@@ -324,6 +335,7 @@ export const SCENES          = [
   },
   {
     id: 'bone-sorting',
+    followup: { sceneId: 'echo-bone-bed', title: '骨床开始挑选主人', after: 2 },
     weight: 3,
     text: '骨料堆到了走廊拐角，挡住了一只怪物的岗位。得决定怎么处理这批库存。',
     choices: [
@@ -331,23 +343,25 @@ export const SCENES          = [
         effects: [{ t: 'xp', sel: 'all', add: 8 }] },
       { label: '熔成材料', reply: '骨料在坑里烧了一夜，剩下一小块能用的东西。', effects: [{ t: 'res', bone: -30, mana: 12 }] },
       { label: '当床垫用', reply: '怪物们睡在骨料上，睡得意外地好。',
-        effects: [{ t: 'mod', mod: { id: 'good-sleep', name: '睡得好', raids: 2, monHpMult: 1.12 } }] },
+        effects: [{ t: 'mod', mod: { id: 'good-sleep', name: '睡得好', raids: 2, monHpMult: 1.12 } }], followup: { sceneId: 'echo-bone-bed', title: '骨床开始挑选主人', after: 2 } },
     ],
   },
   {
     id: 'door-repair',
+    followup: { sceneId: 'echo-missing-door', title: '第一间房的门有了新规矩', after: 2 },
     weight: 3,
     text: '第一间房的门轴上次被撞歪了，关起来会卡半秒。',
     choices: [
       { label: '修好它', reply: '门重新严丝合缝。勇者要多花点时间才能推开。',
         effects: [{ t: 'res', bone: -20 }, { t: 'mod', mod: { id: 'tight-door', name: '门轴修好了', raids: 3, roomLimitAdd: 3 } }] },
       { label: '干脆卸掉', reply: '没有门的房间省了维护，也少了一道拖延。',
-        effects: [{ t: 'res', bone: 35 }, { t: 'mod', mod: { id: 'no-door', name: '拆了门', raids: 3, roomLimitAdd: -2, monSpdAdd: 0.08 } }] },
+        effects: [{ t: 'res', bone: 35 }, { t: 'mod', mod: { id: 'no-door', name: '拆了门', raids: 3, roomLimitAdd: -2, monSpdAdd: 0.08 } }], followup: { sceneId: 'echo-missing-door', title: '没有门的房间有了新规矩', after: 2 } },
       { label: '就这么卡着', reply: '半秒的卡顿谁也没注意。至少现在没有。', effects: [{ t: 'var', key: 'sloppy', add: 1 }] },
     ],
   },
   {
     id: 'name-a-room',
+    followup: { sceneId: 'echo-room-name', title: '房间的名字开始改变住客', after: 2 },
     weight: 2,
     text: '怪物们想给自己守的那间房起个称号，好在同伴之间报位置。',
     input: {
@@ -364,6 +378,7 @@ export const SCENES          = [
   },
   {
     id: 'leftover-mana',
+    followup: { sceneId: 'echo-leftover-mana', title: '坩埚底又凝出了一层魔质', after: 2 },
     weight: 2,
     text: '工坊的坩埚底剩了一点凝住的魔质，倒不出来也刮不干净。',
     choices: [
@@ -505,7 +520,7 @@ export const SCENES          = [
     id: 'facility-repair', chained: true, who: '维修队长',
     text: '第{ctx.floor}层的{ctx.facility}修复完成，但墙上仍能看见那次损坏留下的{ctx.damage}道深浅痕迹。工人问要不要把它们盖住。',
     choices: [
-      { label: '保留伤痕', reply: '每一道痕迹都成了新的刻度。守军开始用它们估算勇者还能推进多远。', effects: [{ t: 'facility', repair: 10 }, { t: 'mod', mod: { id: 'measured-scars', name: '以伤痕丈量', raids: 3, roomLimitAdd: 3 } }] },
+      { label: '保留伤痕', reply: '每一道痕迹都成了新的刻度。守军开始用它们估算勇者还能推进多远。', effects: [{ t: 'facility', repair: 10 }, { t: 'var', key: 'keptScars', add: 1 }, { t: 'mod', mod: { id: 'measured-scars', name: '以伤痕丈量', raids: 3, roomLimitAdd: 3 } }] },
       { label: '重新粉刷', reply: '墙面恢复如新。旧石灰被刮下，里面混着一点还能回收的魔质。', effects: [{ t: 'res', mana: 12 }, { t: 'var', key: 'hiddenScars', add: 1 }] },
     ],
   },
@@ -550,7 +565,281 @@ export const SCENES          = [
     ],
   },
   {
+    id: 'heroes-rivalry', chained: true, who: '战功记录员',
+    text: '{ctx.heroA}和{ctx.heroB}连续两场抢着在同一行战报上签名。今晚，他们把最后一瓶庆功酒放在桌中央，决定谁更配喝。',
+    choices: [
+      { label: '让战绩说话', reply: '两人重算了每一次击倒，最后谁也没能让对方闭嘴。酒被平分，竞争被保留下来。', effects: [{ t: 'hero', contextKey: 'heroARef', xp: 18 }, { t: 'hero', contextKey: 'heroBRef', xp: 18 }, { t: 'mod', mod: { id: 'rival-signatures', name: '争签战报', raids: 3, monAtkMult: 1.12, monHpMult: 0.96 } }] },
+      { label: '命令共同值夜', reply: '他们在同一扇门前站到天亮。争执没有消失，只是学会了朝向门外。', effects: [{ t: 'hero', contextKey: 'heroARef', xp: 12 }, { t: 'hero', contextKey: 'heroBRef', xp: 12 }, { t: 'mod', mod: { id: 'rivals-watch', name: '宿敌共守', raids: 4, monHpMult: 1.1 } }] },
+    ],
+  },
+  {
+    id: 'heroes-friendship', chained: true, who: '{ctx.heroA}',
+    text: '战后，{ctx.heroA}和{ctx.heroB}坐在破门上，谁也没有说话。他们把最后一块干粮掰成两半，又同时嫌弃对方分得不够公平。',
+    choices: [
+      { label: '把这一幕记下来', reply: '记账兵把它写成“战后物资分配争议”。只有当事人知道，那是友谊第一次被正式记录。', effects: [{ t: 'hero', contextKey: 'heroARef', xp: 16 }, { t: 'hero', contextKey: 'heroBRef', xp: 16 }, { t: 'var', key: 'heroFriendships', add: 1 }] },
+      { label: '再送一份干粮', reply: '他们又为第三块该怎么分吵了起来。走廊里的笑声比庆功号角更久。', effects: [{ t: 'res', bone: -12 }, { t: 'mod', mod: { id: 'shared-rations', name: '共享口粮', raids: 3, monHpMult: 1.08 } }] },
+    ],
+  },
+  {
+    id: 'heroes-mentor', chained: true, who: '{ctx.mentor}',
+    text: '{ctx.mentor}连续两场在战后纠正{ctx.student}的站姿。“不是为了好看。你站错半步，后面就会有人死。”',
+    choices: [
+      { label: '批准正式带教', reply: '名册上第一次出现“导师”和“学员”两个岗位。课程很严厉，但下一次失误没有发生。', effects: [{ t: 'hero', contextKey: 'heroARef', xp: 14 }, { t: 'hero', contextKey: 'heroBRef', xp: 22 }, { t: 'var', key: 'mentorBonds', add: 1 }] },
+      { label: '让他们交换位置', reply: '老手重新体验了新人的视野，新人也第一次看见整条防线。两个人都少说了一句“你不懂”。', effects: [{ t: 'hero', contextKey: 'heroARef', xp: 18 }, { t: 'hero', contextKey: 'heroBRef', xp: 18 }, { t: 'mod', mod: { id: 'changed-places', name: '交换位置', raids: 3, monSpdAdd: 0.06 } }] },
+    ],
+  },
+  {
+    id: 'training-classmates', chained: true, who: '训练场教头',
+    text: '第{ctx.floor}层训练结束后，{ctx.studentA}和{ctx.studentB}仍在重复同一组动作。两个人都声称自己只是“不想比对方先停”。',
+    choices: [
+      { label: '安排双人考核', reply: '考核从配合变成竞速，又从竞速变回配合。教头决定不纠正这个过程。', effects: [{ t: 'hero', contextKey: 'heroARef', xp: 24 }, { t: 'hero', contextKey: 'heroBRef', xp: 24 }, { t: 'var', key: 'classmateBonds', add: 1 }] },
+      { label: '让他们互评', reply: '两份批注都写得刻薄而准确。第二天，他们不约而同改掉了对方指出的问题。', effects: [{ t: 'hero', contextKey: 'heroARef', xp: 20 }, { t: 'hero', contextKey: 'heroBRef', xp: 20 }] },
+    ],
+  },
+  {
+    id: 'training-mentor', chained: true, who: '训练场教头',
+    text: '第{ctx.floor}层里，{ctx.studentA}和{ctx.studentB}开始使用同一套训练器械。一方在教，另一方未必承认自己在学。',
+    choices: [
+      { label: '保留这组搭档', reply: '语言不同、动作不同，但重复足够多次以后，他们学会了在同一拍上发力。', effects: [{ t: 'hero', contextKey: 'heroARef', xp: 22 }, { t: 'xp', sel: 'weakest', add: 12 }, { t: 'var', key: 'crossTraining', add: 1 }] },
+      { label: '记录跨种族课程', reply: '教头写下一份谁都看不懂的课程表。奇怪的是，每个学员都能照着练。', effects: [{ t: 'res', mana: 10 }, { t: 'mod', mod: { id: 'mixed-drill', name: '混编训练', raids: 3, monSpdAdd: 0.05 } }] },
+    ],
+  },
+  {
+    id: 'hero-exile-encounter', chained: true, who: '门卫',
+    text: '{ctx.hero}离开两轮后，入口收到第二封信。信上没有请求，只有一份沿途清理的勇者名单，以及一句：“我还没决定这是告别还是履历。”',
+    choices: [
+      { label: '邀请其回来', reply: '门在天亮前开了一次。{ctx.hero}带着旧装备和新的沉默走回名册前。', effects: [{ t: 'exile', action: 'return' }, { t: 'var', key: 'returnedExiles', add: 1 }] },
+      { label: '承认其自由', reply: '你盖下地牢印记，证明{ctx.hero}不再欠这里任何东西。三天后，一笔匿名骨币送到了门口。', effects: [{ t: 'res', bone: 90 }, { t: 'var', key: 'honoredExiles', add: 1 }] },
+      { label: '悬赏其战绩', reply: '公会把那份名单当成挑衅。下一批勇者更强，带来的装备也更值钱。', effects: [{ t: 'res', mana: 20 }, { t: 'mod', mod: { id: 'exile-bounty', name: '流亡者的悬赏', raids: 3, heroHpMult: 1.1, monAtkMult: 1.12 } }] },
+    ],
+  },
+  {
+    id: 'facility-awakening', chained: true, who: '{ctx.nickname}',
+    text: '第{ctx.floor}层的{ctx.facility}被叫作“{ctx.nickname}”以后，所有管道同时回应了一声。它已经形成了“{ctx.persona}”的性格，并开始认得自己的名字。',
+    choices: [
+      { label: '把昵称刻上门牌', reply: '从此战报不再只写设施类型，而写它自己的名字。工作人员说，门牌挂上后里面更愿意配合了。', effects: [{ t: 'facility', repair: 8 }, { t: 'var', key: 'namedFacilities', add: 1 }] },
+      { label: '只在内部使用', reply: '昵称留在值班表和工人之间。勇者不知道自己正在洗劫一个会记仇的房间。', effects: [{ t: 'mod', mod: { id: 'secret-facility-name', name: '设施的秘密名字', raids: 4, roomLimitAdd: 2 } }] },
+    ],
+  },
+  {
+    id: 'rare-dungeon-memorial', chained: true, who: '全体留守者',
+    text: '墙上的设施伤痕、陈列柜里的留守工具和英雄讲过的旧败绩，在同一天被人摆到一起。{ctx.heroA}与{ctx.heroB}站在最前面。地牢第一次举行不是为了胜利的集会。',
+    choices: [
+      { label: '设立地牢纪念日', reply: '每个名字和每道伤痕都被读了一遍。此后守军知道，失败不会被抹掉，只会成为下一道防线。', effects: [{ t: 'hero', contextKey: 'heroARef', xp: 35 }, { t: 'hero', contextKey: 'heroBRef', xp: 35 }, { t: 'mod', mod: { id: 'memorial-day', name: '地牢纪念日', raids: -1, monHpMult: 1.06, roomLimitAdd: 1 } }, { t: 'var', key: 'memorialFounded', set: 1 }] },
+      { label: '把纪念物送回岗位', reply: '没有纪念碑。工具回到手里，故事回到走廊，伤痕继续留在墙上。', effects: [{ t: 'res', bone: 100, mana: 18 }, { t: 'var', key: 'livingMemory', set: 1 }] },
+    ],
+  },
+  {
+    id: 'rare-living-court', chained: true, who: '{ctx.facility}',
+    text: '改造英雄拥有了新的身体，设施拥有了自己的名字，称号也开始脱离授予者流传。今晚，{ctx.facility}震动墙壁，邀请{ctx.heroA}参加地牢第一次廷议。',
+    choices: [
+      { label: '承认地牢成员拥有发言权', reply: '名单从“财产”改成了“成员”。这只是一个词，却让整座地牢的脚步同时重了一拍。', effects: [{ t: 'hero', contextKey: 'heroARef', xp: 30 }, { t: 'facility', contextKey: 'facilityRef', condition: 15 }, { t: 'mod', mod: { id: 'living-court', name: '会呼吸的廷议', raids: -1, monAtkMult: 1.04, monHpMult: 1.04 } }] },
+      { label: '维持原有秩序', reply: '廷议被记作一次管道故障。第二天一切照常，只是门轴关得比以前更响。', effects: [{ t: 'res', mana: 35 }, { t: 'var', key: 'silencedCourt', set: 1 }] },
+    ],
+  },
+  {
+    id: 'rare-returning-company', chained: true, who: '入口守卫',
+    text: '连续失守以后，被遣退者在入口外列成一队。领头的是{ctx.hero}，身后站着{ctx.companion}。他们没有要求恢复旧职位，只问地牢是否还需要人守门。',
+    choices: [
+      { label: '让领头者归队', reply: '旧名字被重新写入名册，旁边多了一行小字：“自愿归来。”', effects: [{ t: 'exile', action: 'return' }, { t: 'mod', mod: { id: 'returning-company', name: '流亡者归队', raids: 4, monHpMult: 1.12 } }] },
+      { label: '把他们编成外墙守军', reply: '他们没有回到名册，却在地牢外形成了第一道看不见的防线。', effects: [{ t: 'mod', mod: { id: 'outer-exiles', name: '流亡者外墙', raids: -1, roomLimitAdd: 2 } }, { t: 'var', key: 'exileGuard', set: 1 }] },
+    ],
+  },
+  {
+    id: 'hero-graft-full', chained: true, who: '{ctx.hero}',
+    text: '{ctx.hero}完成了从头到足的改造。旧身体被分装进四只匣子，新身体却迟迟不肯从台上起身：“如果没有一处还是原来的，我凭什么还是我？”',
+    choices: [
+      { label: '让同伴逐一叫出名字', reply: '每一次呼唤都让一处关节恢复回应。最后，{ctx.hero}用自己的名字站了起来。', effects: [{ t: 'hero', xp: 36, wounds: -1 }, { t: 'var', key: 'graftIdentity', add: 2 }, { t: 'mod', mod: { id: 'whole-body-oath', name: '全身铭名', raids: 4, monHpMult: 1.12 } }], followup: { sceneId: 'echo-graft-oath', title: '{ctx.hero}的新身体记住了名字', after: 2 } },
+      { label: '烧掉旧身体', reply: '四只匣子一同燃尽。{ctx.hero}在火光里起身，从此不再回头确认自己曾经是谁。', effects: [{ t: 'hero', xp: 22 }, { t: 'mod', mod: { id: 'no-old-shell', name: '不留旧壳', raids: 3, monAtkMult: 1.14 } }] },
+    ],
+  },
+  {
+    id: 'hero-graft-legendary', chained: true, who: '改造台深处的声音',
+    text: '传奇部件接入{ctx.hero}的瞬间，改造台先叫出了另一个名字。那件遗物仍记得上一位主人，也在判断谁有资格继续使用它。',
+    choices: [
+      { label: '让英雄与旧意志谈判', reply: '一夜之后，两个名字被刻在同一块铭牌上。力量没有被驯服，却接受了共同作战。', effects: [{ t: 'hero', xp: 42 }, { t: 'var', key: 'graftIdentity', add: 2 }, { t: 'mod', mod: { id: 'legendary-coexistence', name: '双名遗物', raids: 5, monAtkMult: 1.13 } }] },
+      { label: '抹去旧意志', reply: '魔质冲洗了每一道记忆。部件安静得像从未属于过任何人，也不再主动回应危险。', effects: [{ t: 'res', mana: 30 }, { t: 'hero', wounds: -1 }] },
+    ],
+  },
+  {
+    id: 'hero-talent-offense', chained: true, who: '训练记录员',
+    text: '{ctx.hero}掌握“{ctx.talent}”以后，训练桩上的每一道伤痕都集中在同一点。教官问：这种精准应该用来更快结束战斗，还是逼对手先犯错？',
+    choices: [
+      { label: '追求一击定局', reply: '从此训练只计算第一次命中的结果。{ctx.hero}学会把犹豫留在出手之前。', effects: [{ t: 'hero', xp: 26 }, { t: 'mod', mod: { id: 'talent-first-strike', name: '第一击定局', raids: 3, monAtkMult: 1.12 } }] },
+      { label: '训练诱敌节奏', reply: '训练桩被换成会还手的机关。{ctx.hero}开始把攻击写成一段有停顿的句子。', effects: [{ t: 'hero', xp: 18, wounds: -1 }, { t: 'res', mana: 8 }] },
+    ],
+  },
+  {
+    id: 'hero-talent-defense', chained: true, who: '护具管理员',
+    text: '学会“{ctx.talent}”后，{ctx.hero}连续替同伴挡下三次训练攻击。盾面留下的凹痕排列得像一份名单。',
+    choices: [
+      { label: '把名单刻进盾里', reply: '每个被保护过的人都在凹痕旁刻下名字。那面盾从此比原来沉，也更难被击退。', effects: [{ t: 'hero', xp: 24, wounds: -1 }, { t: 'mod', mod: { id: 'named-shield', name: '众名之盾', raids: 4, monHpMult: 1.12 } }] },
+      { label: '提醒其保存自己', reply: '{ctx.hero}重新调整站位。保护不再意味着独自承受，而是让整条阵线共同分担。', effects: [{ t: 'hero', xp: 20 }, { t: 'var', key: 'heroTrust', add: 1 }] },
+    ],
+  },
+  {
+    id: 'hero-talent-command', chained: true, who: '值班副官',
+    text: '“{ctx.talent}”第一次用于实战演练时，{ctx.hero}下达的口令与旧值班表冲突。两套秩序只能保留一套。',
+    choices: [
+      { label: '采用英雄的新口令', reply: '旧表被收进档案。新的口令更短，也第一次把怪物和英雄写在同一列。', effects: [{ t: 'hero', xp: 28 }, { t: 'var', key: 'heroTrust', add: 1 }, { t: 'mod', mod: { id: 'shared-command', name: '共同口令', raids: 4, monSpdAdd: 0.08 } }] },
+      { label: '让其服从旧班表', reply: '{ctx.hero}删掉了多余的口令。秩序没有改变，但所有人都知道它曾有另一种可能。', effects: [{ t: 'res', bone: 45 }, { t: 'hero', xp: 12 }] },
+    ],
+  },
+  {
+    id: 'hero-title-war', chained: true, who: '称号官',
+    text: '“{ctx.title}”被写上旗帜后，{ctx.hero}发现新兵开始模仿其每一次拔刀。称号正在把一个人的习惯变成全军的战法。',
+    choices: [
+      { label: '亲自示范正确战法', reply: '旗帜下的动作逐渐整齐。称号不再只是赞美，而成了一套可以传授的技术。', effects: [{ t: 'hero', xp: 30 }, { t: 'mod', mod: { id: 'title-doctrine', name: '称号战法', raids: 4, monAtkMult: 1.1 } }] },
+      { label: '禁止盲目模仿', reply: '新兵被要求写下自己的动作。旗帜仍在，但它开始容纳不止一种战法。', effects: [{ t: 'var', key: 'livingTitles', add: 1 }, { t: 'hero', xp: 18 }] },
+    ],
+  },
+  {
+    id: 'hero-title-survivor', chained: true, who: '疗愈池看守',
+    text: '{ctx.hero}获得“{ctx.title}”后，疗愈池边开始堆满求教的人。他们想知道的不是如何获胜，而是如何从失败里活着回来。',
+    choices: [
+      { label: '开设伤后课程', reply: '每一道旧伤都被画成教材。失败第一次成为可以传下去的经验。', effects: [{ t: 'hero', wounds: -1, xp: 22 }, { t: 'var', key: 'heroTrust', add: 1 }, { t: 'mod', mod: { id: 'survival-lessons', name: '伤后课程', raids: 4, monHpMult: 1.1 } }] },
+      { label: '让幸存保持神秘', reply: '看守赶走了求教者。称号因此更像传说，却也让{ctx.hero}独自背着那些没回来的人。', effects: [{ t: 'hero', xp: 34 }, { t: 'res', mana: 12 }] },
+    ],
+  },
+  {
+    id: 'hero-title-command', chained: true, who: '地牢书记官',
+    text: '书记官准备把“{ctx.title}”写进永久条例，却停笔问{ctx.hero}：称号属于受封者，还是属于愿意遵循它的人？',
+    choices: [
+      { label: '让称号成为职位', reply: '条例里删掉了名字。从今以后，任何承担相同责任的人都可以继承这个称号。', effects: [{ t: 'var', key: 'livingTitles', add: 2 }, { t: 'mod', mod: { id: 'inherited-command', name: '可继承的职责', raids: -1, roomLimitAdd: 1 } }] },
+      { label: '保留英雄专属称号', reply: '名字与称号被并排封存。{ctx.hero}成为唯一的解释，也必须独自承担它。', effects: [{ t: 'hero', xp: 36 }, { t: 'mod', mod: { id: 'singular-banner', name: '唯一旗号', raids: 4, monAtkMult: 1.12 } }] },
+    ],
+  },
+  {
+    id: 'echo-merchant-route', chained: true, who: '兜帽商人',
+    text: '商人果然回来，还带着一张绕过勇者巡逻的路线图。“上次你让我走，所以这次我卖的不是货，是一条能反复走的路。”',
+    choices: [
+      { label: '买下长期路线', reply: '路线被刻进补给地图。此后总有一些货物能比勇者更早抵达。', effects: [{ t: 'res', bone: -45, mana: 30 }, { t: 'mod', mod: { id: 'hooded-route', name: '兜帽商路', raids: -1, roomLimitAdd: 1 } }] },
+      { label: '用情报换路线', reply: '你交出勇者经过的时间。双方都赚到了东西，也都保留了一部分没说。', effects: [{ t: 'res', mana: 16 }, { t: 'mod', mod: { id: 'merchant-intel', name: '互换行程', raids: 3, heroHpMult: 1.06, monSpdAdd: 0.08 } }] },
+    ],
+  },
+  {
+    id: 'echo-monster-quarrel', chained: true, who: '走廊裁判',
+    text: '上次争位的胜者把那块地盘画成擂台，败者却带着新练出的招式回来。围观者要求你为第二场定规矩。',
+    choices: [
+      { label: '改成轮值擂台', reply: '站位不再终身属于胜者。每次换班都像一次小型选拔，怨气变成了训练。', effects: [{ t: 'xp', sel: 'all', add: 14 }, { t: 'var', key: 'monsterCustoms', add: 1 }] },
+      { label: '终止私斗', reply: '擂台线被擦掉。两只怪物第一次并肩训练，把没打完的力气留给勇者。', effects: [{ t: 'mod', mod: { id: 'quarrel-truce', name: '争位休战', raids: 4, monAtkMult: 1.08, monHpMult: 1.06 } }] },
+    ],
+  },
+  {
+    id: 'echo-rested-shift', chained: true, who: '记账兵',
+    text: '那次休班以后，值班表上出现了一行谁也没填写的空白。怪物们开始轮流把名字写进去，称它为“还能喘气的那一班”。',
+    choices: [
+      { label: '把休班写成制度', reply: '空白成为正式的一格。产出偶尔慢一点，但队伍不再在最坏的时候集体倒下。', effects: [{ t: 'mod', mod: { id: 'rest-roster', name: '轮值休班', raids: -1, monHpMult: 1.06 } }, { t: 'var', key: 'workerHonor', add: 1 }] },
+      { label: '只保留这一次例外', reply: '书记官划掉了空白，却没人撕掉那张旧表。它被折好，藏在值班室最里面。', effects: [{ t: 'res', bone: 70 }, { t: 'xp', sel: 'all', add: 8 }] },
+    ],
+  },
+  {
+    id: 'echo-bone-bed', chained: true, who: '夜班守卫',
+    text: '骨料床垫开始在夜里自行挪动，只停在最疲惫的岗位旁。清点时少了几根骨头，却多了几名精神饱满的守卫。',
+    choices: [
+      { label: '承认它是公共设施', reply: '骨床被列入轮值表。没人知道它是否活着，但它显然懂得谁最需要休息。', effects: [{ t: 'res', bone: -25 }, { t: 'mod', mod: { id: 'walking-bone-bed', name: '巡夜骨床', raids: 5, monHpMult: 1.1 } }, { t: 'var', key: 'livingFacilities', add: 1 }] },
+      { label: '拆回普通骨料', reply: '骨床被敲散时发出一声很轻的叹息。库存恢复了，夜班也恢复了沉默。', effects: [{ t: 'res', bone: 75 }] },
+    ],
+  },
+  {
+    id: 'echo-missing-door', chained: true, who: '第一层守卫',
+    text: '拆门以后，第一层守卫在空门框上画了一条线：跨线者必须报上名字。勇者起初发笑，直到门框真的记住了他们。',
+    choices: [
+      { label: '保留报名字的规矩', reply: '每个入侵者的名字都被写进墙里。没有门，却多了一份比门更长久的名单。', effects: [{ t: 'mod', mod: { id: 'threshold-roll', name: '门框点名', raids: -1, roomLimitAdd: 1 } }, { t: 'var', key: 'monsterCustoms', add: 1 }] },
+      { label: '重新装门', reply: '新门盖住了名单，却盖不住里面偶尔传出的低声点名。', effects: [{ t: 'res', bone: -30 }, { t: 'mod', mod: { id: 'remembering-door', name: '记名新门', raids: 4, roomLimitAdd: 3 } }] },
+    ],
+  },
+  {
+    id: 'echo-lair-name', chained: true, who: '远道而来的抄写员',
+    text: '有人把“{var.lairName}”写进了北境地图，却在名字旁多画了一扇并不存在的门。如今旅人按图而来，要求见识传闻中的入口。',
+    choices: [
+      { label: '把假门修成真的', reply: '传闻替地牢长出了一处新入口。它不更安全，却让来客先按你的路线行走。', effects: [{ t: 'res', bone: -40 }, { t: 'mod', mod: { id: 'fabled-entrance', name: '传闻中的入口', raids: -1, roomLimitAdd: 1 } }] },
+      { label: '纠正地图', reply: '抄写员收回错图。作为谢礼，他留下沿途收集的一袋旧骨币。', effects: [{ t: 'res', bone: 85 }] },
+    ],
+  },
+  {
+    id: 'echo-sign-board', chained: true, who: '门外的陌生笔迹',
+    text: '入口木牌背面多了一行回信：“看见了。还是会进。”字迹每天都更近一点，像书写者正在沿走廊向内移动。',
+    choices: [
+      { label: '在下面继续回话', reply: '木牌成了跨越敌我的通信簿。守卫因此总能提前知道下一批人的情绪。', effects: [{ t: 'mod', mod: { id: 'threshold-correspondence', name: '门牌通信', raids: 4, heroAtkMult: 0.94 } }, { t: 'var', key: 'monsterCustoms', add: 1 }] },
+      { label: '擦掉所有字迹', reply: '木牌恢复空白，墨迹却在火盆里凝成少量魔质。', effects: [{ t: 'res', mana: 22 }] },
+    ],
+  },
+  {
+    id: 'echo-stray-monster', chained: true, who: '戴旧项圈的怪物',
+    text: '那只走失怪物在门口嗅到了熟悉气味。它的旧主人循着项圈找来，不是勇者，而是一名同样无处可去的驯养人。',
+    choices: [
+      { label: '连驯养人一起收留', reply: '地牢多了一套没人正式批准的喂养表。怪物们第一次知道每顿饭会在什么时候来。', effects: [{ t: 'xp', sel: 'all', add: 14 }, { t: 'mod', mod: { id: 'keeper-routine', name: '驯养人的饭点', raids: 4, monHpMult: 1.08 } }] },
+      { label: '归还那只怪物', reply: '项圈和脚步声一同远去。几天后，门口留下了一箱作为谢礼的骨料。', effects: [{ t: 'res', bone: 95 }] },
+    ],
+  },
+  {
+    id: 'echo-seal-crack', chained: true, who: '封印里的回声',
+    text: '旧裂缝的位置传来敲击。三短、两长，像某种从王座另一面发来的施工信号。',
+    choices: [
+      { label: '按节奏回应', reply: '封印纹路自行重排，给魔质留下了可控的细渠。你没有打开它，却学会让它呼吸。', effects: [{ t: 'res', mana: 24 }, { t: 'mod', mod: { id: 'breathing-seal', name: '会呼吸的封印', raids: 5, sealAdd: 18 } }] },
+      { label: '彻底封死声音', reply: '敲击消失。多余的封印材料被刮下来，足够加固地牢别处。', effects: [{ t: 'dev', seal: 1 }, { t: 'res', bone: 35 }] },
+    ],
+  },
+  {
+    id: 'echo-trap-salesman', chained: true, who: '地精工程师',
+    text: '地精带着厚厚的验收册回来，逐个询问陷阱是否“按预期伤到了正确的人”。他的标准似乎包括使用者自己。',
+    choices: [
+      { label: '签长期维护契约', reply: '他在每台机关背面刻下检修日期。爆炸少了，真正命中的次数反而多了。', effects: [{ t: 'res', mana: -18 }, { t: 'mod', mod: { id: 'goblin-maintenance', name: '地精保养契约', raids: -1, roomLimitAdd: 1 } }] },
+      { label: '拿事故记录抵账', reply: '地精把每一次故障都当成新产品灵感，兴高采烈地免掉了本次费用。', effects: [{ t: 'res', bone: 55 }, { t: 'dev', trap: 1 }] },
+    ],
+  },
+  {
+    id: 'echo-fear-answer', chained: true, who: '年轻怪物',
+    text: '你对恐惧的回答被传了许多遍，已经变成一句与你原话不完全相同的格言。年轻怪物问，要不要把它刻进值班室。',
+    choices: [
+      { label: '允许它们保留自己的版本', reply: '那句话不再属于你。每个守卫都添上半句，最终成了一套只在地牢内部通行的勇气。', effects: [{ t: 'var', key: 'monsterCustoms', add: 2 }, { t: 'mod', mod: { id: 'borrowed-courage', name: '走廊里的勇气', raids: -1, monHpMult: 1.05 } }] },
+      { label: '重新讲清原意', reply: '年轻怪物认真改正了每一个字。秩序更准确，也少了一点属于它们自己的东西。', effects: [{ t: 'xp', sel: 'all', add: 18 }, { t: 'res', mana: 10 }] },
+    ],
+  },
+  {
+    id: 'echo-lost-blueprint', chained: true, who: '图纸背面的署名',
+    text: '第二张图纸从同一堆骨料里滑出来。它没有画部件，只画了第一张图纸最终会伤到谁；名字的位置被血迹遮住。',
+    choices: [
+      { label: '继续完成整套设计', reply: '两张图被拼成一套危险但完整的工艺。工坊记住了它，也把警告写在第一页。', effects: [{ t: 'unlock', what: 'affix:thorns' }, { t: 'res', mana: 18 }, { t: 'var', key: 'graftIdentity', add: 1 }] },
+      { label: '把两张一起封存', reply: '图纸进入禁用档案。有人为你的克制送来报酬，也有人开始设法偷走它。', effects: [{ t: 'res', bone: 100 }, { t: 'var', key: 'restraint', add: 2 }] },
+    ],
+  },
+  {
+    id: 'echo-captain-letter', chained: true, who: '勇者队长',
+    text: '最后一封信没有被箭钉在门上，而是由一名没有武器的信使送来：“等这一战结束，替我把双方的名字都写下来。”',
+    choices: [
+      { label: '答应记录所有名字', reply: '书记官预留了整整一页。战斗尚未开始，参与者却第一次先成为了记录中的人。', effects: [{ t: 'var', key: 'keptScars', add: 1 }, { t: 'mod', mod: { id: 'named-final-battle', name: '有名者之战', raids: 3, heroHpMult: 1.06, monHpMult: 1.1 } }] },
+      { label: '只记录胜者', reply: '信使沉默地收走回复。公会把这句话贴上公告栏，下一队因此不敢空手而来。', effects: [{ t: 'res', bone: 110 }, { t: 'mod', mod: { id: 'victors-only', name: '只记胜者', raids: 3, heroAtkMult: 1.1, monAtkMult: 1.12 } }] },
+    ],
+  },
+  {
+    id: 'echo-room-name', chained: true, who: '第一层住客',
+    text: '第一间房的名字被叫得太久，连新来的守卫也按那个名字调整自己的习惯。房间正在反过来塑造住在里面的人。',
+    choices: [
+      { label: '让住客续写房间传统', reply: '每一班都在门框上添一笔。它不再只是位置，而成了一份不断增长的共同履历。', effects: [{ t: 'xp', sel: 'all', add: 16 }, { t: 'var', key: 'monsterCustoms', add: 2 }, { t: 'mod', mod: { id: 'room-tradition', name: '房间传统', raids: -1, roomLimitAdd: 1 } }] },
+      { label: '定期更换房间称号', reply: '名字随轮值改变，没人能永远占据它。竞争留下了，怨恨却没有扎根。', effects: [{ t: 'mod', mod: { id: 'rotating-room-name', name: '轮换房名', raids: 4, monSpdAdd: 0.09 } }] },
+    ],
+  },
+  {
+    id: 'echo-leftover-mana', chained: true, who: '工坊学徒',
+    text: '换了新坩埚以后，底部仍凝出同样形状的魔质。学徒怀疑那不是残料，而是工坊在模仿某种心跳。',
+    choices: [
+      { label: '按心跳调整炉火', reply: '火焰与敲击逐渐同步。工坊产出的魔质更稳定，也第一次拥有了自己的工作节奏。', effects: [{ t: 'res', mana: 28 }, { t: 'var', key: 'livingFacilities', add: 1 }] },
+      { label: '停炉彻查', reply: '坩埚被拆成七层检查，没找到活物，却回收出不少可用材料。', effects: [{ t: 'res', bone: 65, mana: 12 }] },
+    ],
+  },
+  {
+    id: 'echo-quiet-night', chained: true, who: '夜巡记录',
+    text: '三轮后，墙缝里找到一张那夜留下的巡逻图。图上每个你停留过的位置都画着另一双脚印，始终与你相隔一步。',
+    choices: [
+      { label: '沿脚印再巡一次', reply: '脚印最终停在王座前，像一名从未登记的守卫完成了交班。你为它在记录里留了空位。', effects: [{ t: 'mod', mod: { id: 'unseen-night-watch', name: '无名夜巡', raids: -1, roomLimitAdd: 1 } }, { t: 'var', key: 'workerHonor', add: 1 }] },
+      { label: '把地图投入火中', reply: '纸张烧尽后，第二双脚印从灰里走了出去。火盆中留下少量纯净魔质。', effects: [{ t: 'res', mana: 26 }] },
+    ],
+  },
+  {
     id: 'quiet-night',
+    followup: { sceneId: 'echo-quiet-night', title: '那一夜并非什么都没发生', after: 3 },
     weight: 2,
     text: '什么都没发生的一夜。走廊里只有滴水声，和某只怪物翻身的动静。',
     choices: [

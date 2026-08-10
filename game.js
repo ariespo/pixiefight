@@ -70,8 +70,12 @@ const FLOOR_EXPAND = [null, null,
   { bone: 400, mana: 35 }, { bone: 650, mana: 70 }];
 
 const freshBattleRoom = () => ({ theme: 'stone', trap: 'none', front: null, back: null, leader: null, flank: null });
-const freshUtilityRoom = () => ({ kind: 'none', level: 0, condition: 100, workerUid: null, trainTargets: [] });
-const freshFloor = (id, battle = freshBattleRoom(), utility = freshUtilityRoom()) => ({ id, battle, utility });
+const freshUtilityRoom = (raw = {}) => ({
+  kind: 'none', level: 0, condition: 100, workerUid: null, trainTargets: [],
+  persona: '', nickname: '', history: [], damageCount: 0, repairCount: 0, upgradeCount: 0, workCycles: 0,
+  ...raw,
+});
+const freshFloor = (id, battle = freshBattleRoom(), utility = freshUtilityRoom()) => ({ id, battle, utility: freshUtilityRoom(utility) });
 
 function syncRoomAlias() {
   S.rooms = S.floors.map((f) => f.battle);
@@ -100,7 +104,8 @@ function freshSave()       {
     muted: false, seenClasses: [], tutorial: 0,
     champs: [], champNext: 1, cands: [], candRaid: 0, candNext: 1, champPot: {},
     vault: [], forged: [], fgNext: 1,
-    story: { vars: {}, mods: [], unlocks: [], seen: [], credits: 1, leads: [], archive: [], leadNext: 1 },
+    story: { vars: {}, mods: [], unlocks: [], seen: [], credits: 1, leads: [], archive: [], leadNext: 1,
+      relations: {}, exiles: [], exileNext: 1 },
   };
 }
 
@@ -184,7 +189,11 @@ function sanitizeSave() {
     const trainTargets = Array.isArray(raw.trainTargets) ? raw.trainTargets
       .filter((x) => x && (x.type === 'monster' || x.type === 'hero') && typeof x.uid === 'number')
       .slice(0, 2).map((x) => ({ type: x.type, uid: x.uid })) : [];
-    return freshFloor(i + 1, battle, { kind, level, condition, workerUid, trainTargets });
+    const history = Array.isArray(raw.history) ? raw.history.filter((x) => x && typeof x.text === 'string').slice(-24) : [];
+    return freshFloor(i + 1, battle, { kind, level, condition, workerUid, trainTargets,
+      persona: typeof raw.persona === 'string' ? raw.persona : '', nickname: typeof raw.nickname === 'string' ? raw.nickname.slice(0, 12) : '', history,
+      damageCount: Math.max(0, Math.round(raw.damageCount || 0)), repairCount: Math.max(0, Math.round(raw.repairCount || 0)),
+      upgradeCount: Math.max(0, Math.round(raw.upgradeCount || 0)), workCycles: Math.max(0, Math.round(raw.workCycles || 0)) });
   });
   if (!S.dungeon || typeof S.dungeon !== 'object') S.dungeon = {};
   S.dungeon = {
@@ -243,9 +252,13 @@ function sanitizeSave() {
     credits: typeof st?.credits === 'number' ? Math.max(0, Math.min(9, st.credits)) : 1,
     leads: Array.isArray(st?.leads) ? st.leads.filter((x) => x && typeof x.id === 'number' && typeof x.sceneId === 'string')
       .slice(0, 24).map((x) => ({ ...x, dueRaid: Math.max(1, Math.round(x.dueRaid ?? x.raidNo ?? 1)), context: x.context && typeof x.context === 'object' ? x.context : {} })) : [],
-    archive: Array.isArray(st?.archive) ? st.archive.filter((x) => x && typeof x.sceneId === 'string').slice(0, 20) : [],
+    archive: Array.isArray(st?.archive) ? st.archive.filter((x) => x && typeof x.sceneId === 'string') : [],
     leadNext: typeof st?.leadNext === 'number' ? Math.max(1, Math.round(st.leadNext)) : 1,
+    relations: st?.relations && typeof st.relations === 'object' ? st.relations : {},
+    exiles: Array.isArray(st?.exiles) ? st.exiles.filter((x) => x && typeof x.id === 'number' && x.champ) : [],
+    exileNext: typeof st?.exileNext === 'number' ? Math.max(1, Math.round(st.exileNext)) : 1,
   };
+  S.story.exileNext = Math.max(S.story.exileNext, ...S.story.exiles.map((x) => x.id + 1));
   S.story.leadNext = Math.max(S.story.leadNext,
     ...S.story.leads.map((x) => x.id + 1), ...S.story.archive.map((x) => (x.id ?? 0) + 1));
   // 英雄名册：等级/经验/专精数量都要自洽，坏档不能把培养页打崩
@@ -399,6 +412,40 @@ const trapPower = () => 1 + S.trapLv * 0.25;
 const utilityAt = (floor) => S.floors[floor]?.utility;
 const utilityDef = (u) => UTILITY_KINDS[u?.kind] ?? UTILITY_KINDS.none;
 const conditionEff = (condition) => condition <= 0 ? 0 : condition <= 25 ? 0.4 : condition <= 50 ? 0.7 : condition <= 75 ? 0.9 : 1;
+const FACILITY_PERSONAS = {
+  scarred: { name: '伤痕累累', desc: '反复遭劫后学会拖慢洗劫，劫掠速度-12%。' },
+  steadfast: { name: '百折不挠', desc: '多次修复后结构更稳，低耐久效率提高。' },
+  ambitious: { name: '贪长', desc: '连续扩建后产出+10%，但完整劫掠破坏更重。' },
+  industrious: { name: '勤作', desc: '长期有人管理，员工效率+10%。' },
+};
+const FACILITY_NICK = {
+  scarred: ['断门', '旧伤', '不倒墙'], steadfast: ['再生室', '铁缝', '复起之所'],
+  ambitious: ['深喉', '无尽间', '第七码'], industrious: ['长明房', '夜班所', '不停炉'],
+};
+
+function facilityName(u) { return u?.nickname ? `${u.nickname}（${utilityDef(u).name}）` : utilityDef(u).name; }
+function addFacilityHistory(floor, type, text) {
+  const u = utilityAt(floor);
+  if (!u || u.kind === 'none') return;
+  if (!Array.isArray(u.history)) u.history = [];
+  u.history.push({ raid: S.raidNo, type, text });
+  if (u.history.length > 24) u.history.splice(0, u.history.length - 24);
+}
+function refreshFacilityIdentity(floor) {
+  const u = utilityAt(floor);
+  if (!u || u.kind === 'none') return;
+  const before = u.persona || '';
+  const persona = u.damageCount >= 3 ? 'scarred' : u.repairCount >= 2 ? 'steadfast'
+    : u.upgradeCount >= 2 ? 'ambitious' : u.workCycles >= 3 ? 'industrious' : '';
+  if (!persona || before) return;
+  u.persona = persona;
+  const names = FACILITY_NICK[persona];
+  const seed = (floor + u.kind.length + S.raidNo) % names.length;
+  u.nickname = names[seed];
+  addFacilityHistory(floor, 'identity', `获得性格“${FACILITY_PERSONAS[persona].name}”，被称作“${u.nickname}”`);
+  queueStoryLead(`facility-awakening:${floor}:${u.kind}:${persona}`, 'facility-awakening', '设施异闻', `${u.nickname}第一次回应自己的名字`,
+    { ref: `${floor}:${u.kind}`, floor: floor + 1, facility: utilityDef(u).name, nickname: u.nickname, persona: FACILITY_PERSONAS[persona].name });
+}
 const WORKER_KINDS = new Set(['bone-yard', 'mana-well', 'workshop', 'hatchery']);
 const WORKER_APTITUDE = {
   'bone-yard': new Set(['archer', 'lich', 'elite-lich', 'bonedragon', 'elite-bonedragon']),
@@ -430,7 +477,7 @@ function workerEff(u) {
   if (!inst) return 0.5;
   const base = inst.lv <= 2 ? 0.9 : inst.lv <= 4 ? 1 : 1.1;
   const aptitude = WORKER_APTITUDE[u.kind]?.has(inst.kind) ? 0.1 : 0;
-  return Math.min(1.2, base + aptitude);
+  return Math.min(1.3, base + aptitude + (u.persona === 'industrious' ? 0.1 : 0));
 }
 
 function workerName(u) {
@@ -444,25 +491,28 @@ function utilityOutput(floorIndex) {
   const d = utilityDef(u);
   if (!u || u.kind === 'none' || u.condition <= 0) return {
     bone: 0, mana: 0, xp: 0, repair: 0, healingCharges: 0, forgeCharges: 0, forgeDiscount: 0,
-    hatcheryCharges: 0, hatcheryDiscount: 0, training: [],
+    hatcheryCharges: 0, hatcheryDiscount: 0, training: [], persona: '', nickname: '', lootResist: 1,
   };
   const lv = Math.max(1, Math.min(3, u.level)) - 1;
   const depth = DEPTH_MULT[floorIndex] ?? 0.8;
-  const condition = conditionEff(u.condition);
+  const rawCondition = conditionEff(u.condition);
+  const condition = u.persona === 'steadfast' && u.condition <= 50 ? Math.min(1, rawCondition + 0.15) : rawCondition;
   const staffed = workerEff(u);
-  const mult = depth * condition * staffed;
+  const personaYield = u.persona === 'ambitious' ? 1.1 : 1;
+  const mult = depth * condition * staffed * personaYield;
   const targets = u.trainTargets.map((x) => ({ ...x }));
   return {
     bone: d.yields && u.kind === 'bone-yard' ? Math.max(0, Math.round(d.yields[lv] * mult)) : 0,
     mana: d.yields && u.kind === 'mana-well' ? Math.max(0, Math.round(d.yields[lv] * mult)) : 0,
-    xp: u.kind === 'training' && targets.length ? Math.max(0, Math.round(d.xp[lv] * condition)) : 0,
-    repair: u.kind === 'workshop' ? Math.max(0, Math.round(d.repair[lv] * condition * staffed)) : 0,
-    healingCharges: u.kind === 'healing' ? Math.max(1, Math.round(d.charges[lv] * condition * staffed)) : 0,
+    xp: u.kind === 'training' && targets.length ? Math.max(0, Math.round(d.xp[lv] * condition * personaYield)) : 0,
+    repair: u.kind === 'workshop' ? Math.max(0, Math.round(d.repair[lv] * condition * staffed * personaYield)) : 0,
+    healingCharges: u.kind === 'healing' ? Math.max(1, Math.round(d.charges[lv] * condition * staffed * personaYield)) : 0,
     forgeCharges: u.kind === 'workshop' ? 1 : 0,
     forgeDiscount: u.kind === 'workshop' ? d.discount[lv] * Math.min(1, condition * staffed) : 0,
-    hatcheryCharges: u.kind === 'hatchery' ? Math.max(1, Math.round(d.charges[lv] * condition * staffed)) : 0,
+    hatcheryCharges: u.kind === 'hatchery' ? Math.max(1, Math.round(d.charges[lv] * condition * staffed * personaYield)) : 0,
     hatcheryDiscount: u.kind === 'hatchery' ? d.discount[lv] * Math.min(1, condition * staffed) : 0,
-    training: targets,
+    training: targets, persona: u.persona || '', nickname: u.nickname || '',
+    lootResist: u.persona === 'scarred' ? 0.88 : 1,
   };
 }
 
@@ -551,7 +601,8 @@ function buildUtility(floorIndex, kind) {
   if (!floor || !d || kind === 'none' || floor.utility.kind !== 'none') return;
   if (S.bone < d.bone || S.mana < d.mana) { say('建造资源不足'); return; }
   S.bone -= d.bone; S.mana -= d.mana;
-  floor.utility = { kind, level: 1, condition: 100, workerUid: null, trainTargets: [] };
+  floor.utility = freshUtilityRoom({ kind, level: 1, condition: 100, workerUid: null, trainTargets: [] });
+  addFacilityHistory(floorIndex, 'built', `${d.name}建成`);
   if (kind === 'healing') S.dungeon.healingCharges = Math.min(6, S.dungeon.healingCharges + 1);
   queueStoryLead(`facility:${kind}`, `facility-${kind}`, '设施异闻', `${floorIndex + 1}层・${d.name}`,
     { ref: `${floorIndex}:${kind}`, floor: floorIndex + 1, facility: d.name });
@@ -564,6 +615,9 @@ function upgradeUtility(floorIndex) {
   const cost = utilityUpgradeCost(u);
   if (S.bone < cost.bone || S.mana < cost.mana) { say('升级资源不足'); return; }
   S.bone -= cost.bone; S.mana -= cost.mana; u.level++;
+  u.upgradeCount = (u.upgradeCount || 0) + 1;
+  addFacilityHistory(floorIndex, 'upgrade', `扩建至Lv${u.level}`);
+  refreshFacilityIdentity(floorIndex);
   if (u.kind === 'healing') S.dungeon.healingCharges = Math.min(healingCapacity(), S.dungeon.healingCharges + 1);
   const d = utilityDef(u);
   queueStoryLead(`facility-growth:${floorIndex}:${u.kind}:${u.level}`, 'facility-growth', '设施异闻', `${floorIndex + 1}层・${d.name}扩建后的异响`,
@@ -580,6 +634,9 @@ function repairUtility(floorIndex) {
   const wasStopped = beforeCondition <= 0;
   S.dungeon.repairPoints -= quote.points;
   S.bone -= quote.bone; u.condition = 100;
+  u.repairCount = (u.repairCount || 0) + 1;
+  addFacilityHistory(floorIndex, 'repair', `从${beforeCondition}耐久修复至100`);
+  refreshFacilityIdentity(floorIndex);
   if (wasStopped && u.kind === 'healing') S.dungeon.healingCharges = Math.min(healingCapacity(), S.dungeon.healingCharges + utilityDef(u).charges[u.level - 1]);
   else S.dungeon.healingCharges = Math.min(S.dungeon.healingCharges, healingCapacity());
   if (wasStopped || beforeCondition <= 35) {
@@ -604,6 +661,7 @@ function assignWorker(floorIndex, uid) {
   const old = workerFloorOf(uid);
   if (old >= 0) S.floors[old].utility.workerUid = null;
   u.workerUid = uid;
+  addFacilityHistory(floorIndex, 'staff', `${instKind(inst).name}开始长期管理`);
   sel = { kind: 'utility', floor: floorIndex };
   persist(); playSfx('place'); say(`${instKind(inst).name}开始管理${utilityDef(u).name}`); render();
 }
@@ -629,7 +687,9 @@ function toggleTrainingTarget(floorIndex, type, uid) {
   }
   const old = trainingOf(type, uid);
   if (old >= 0) { say(`该单位已在${old + 1}层训练`); return; }
+  const existing = list[0] ? { ...list[0] } : null;
   list.push({ type, uid });
+  queueTrainingRelation(floorIndex, { type, uid }, existing);
   persist(); playSfx('place'); render();
 }
 
@@ -684,7 +744,17 @@ function settleDungeonEconomy(b) {
     const boneProtected = Math.min(boneShield, boneLoss); boneShield -= boneProtected; boneLoss -= boneProtected;
     const u = utilityAt(row.floor);
     const conditionDamage = row.kind === 'none' ? 0 : realtime?.conditionDamage ?? (breached ? 15 : 0);
-    if (conditionDamage && u && u.kind !== 'none') u.condition = Math.max(0, u.condition - conditionDamage);
+    if (conditionDamage && u && u.kind !== 'none') {
+      u.condition = Math.max(0, u.condition - conditionDamage);
+      u.damageCount = (u.damageCount || 0) + 1;
+      addFacilityHistory(row.floor, 'damage', `第${S.raidNo}轮遭劫，耐久-${conditionDamage}`);
+      refreshFacilityIdentity(row.floor);
+    }
+    if (u?.workerUid && !breached) {
+      u.workCycles = (u.workCycles || 0) + 1;
+      if (u.workCycles === 3) addFacilityHistory(row.floor, 'staff', '连续三轮有人值守');
+      refreshFacilityIdentity(row.floor);
+    }
     return { ...row, bone, mana, xp, repair, training, breached, boneLoss, manaLoss, xpLoss, repairLoss, boneProtected, manaProtected,
       boneGot: bone - boneLoss, manaGot: mana - manaLoss,
       xpGot: xp - xpLoss, repairGot: repair - repairLoss, conditionDamage,
@@ -1404,7 +1474,8 @@ function confirmGraft() {
   inst.graft = gf.picks.length ? [...gf.picks] : undefined;
   if (hero && changed && gf.picks.length) {
     const partNames = gf.picks.map((id) => partById(id)?.name).filter(Boolean).join('、');
-    queueStoryLead(`hero-graft:${inst.uid}:${gf.picks.slice().sort().join(',')}`, 'hero-graft', '英雄秘闻', `${inst.name}醒来后的第一句话`,
+    const graftScene = gf.picks.some((id) => partById(id)?.legendary) ? 'hero-graft-legendary' : gf.picks.length === 4 ? 'hero-graft-full' : 'hero-graft';
+    queueStoryLead(`hero-graft:${inst.uid}:${gf.picks.slice().sort().join(',')}`, graftScene, '英雄秘闻', `${inst.name}醒来后的第一句话`,
       { ref: inst.uid, hero: inst.name, race: champKind(inst).name, parts: partNames, partCount: gf.picks.length });
   }
   // 站位可能被改造改变（比如装了蝠翼变后排）：站错位就先请下场
@@ -2792,7 +2863,7 @@ function pageDungeon(g               ) {
     g.rect(ux, b.y, uw, b.h).fill(C.ink)
       .stroke({ width: 1, color: selected ? C.gold : u.kind === 'none' ? C.wallLit : ud.color, alignment: 0 });
     g.rect(ux + 1, b.y + 1, 4, b.h - 2).fill(u.kind === 'none' ? C.wallLit : ud.color);
-    label(uiLayer, u.kind === 'none' ? '＋ 建资源房' : `${ud.name} Lv${u.level}`, ux + 9, b.y + 4, 10, u.kind === 'none' ? C.stoneLit : ud.color);
+    label(uiLayer, u.kind === 'none' ? '＋ 建资源房' : cut(`${u.nickname ? `${u.nickname}・` : ''}${ud.name} Lv${u.level}`, 13), ux + 9, b.y + 4, 10, u.kind === 'none' ? C.stoneLit : ud.color);
     if (u.kind !== 'none') {
       const staffText = WORKER_KINDS.has(u.kind) ? `・工${cut(workerName(u), 3)}` : u.kind === 'training' ? `・训${u.trainTargets.length}` : '';
       label(uiLayer, cut(`耐${u.condition}${staffText}`, 11), ux + 9, b.y + 17, 8, u.condition <= 25 ? C.red : C.stoneLit);
@@ -2950,8 +3021,13 @@ function drawSidePanel(g               ) {
       }
       return;
     }
-    label(uiLayer, `${d.name}・Lv${u.level}`, 340, 64, 12, d.color);
+    label(uiLayer, cut(`${facilityName(u)}・Lv${u.level}`, 16), 340, 64, 12, d.color);
     boundedText(uiLayer, d.desc, 340, 82, 130, 26, 10, C.bone);
+    if (u.history?.length) hits.add(340, 62, 130, 46, () => {
+      const persona = FACILITY_PERSONAS[u.persona];
+      const history = u.history.slice().reverse().map((x) => `第${x.raid}轮・${x.text}`).join('\n');
+      openDetailPopup(`${facilityName(u)}・设施档案`, `${persona ? `性格：${persona.name}\n${persona.desc}\n\n` : ''}${history}`, d.color);
+    });
     label(uiLayer, `设施耐久 ${u.condition}/100`, 340, 110, 11, u.condition <= 25 ? C.red : C.stoneLit);
     bar(g, 340, 126, 130, 6, u.condition / 100, u.condition <= 25 ? C.red : C.green);
     const out = utilityOutput(floor);
@@ -2962,9 +3038,9 @@ function drawSidePanel(g               ) {
             : u.kind === 'workshop' ? `维修＋${out.repair}・锻造-${Math.round(out.forgeDiscount * 100)}%`
               : `优惠${out.hatcheryCharges}次・-${Math.round(out.hatcheryDiscount * 100)}%`;
     label(uiLayer, detail, 340, 138, 10, C.gold);
-    if (WORKER_KINDS.has(u.kind)) label(uiLayer, `员工 ${workerName(u)}・效率${Math.round(workerEff(u) * 100)}%`, 340, 152, 10, C.stoneLit);
+    if (WORKER_KINDS.has(u.kind)) label(uiLayer, cut(`员工 ${workerName(u)}・效率${Math.round(workerEff(u) * 100)}%${u.persona ? `・${FACILITY_PERSONAS[u.persona].name}` : ''}`, 18), 340, 152, 10, C.stoneLit);
     else if (u.kind === 'training') label(uiLayer, `学员 ${u.trainTargets.length}/${d.slots[u.level - 1]}`, 340, 152, 10, C.stoneLit);
-    else label(uiLayer, `深度 ${Math.round((DEPTH_MULT[floor] ?? 0.8) * 100)}%`, 340, 152, 10, C.stoneLit);
+    else label(uiLayer, cut(`深度 ${Math.round((DEPTH_MULT[floor] ?? 0.8) * 100)}%${u.persona ? `・${FACILITY_PERSONAS[u.persona].name}` : ''}`, 18), 340, 152, 10, C.stoneLit);
     if (u.level < 3) {
       const cost = utilityUpgradeCost(u);
       button(g, uiLayer, hits, 340, 168, 130, 18, `升级 ${cost.bone}骨${cost.mana ? `＋${cost.mana}魔` : ''}`, () => upgradeUtility(floor),
@@ -2977,12 +3053,13 @@ function drawSidePanel(g               ) {
     button(g, uiLayer, hits, 406, 190, 64, 18, sel.confirmDemolish ? '确认拆除' : '拆除', () => demolishUtility(floor),
       { size: 9, border: C.red, color: C.red });
     const facilityLead = pendingStoryLead('设施异闻', `${floor}:${u.kind}`);
-    if (WORKER_KINDS.has(u.kind) || u.kind === 'training') button(g, uiLayer, hits, 340, 212, facilityLead ? 76 : 130, 16,
+    if (WORKER_KINDS.has(u.kind) || u.kind === 'training') button(g, uiLayer, hits, 340, 212, 76, 16,
       u.kind === 'training' ? '管理训练' : '指派员工', () => { sel = { kind: 'utility', floor, people: true }; playSfx('tab'); render(); },
       { size: 9, border: d.color, color: C.white });
     else if (!facilityLead) label(uiLayer, `维修点 ${S.dungeon.repairPoints}/60`, 340, 214, 10, C.stoneLit);
-    if (facilityLead) button(g, uiLayer, hits, 418, 212, 52, 16, '设施秘闻', () => openStoryLead(facilityLead.id),
-      { size: 9, fill: C.purpleDark, border: C.purple, color: C.white });
+    button(g, uiLayer, hits, 418, 212, 52, 16, facilityLead ? '设施秘闻' : '秘闻档案', () =>
+      facilityLead ? openStoryLead(facilityLead.id) : openChronicle('facility', `${floor}:${u.kind}`),
+    { size: 9, fill: facilityLead ? C.purpleDark : C.ink, border: C.purple, color: facilityLead ? C.white : C.purple });
     return;
   }
   if (sel.kind === 'slot' && sel.which !== 'trap' && sel.which !== 'theme') {
@@ -3337,6 +3414,11 @@ function wrapText(parent                , str        , x        , y        , w  
 let storyRun                  = null;
 let storyBusy = false;
 let storyInput                          = null;
+let storyView = 'dashboard';
+let storyChronicleFilter = 'all';
+let storyChronicleRef = null;
+let storyChronicleRaid = null;
+let storyArchiveSel = null;
 const STORY_INPUT = { x: 22, y: 206, w: 296, h: 18 };
 const storyRng = () => Math.random();
 
@@ -3348,6 +3430,13 @@ const STORY_LEAD_SCENES = new Set([
   'report-breach', 'report-worker', 'report-revival', 'hero-fatigue',
   'hero-graft', 'hero-talent', 'hero-title', 'facility-growth', 'facility-repair',
   'echo-deep-current', 'echo-hero-trust', 'echo-worker-memorial', 'echo-graft-oath', 'echo-facility-voice',
+  'heroes-rivalry', 'heroes-friendship', 'heroes-mentor', 'training-classmates', 'training-mentor',
+  'hero-exile-encounter', 'facility-awakening', 'rare-dungeon-memorial', 'rare-living-court', 'rare-returning-company',
+  'hero-graft-full', 'hero-graft-legendary', 'hero-talent-offense', 'hero-talent-defense', 'hero-talent-command',
+  'hero-title-war', 'hero-title-survivor', 'hero-title-command',
+  'echo-merchant-route', 'echo-monster-quarrel', 'echo-rested-shift', 'echo-bone-bed', 'echo-missing-door',
+  'echo-lair-name', 'echo-sign-board', 'echo-stray-monster', 'echo-seal-crack', 'echo-trap-salesman',
+  'echo-fear-answer', 'echo-lost-blueprint', 'echo-captain-letter', 'echo-room-name', 'echo-leftover-mana', 'echo-quiet-night',
 ]);
 
 function queueStoryLead(key, sceneId, source, title, context = {}, dueRaid = S.raidNo) {
@@ -3373,7 +3462,41 @@ function seedExistingFacilityLeads() {
 }
 
 function pendingStoryLead(source, ref) {
-  return availableStoryLeads().find((x) => x.source === source && (ref == null || x.context?.ref === ref)) ?? null;
+  return availableStoryLeads().find((x) => x.source === source && (ref == null || x.context?.ref === ref || x.context?.refs?.includes(ref))) ?? null;
+}
+
+const relationKey = (a, b) => [a, b].sort((x, y) => x - y).join(':');
+function recordHeroRelations(uids) {
+  const heroes = uids.map((uid) => champById(uid)).filter(Boolean);
+  for (let i = 0; i < heroes.length; i++) for (let j = i + 1; j < heroes.length; j++) {
+    const a = heroes[i], b = heroes[j], key = relationKey(a.uid, b.uid);
+    const rel = S.story.relations[key] ?? { a: a.uid, b: b.uid, battles: 0, friendship: 0, rivalry: 0, mentorship: 0, names: [a.name, b.name] };
+    rel.battles++;
+    const bothProud = a.traits.includes('proud') && b.traits.includes('proud');
+    const sameRace = a.race === b.race;
+    const mentor = Math.abs(a.lv - b.lv) >= 4;
+    if (bothProud) rel.rivalry++;
+    else if (mentor) rel.mentorship++;
+    else rel.friendship += sameRace ? 2 : 1;
+    S.story.relations[key] = rel;
+    const context = { ref: a.uid, refs: [a.uid, b.uid], heroARef: a.uid, heroBRef: b.uid, heroA: a.name, heroB: b.name, relationKey: key };
+    if (rel.rivalry === 2) queueStoryLead(`relation:rivalry:${key}`, 'heroes-rivalry', '同僚秘闻', `${a.name}与${b.name}争夺同一场胜利`, context);
+    else if (rel.mentorship === 2) queueStoryLead(`relation:mentor:${key}`, 'heroes-mentor', '同僚秘闻', `${a.name}开始纠正${b.name}的站姿`, { ...context, mentor: a.lv > b.lv ? a.name : b.name, student: a.lv > b.lv ? b.name : a.name });
+    else if (rel.friendship >= 3 && rel.friendship - (sameRace ? 2 : 1) < 3) queueStoryLead(`relation:friendship:${key}`, 'heroes-friendship', '同僚秘闻', `${a.name}与${b.name}共享战后的沉默`, context);
+  }
+}
+
+function queueTrainingRelation(floor, added, existing) {
+  if (!existing || (added.type !== 'hero' && existing.type !== 'hero')) return;
+  const unitOf = (x) => x.type === 'hero' ? champById(x.uid) : instById(x.uid);
+  const nameOf = (x, unit) => x.type === 'hero' ? unit?.name : unit ? instKind(unit).name : '无名学员';
+  const ua = unitOf(existing), ub = unitOf(added);
+  if (!ua || !ub) return;
+  const refs = [existing, added].filter((x) => x.type === 'hero').map((x) => x.uid);
+  const key = [existing.type[0] + existing.uid, added.type[0] + added.uid].sort().join(':');
+  const sceneId = existing.type === 'hero' && added.type === 'hero' ? 'training-classmates' : 'training-mentor';
+  queueStoryLead(`training:${floor}:${key}`, sceneId, '训练秘闻', `${nameOf(existing, ua)}与${nameOf(added, ub)}的共同课程`,
+    { ref: refs[0], refs, floor: floor + 1, heroARef: refs[0], heroBRef: refs[1], studentA: nameOf(existing, ua), studentB: nameOf(added, ub) });
 }
 
 function openStoryLead(id) {
@@ -3392,8 +3515,8 @@ function archiveStoryLead(reply, effects) {
   const at = S.story.leads.findIndex((x) => x.id === id);
   if (at < 0) return null;
   const lead = S.story.leads.splice(at, 1)[0];
-  S.story.archive.unshift({ ...lead, resolvedRaid: S.raidNo, outcome: reply, effects: effects.join('　') });
-  if (S.story.archive.length > 20) S.story.archive.length = 20;
+  const refs = [...new Set([lead.context?.ref, ...(lead.context?.refs ?? [])].filter((x) => typeof x === 'number'))];
+  S.story.archive.unshift({ ...lead, resolvedRaid: S.raidNo, outcome: reply, effects: effects.join('　'), refs, battleRefs: [] });
   return lead;
 }
 
@@ -3405,6 +3528,27 @@ function queueStoryFollowup(lead, followup) {
   const title = spec.title ? fillText(spec.title, storyBridge) : `${lead.title}・后续`;
   return queueStoryLead(`followup:${lead.key}:${spec.sceneId}`, spec.sceneId, spec.source ?? lead.source,
     title, { ...lead.context, priorTitle: lead.title }, S.raidNo + Math.max(1, spec.after ?? 2));
+}
+
+function maybeQueueRareStoryLeads() {
+  const v = S.story.vars;
+  if (Number(v.keptScars || 0) > 0 && Number(v.workerHonor || 0) > 0 && Number(v.heroTrust || 0) > 0) {
+    const heroes = S.champs.slice(0, 2);
+    queueStoryLead('rare:dungeon-memorial', 'rare-dungeon-memorial', '稀有秘闻', '地牢决定记住所有伤口',
+      { ref: heroes[0]?.uid, refs: heroes.map((x) => x.uid), heroARef: heroes[0]?.uid, heroBRef: heroes[1]?.uid,
+        heroA: heroes[0]?.name ?? '一名统领', heroB: heroes[1]?.name ?? '另一名统领' });
+  }
+  if (Number(v.graftIdentity || 0) > 0 && Number(v.livingFacilities || 0) > 0 && Number(v.livingTitles || 0) > 0) {
+    const living = S.floors.findIndex((f) => !!f.utility.persona);
+    const u = utilityAt(living);
+    queueStoryLead('rare:living-court', 'rare-living-court', '稀有秘闻', '会呼吸的地牢召开第一次廷议',
+      { ref: S.champs[0]?.uid, refs: S.champs.slice(0, 3).map((x) => x.uid), heroARef: S.champs[0]?.uid,
+        heroA: S.champs[0]?.name ?? '首席统领', facilityRef: living >= 0 ? `${living}:${u.kind}` : '', facility: u ? facilityName(u) : '地牢本身' });
+  }
+  if (S.story.exiles.length >= 2 && S.reports.filter((r) => !r.win).length >= 2) {
+    queueStoryLead('rare:returning-company', 'rare-returning-company', '稀有秘闻', '被遣退者在入口外列成一队',
+      { exileId: S.story.exiles[0].id, hero: S.story.exiles[0].champ.name, companion: S.story.exiles[1].champ.name });
+  }
 }
 
 const storyBridge              = {
@@ -3522,7 +3666,7 @@ const storyBridge              = {
   },
   addMod(m) {
     S.story.mods = S.story.mods.filter((x) => x.id !== m.id);
-    S.story.mods.push({ ...m });
+    S.story.mods.push({ ...m, originLeadId: storyRun?.leadId ?? null, originSceneId: storyRun?.scene?.id ?? null });
   },
   shiftRaid(n) {
     // 负数=推迟下一波（把当前轮次往回拨），正数=提前
@@ -3542,7 +3686,7 @@ const storyBridge              = {
     return { ok: true, text: `${monKind(m.kind).name} 经验${add > 0 ? '+' : ''}${add}` };
   },
   alterHero(e) {
-    const uid = e.uid ?? storyRun?.context?.ref;
+    const uid = e.uid ?? (e.contextKey ? storyRun?.context?.[e.contextKey] : storyRun?.context?.ref);
     const c = champById(Number(uid));
     if (!c) return { ok: false, text: '' };
     const parts = [];
@@ -3559,7 +3703,23 @@ const storyBridge              = {
     const parts = [];
     if (e.condition) { const before = u.condition; u.condition = Math.max(0, Math.min(100, before + Math.round(e.condition))); if (u.condition !== before) parts.push(`耐久${u.condition - before > 0 ? '+' : ''}${u.condition - before}`); }
     if (e.repair) { const before = S.dungeon.repairPoints; S.dungeon.repairPoints = Math.max(0, Math.min(60, before + Math.round(e.repair))); if (S.dungeon.repairPoints !== before) parts.push(`维修点${S.dungeon.repairPoints - before > 0 ? '+' : ''}${S.dungeon.repairPoints - before}`); }
+    if (e.persona && FACILITY_PERSONAS[e.persona]) { u.persona = e.persona; parts.push(`性格→${FACILITY_PERSONAS[e.persona].name}`); }
+    if (e.nickname) { u.nickname = String(e.nickname).slice(0, 12); parts.push(`昵称→${u.nickname}`); }
+    if (parts.length) addFacilityHistory(floor, 'story', parts.join('，'));
     return { ok: parts.length > 0, text: parts.length ? `${utilityDef(u).name}：${parts.join('，')}` : '' };
+  },
+  resolveExile(e) {
+    const id = Number(e.id ?? storyRun?.context?.exileId);
+    const at = S.story.exiles.findIndex((x) => x.id === id);
+    if (at < 0) return { ok: false, text: '' };
+    const exile = S.story.exiles[at];
+    if (e.action !== 'return') return { ok: false, text: '' };
+    if (S.champs.length >= CHAMP_CAP) return { ok: false, text: `${exile.champ.name}回到门前，但英雄名册已满` };
+    S.champs.push(exile.champ);
+    S.champPot[exile.champ.uid] = exile.potential ?? 1;
+    S.story.exiles.splice(at, 1);
+    heroSel = exile.champ.uid;
+    return { ok: true, text: `${exile.champ.name}带着流亡经历重新加入麾下` };
   },
 };
 
@@ -3631,7 +3791,11 @@ async function drawStoryScene() {
     const sc = await requestScene(storyBridge, storySnapshot(), storyRng);
     if (!sc) { say('地牢今夜无事发生'); return; }
     S.story.credits -= 1;
-    openScene(sc, true);
+    const id = S.story.leadNext++;
+    const lead = { id, key: `random:${S.raidNo}:${sc.id}:${id}`, sceneId: sc.id, source: '无主传闻',
+      title: cut(fillText(sc.text, storyBridge).replace(/\n/g, ' '), 18), context: {}, raidNo: S.raidNo, dueRaid: S.raidNo };
+    S.story.leads.unshift(lead);
+    openStoryLead(id);
   } finally {
     storyBusy = false;
     persist();
@@ -3666,6 +3830,7 @@ function resolveExit(reply        , effects                      , next         
   else {
     const completedLead = archiveStoryLead(filledReply, lines);
     queueStoryFollowup(completedLead, followup);
+    maybeQueueRareStoryLeads();
     storyRun.scene = { ...storyRun.scene, choices: undefined, input: undefined };
     storyRun.pending = 'done';
     syncStoryInput();
@@ -3690,7 +3855,7 @@ function submitStoryInput() {
   const rule = spec.rules.find((r) => r.keys.some((k) => raw.includes(k)));
   if (storyInput) storyInput.value = '';
   const ex = rule ?? spec.fallback;
-  resolveExit(ex.reply, ex.effects, ex.next, ex.followup);
+  resolveExit(ex.reply, ex.effects, ex.next, ex.followup ?? storyRun?.scene.followup);
 }
 
 function ensureStoryInput() {
@@ -3732,8 +3897,84 @@ function positionStoryInput() {
   positionDomInput(storyInput, STORY_INPUT);
 }
 
+function openChronicle(filter = 'all', ref = null, raid = null) {
+  storyRun = null;
+  removeStoryInput();
+  storyView = 'chronicle';
+  storyChronicleFilter = filter;
+  storyChronicleRef = ref;
+  storyChronicleRaid = raid;
+  storyArchiveSel = null;
+  tab = 'story';
+  playSfx('tab');
+  render();
+}
+
+function chronicleKind(item) {
+  if (item.source === '稀有秘闻') return 'rare';
+  if (item.source?.includes('设施')) return 'facility';
+  if (item.source?.includes('战后')) return 'battle';
+  if (item.source?.includes('英雄') || item.source?.includes('同僚') || item.source?.includes('训练') || item.source?.includes('流亡')) return 'hero';
+  return 'other';
+}
+
+function chronicleItems() {
+  return S.story.archive.filter((item) => {
+    if (storyChronicleFilter !== 'all' && chronicleKind(item) !== storyChronicleFilter) return false;
+    if (storyChronicleRef != null) {
+      const refs = [item.context?.ref, ...(item.context?.refs ?? []), item.context?.facilityRef].filter((x) => x != null);
+      if (!refs.some((x) => String(x) === String(storyChronicleRef))) return false;
+    }
+    if (storyChronicleRaid != null && item.resolvedRaid !== storyChronicleRaid && item.raidNo !== storyChronicleRaid && !item.battleRefs?.includes(storyChronicleRaid)) return false;
+    return true;
+  });
+}
+
+function drawChronicle(g) {
+  label(uiLayer, '地牢编年史', 16, 42, 12, C.gold);
+  label(uiLayer, `${S.story.archive.length}条永久记录`, 120, 42, 10, C.stoneLit);
+  button(g, uiLayer, hits, 398, 40, 62, 16, '返回线索', () => { storyView = 'dashboard'; storyChronicleRef = null; storyChronicleRaid = null; render(); }, { size: 10, border: C.bone });
+  const filters = [['all', '全部'], ['hero', '英雄'], ['facility', '设施'], ['battle', '战后'], ['rare', '稀有']];
+  filters.forEach(([id, name], i) => button(g, uiLayer, hits, 16 + i * 60, 60, 56, 16, name, () => {
+    storyChronicleFilter = id; storyChronicleRef = null; storyChronicleRaid = null; storyArchiveSel = null; pageState['chronicle-list'] = 0; render();
+  }, { size: 9, fill: storyChronicleFilter === id ? C.purpleDark : C.ink, border: storyChronicleFilter === id ? C.purple : C.stoneLit, color: C.white }));
+  if (storyChronicleRef != null || storyChronicleRaid != null) {
+    const scope = storyChronicleRaid != null ? `第${storyChronicleRaid}轮` : '当前对象';
+    button(g, uiLayer, hits, 320, 60, 140, 16, `${scope}筛选中・清除`, () => { storyChronicleRef = null; storyChronicleRaid = null; storyArchiveSel = null; render(); },
+      { size: 9, border: C.gold, color: C.gold });
+  }
+  const items = chronicleItems();
+  const pg = paged('chronicle-list', items, 5);
+  panelF(g, uiLayer, 'inset', 16, 80, 210, 150, C.ink);
+  let y = 86;
+  if (!items.length) label(uiLayer, '没有符合条件的记录', 26, y, 10, C.wall);
+  for (const item of pg.view) {
+    const active = storyArchiveSel === item.id;
+    button(g, uiLayer, hits, 22, y, 198, 24, `#${item.resolvedRaid} ${cut(item.title, 14)}`, () => { storyArchiveSel = item.id; render(); },
+      { size: 9, fill: active ? C.purpleDark : C.wall, border: active ? C.purple : C.stoneLit, color: active ? C.white : C.bone });
+    y += 27;
+  }
+  pager(g, 'chronicle-list', pg.pages, 24, 214, 94, '档案 ');
+  panelF(g, uiLayer, 'stone', 236, 80, 228, 150, C.wall);
+  const item = items.find((x) => x.id === storyArchiveSel) ?? items[0];
+  if (!item) { labelC(uiLayer, '选择左侧记录', 350, 140, 11, C.stoneLit); return; }
+  storyArchiveSel = item.id;
+  label(uiLayer, cut(item.title, 18), 246, 88, 11, C.purple);
+  label(uiLayer, `${item.source}・触发#${item.raidNo}・解决#${item.resolvedRaid}`, 246, 104, 9, C.stoneLit);
+  boundedText(uiLayer, item.outcome, 246, 120, 208, 48, 10, C.bone);
+  boundedText(uiLayer, item.effects ? `结果：${item.effects}` : '没有直接数值变化', 246, 170, 208, 24, 9, C.green);
+  const battles = item.battleRefs ?? [];
+  const reportRaid = battles.find((raidNo) => S.reports.some((r) => r.raidNo === raidNo));
+  label(uiLayer, battles.length ? `影响战斗：${battles.map((x) => `#${x}`).join('、')}` : '尚未记录到后续战斗影响', 246, 198, 9, battles.length ? C.gold : C.stoneLit);
+  if (reportRaid != null) button(g, uiLayer, hits, 356, 210, 98, 16, `查看战报 #${reportRaid}`, () => {
+    const at = S.reports.findIndex((r) => r.raidNo === reportRaid);
+    if (at >= 0) { reportIdx = at; tab = 'report'; storyView = 'dashboard'; playSfx('tab'); render(); }
+  }, { size: 9, border: C.gold, color: C.gold });
+}
+
 function pageStory(g               ) {
   if (!storyRun) {
+    if (storyView === 'chronicle') { drawChronicle(g); return; }
     label(uiLayer, '秘闻线索与档案', 20, 42, 12, C.white);
     const readyLeads = availableStoryLeads();
     const dormant = S.story.leads.length - readyLeads.length;
@@ -3766,7 +4007,8 @@ function pageStory(g               ) {
     label(uiLayer, can ? `另有 ${S.story.credits} 次无主传闻可追查` : '无主传闻会在下一场袭击后补充', 20, 194, 11, can ? C.gold : C.wall);
     button(g, uiLayer, hits, 20, 210, 200, 22, storyBusy ? '正在追查…' : '追查无主传闻', () => { void drawStoryScene(); },
       { enabled: can && !storyBusy, fill: C.purpleDark, border: C.purple, color: C.white });
-    label(uiLayer, '具体线索不消耗听取次数', 232, 216, 11, C.stoneLit);
+    label(uiLayer, '具体线索不消耗次数', 232, 216, 10, C.stoneLit);
+    button(g, uiLayer, hits, 356, 210, 100, 22, '打开地牢编年史', () => openChronicle(), { size: 9, border: C.gold, color: C.gold });
     return;
   }
 
@@ -3823,7 +4065,7 @@ function pageStory(g               ) {
       const open = testConds(storyBridge, c.when);
       const bw = 440 / list.length - 6;
       const bx = 20 + i * (bw + 6);
-      button(g, uiLayer, hits, bx, 186, bw, 40, c.label, () => resolveExit(c.reply, c.effects, c.next, c.followup),
+      button(g, uiLayer, hits, bx, 186, bw, 40, c.label, () => resolveExit(c.reply, c.effects, c.next, c.followup ?? sc.followup),
         { size: 12, enabled: open, fill: C.wallLit, border: C.bone, color: C.white });
       if (!open && c.lockText) label(uiLayer, c.lockText, bx + 4, 228, 12, C.red);
     });
@@ -3951,7 +4193,9 @@ function pickTalent(c       , id          ) {
   if (!tier) return;
   if (TALENTS[id].tier !== tier) return;
   c.talents.push(id);
-  queueStoryLead(`hero-talent:${c.uid}:${id}`, 'hero-talent', '英雄秘闻', `${c.name}选择了「${TALENTS[id].name}」`,
+  const td = TALENTS[id].desc;
+  const talentScene = /光环|同房|全体|队友/.test(td) ? 'hero-talent-command' : /生命|防御|治疗|复活|减伤|护盾/.test(td) ? 'hero-talent-defense' : 'hero-talent-offense';
+  queueStoryLead(`hero-talent:${c.uid}:${id}`, talentScene, '英雄秘闻', `${c.name}选择了「${TALENTS[id].name}」`,
     { ref: c.uid, hero: c.name, talent: TALENTS[id].name, talentDesc: TALENTS[id].desc, tier: TALENTS[id].tier });
   playSfx('place');
   persist();
@@ -4020,6 +4264,11 @@ function respecChamp(c       ) {
 }
 
 function dismissChamp(c       ) {
+  const exile = { id: S.story.exileNext++, champ: JSON.parse(JSON.stringify(c)), potential: S.champPot[c.uid] ?? 1, leftRaid: S.raidNo };
+  S.story.exiles.push(exile);
+  queueStoryLead(`exile:${exile.id}`, 'hero-exile-encounter', '流亡传闻', `${c.name}离开后的第二封信`,
+    { exileId: exile.id, hero: c.name, race: champKind(c).name, title: activeTitleOf(c)?.name ?? '无称号', battles: c.battles, kills: c.kills }, S.raidNo + 2);
+  maybeQueueRareStoryLeads();
   S.champs = S.champs.filter((x) => x.uid !== c.uid);
   for (const r of S.rooms) if (r.leader === c.uid) { r.leader = null; r.flank = null; }
   for (const floor of S.floors) floor.utility.trainTargets = floor.utility.trainTargets.filter((x) => !(x.type === 'hero' && x.uid === c.uid));
@@ -4199,8 +4448,11 @@ function drawChampStat(g, c) {
   button(g, uiLayer, hits, 356, 195, 50, 15, `疗伤 ${HEAL_MANA}魔`, () => healChamp(c),
     { size: 10, enabled: wd > 0 && S.mana >= HEAL_MANA, border: wd ? C.red : C.stoneLit, color: wd ? C.white : C.stoneLit });
   const heroLead = pendingStoryLead('英雄秘闻', c.uid);
-  if (heroLead) button(g, uiLayer, hits, 408, 195, 52, 15, '个人秘闻', () => openStoryLead(heroLead.id),
-    { size: 9, fill: C.purpleDark, border: C.purple, color: C.white });
+  const relationLead = pendingStoryLead('同僚秘闻', c.uid) ?? pendingStoryLead('训练秘闻', c.uid);
+  const directLead = heroLead ?? relationLead;
+  button(g, uiLayer, hits, 408, 195, 52, 15, directLead ? (relationLead ? '同僚秘闻' : '个人秘闻') : '秘闻档案', () =>
+    directLead ? openStoryLead(directLead.id) : openChronicle('hero', c.uid),
+  { size: 9, fill: directLead ? C.purpleDark : C.ink, border: C.purple, color: directLead ? C.white : C.purple });
   button(g, uiLayer, hits, 174, 214, 70, 15, '同僚关系', () => sayChem(chem.lines), { size: 10, border: C.purple, color: C.purple });
   button(g, uiLayer, hits, 246, 214, 100, 15, (c.graft ?? []).length ? `全身改造 ${(c.graft ?? []).length}/4` : '全身改造', () => openGraft(c.uid, 'hero'),
     { size: 10, border: (c.graft ?? []).length ? C.gold : C.purple, color: (c.graft ?? []).length ? C.gold : C.white });
@@ -4245,7 +4497,8 @@ function drawChampTitles(g, c) {
       if (activeId === t.id) return;
       c.activeTitle = t.id;
       champTitleExpand = t.id;
-      queueStoryLead(`hero-title:${c.uid}:${t.id}`, 'hero-title', '英雄秘闻', `${c.name}第一次被称作「${t.name}」`,
+      const titleScene = /光环|同房|全体|队友/.test(t.desc) ? 'hero-title-command' : /攻击|击倒|伤害|暴击/.test(t.desc) ? 'hero-title-war' : 'hero-title-survivor';
+      queueStoryLead(`hero-title:${c.uid}:${t.id}`, titleScene, '英雄秘闻', `${c.name}第一次被称作「${t.name}」`,
         { ref: c.uid, hero: c.name, title: t.name, titleDesc: t.desc });
       playSfx('place'); persist(); render();
     }, { size: 11, enabled: activeId !== t.id, fill: C.purpleDark, border: activeId === t.id ? C.gold : C.purple, color: C.white });
@@ -4737,11 +4990,8 @@ function pageReport(g               ) {
   const reportLead = pendingStoryLead('战后线索', r.raidNo);
   if (reportLead) button(g, uiLayer, hits, 252, 40, 74, 18, '战后秘闻', () => openStoryLead(reportLead.id),
     { size: 10, fill: C.purpleDark, border: C.purple, color: C.white });
-  else if ((r.storyConsequences?.length ?? 0) || (r.storyEchoes?.length ?? 0)) button(g, uiLayer, hits, 252, 40, 74, 18, '秘闻影响', () => {
-    const active = (r.storyConsequences ?? []).map((x) => `· ${x.name}：${x.summary}`).join('\n');
-    const echoes = (r.storyEchoes ?? []).map((x) => `· ${x.title}：${x.outcome}`).join('\n');
-    openDetailPopup(`#${r.raidNo} 秘闻影响`, `${active ? `本场生效：\n${active}` : ''}${active && echoes ? '\n\n' : ''}${echoes ? `本轮回响：\n${echoes}` : ''}`, C.purple);
-  }, { size: 10, fill: C.ink, border: C.purple, color: C.purple });
+  else if ((r.storyConsequences?.length ?? 0) || (r.storyEchoes?.length ?? 0)) button(g, uiLayer, hits, 252, 40, 74, 18, '追溯秘闻', () =>
+    openChronicle('all', null, r.raidNo), { size: 10, fill: C.ink, border: C.purple, color: C.purple });
   label(uiLayer, `${r.title}：${r.win ? '守住' : '失守'}  封印${r.seal}  ${r.time.toFixed(1)}s`, 8, 64, 12, r.win ? C.green : C.red);
   skullRow(g, 250, 62, r.skulls);
   const prooms = paged(`rep-rooms-${reportIdx}`, r.rooms, 3);
@@ -5229,6 +5479,7 @@ function updateBattleVisuals(dt        ) {
   // 粒子/跳字
   for (let i = parts.length - 1; i >= 0; i--) {
     const p = parts[i];
+    if (!p.s || p.s.destroyed) { parts.splice(i, 1); continue; }
     p.life -= dt;
     p.vy += p.grav * dt;
     p.s.x += p.vx * dt;
@@ -5238,6 +5489,7 @@ function updateBattleVisuals(dt        ) {
   }
   for (let i = floats.length - 1; i >= 0; i--) {
     const f = floats[i];
+    if (!f.t || f.t.destroyed) { floats.splice(i, 1); continue; }
     f.life -= dt;
     f.t.y += f.vy * dt;
     f.t.alpha = Math.max(0, f.life / 0.75);
@@ -5418,6 +5670,7 @@ function finishBattle() {
     S.vault.push(id);
   }
   const newlyResting = tickFatigue(S.champs, deployedChampUids);
+  recordHeroRelations(deployedChampUids);
   if (newlyResting.length) {
     const ids = new Set(newlyResting);
     for (let roomIndex = 0; roomIndex < S.rooms.length; roomIndex++) {
@@ -5456,10 +5709,20 @@ function finishBattle() {
     units, firstCause: r.firstCause, review: r.review ?? [], metrics: r.metrics ?? {}, economy,
     dialogue: (b.dialogue ?? []).map((d) => ({ name: d.name, text: d.text, kind: d.kind, side: d.side, room: d.room, t: d.t })),
     logs: b.log.map((l) => ({ text: l.text, tone: l.tone })),
-    storyConsequences: S.story.mods.map((m) => ({ id: m.id, name: m.name, summary: modSummary(m) })),
+    storyConsequences: S.story.mods.map((m) => ({ id: m.id, name: m.name, summary: modSummary(m), originLeadId: m.originLeadId ?? null })),
     storyEchoes: S.story.archive.filter((x) => x.resolvedRaid === b.raid.no).slice(0, 3)
-      .map((x) => ({ sceneId: x.sceneId, title: x.title, outcome: x.outcome })),
+      .map((x) => ({ id: x.id, sceneId: x.sceneId, title: x.title, outcome: x.outcome })),
   };
+  report.storyRefs = [...new Set([
+    ...report.storyConsequences.map((x) => x.originLeadId), ...report.storyEchoes.map((x) => x.id),
+  ].filter((x) => typeof x === 'number'))];
+  for (const id of report.storyRefs) {
+    const item = S.story.archive.find((x) => x.id === id);
+    if (item) {
+      if (!Array.isArray(item.battleRefs)) item.battleRefs = [];
+      if (!item.battleRefs.includes(b.raid.no)) item.battleRefs.push(b.raid.no);
+    }
+  }
   S.reports.unshift(report);
   if (S.reports.length > 5) S.reports.length = 5;
   reportIdx = 0;
@@ -5655,6 +5918,7 @@ function tick(dt        ) {
   if (screen === 'manage' && parts.length) {
     for (let i = parts.length - 1; i >= 0; i--) {
       const p = parts[i];
+      if (!p.s || p.s.destroyed) { parts.splice(i, 1); continue; }
       p.life -= dt;
       p.vy += p.grav * dt;
       p.s.x += p.vx * dt;
@@ -5772,9 +6036,10 @@ window.__debug = {
   get dungeon() { return { ...S.dungeon, preview: dungeonEconomyPreview(), healingCapacity: healingCapacity() }; },
   devUtility: (floor, kind, level = 1, condition = 100) => {
     if (!S.floors[floor] || !(kind in UTILITY_KINDS)) return null;
-    S.floors[floor].utility = kind === 'none' ? freshUtilityRoom() : {
-      kind, level: Math.max(1, Math.min(3, Math.round(level))), condition: Math.max(0, Math.min(100, Math.round(condition))), workerUid: null, trainTargets: [],
-    };
+    S.floors[floor].utility = freshUtilityRoom({
+      kind, level: kind === 'none' ? 0 : Math.max(1, Math.min(3, Math.round(level))),
+      condition: kind === 'none' ? 100 : Math.max(0, Math.min(100, Math.round(condition))),
+    });
     S.dungeon.healingCharges = healingCapacity(); persist(); render();
     return { ...S.floors[floor].utility };
   },
@@ -5826,6 +6091,14 @@ window.__debug = {
   deployWorker: () => battle ? deployUtilityWorker(battle) : false,
   evacuateWorker: () => battle ? evacuateUtilityWorker(battle) : false,
   startBattle: () => { startBattle(); return screen; },
+  runBattleToEnd: (maxSteps = 20000) => {
+    if (!battle || screen !== 'battle') return null;
+    let steps = 0;
+    while (battle.phase !== 'done' && steps++ < maxSteps) stepBattle(battle, 0.05);
+    consumeEvents();
+    if (battle.phase === 'done' && battle.result) finishBattle();
+    return { screen, steps, result: battle.result };
+  },
   get result() { return battle?.result ?? null; },
   get reports() { return S.reports; },
   get audio() { return audioSnapshot(); },
@@ -5971,6 +6244,7 @@ window.__debug = {
       vars: { ...S.story.vars }, mods: S.story.mods.map((m) => ({ ...m, summary: modSummary(m) })),
       unlocks: [...S.story.unlocks], seen: [...S.story.seen], credits: S.story.credits,
       leads: S.story.leads.map((x) => ({ ...x, context: { ...x.context } })), archive: S.story.archive.map((x) => ({ ...x })),
+      relations: { ...S.story.relations }, exiles: S.story.exiles.map((x) => ({ ...x })),
       provider: getProvider().id, folded: battleMods(),
     };
   },
@@ -5987,6 +6261,9 @@ window.__debug = {
   },
   storyDraw: async () => { await drawStoryScene(); return window.__debug.storyScene; },
   storyLeadOpen: (id        ) => openStoryLead(id),
+  storyChronicle: (filter = 'all', ref = null, raid = null) => { openChronicle(filter, ref, raid); return chronicleItems().map((x) => x.id); },
+  devHeroRelations: (uids) => { recordHeroRelations(uids); persist(); render(); return { ...S.story.relations }; },
+  devDismissHero: (uid) => { const c = champById(uid); if (c) dismissChamp(c); return S.story.exiles.map((x) => x.uid); },
   storyLeadQueue: (key        , sceneId        , source = '测试线索', title = '测试秘闻', context = {}) => {
     const lead = queueStoryLead(key, sceneId, source, title, context); persist(); render(); return lead;
   },
@@ -5994,7 +6271,7 @@ window.__debug = {
   storyChoose: (i        ) => {
     const c = storyRun?.scene.choices?.[i];
     if (!c || !testConds(storyBridge, c.when)) return false;
-    resolveExit(c.reply, c.effects, c.next, c.followup);
+    resolveExit(c.reply, c.effects, c.next, c.followup ?? storyRun?.scene.followup);
     return true;
   },
   storySay: (text        ) => { if (storyInput) storyInput.value = text; submitStoryInput(); return true; },
