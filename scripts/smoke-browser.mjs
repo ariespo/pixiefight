@@ -214,31 +214,53 @@ try {
       assert(await page.evaluate(() => __debug.newGameConfirm), 'Landscape new-game button did not receive the click.');
       await page.evaluate(() => __debug.cancelNewGame());
     } else {
-      assert(metrics.portraitLayout?.top >= metrics.portraitContentBottom - 1, 'Portrait controls overlap the game view.');
-      assert(metrics.portraitLayout?.pane === 0 && metrics.portraitLayout?.logicalLeft === 0 && metrics.portraitLayout?.logicalWidth === 480,
-        'Portrait overview does not expose the complete game width.');
-      assert(metrics.scale >= (viewport.width - 12) / 480 - 0.02, 'Portrait overview did not fit the complete game width.');
-      assert(metrics.portraitLayout?.contentTop >= 35, 'Portrait game composition was not vertically centered.');
+      assert(metrics.nativePortrait && metrics.portraitLayout?.native && !metrics.rootVisible, 'Portrait mode still renders the scaled desktop page.');
+      assert(metrics.portraitLayout?.contentTop >= 56 && metrics.portraitLayout?.contentBottom < metrics.portraitLayout?.primaryY,
+        'Native portrait content does not occupy its dedicated vertical region.');
       assert(metrics.portraitLayout?.bottom <= viewport.height, 'Portrait console exceeds the visible viewport.');
-      assert(metrics.portraitLayout?.actionY + 38 <= viewport.height, 'Portrait controls exceed the visible viewport.');
       const dungeonX = metrics.portraitLayout.margin + metrics.portraitLayout.buttonWidth + metrics.portraitLayout.gap + metrics.portraitLayout.buttonWidth / 2;
       await page.mouse.click(dungeonX, metrics.portraitLayout.tabTop + 19);
       assert(await page.evaluate(() => __debug.currentTab === 'dungeon'), 'Portrait tab navigation did not receive the click.');
-      const overviewScale = metrics.scale;
-      await page.mouse.click(metrics.portraitLayout.margin + (metrics.portraitLayout.paneWidth + metrics.portraitLayout.gap) * 2 + metrics.portraitLayout.paneWidth / 2, metrics.portraitLayout.paneY + 18);
-      await page.waitForTimeout(100);
-      const focused = await page.evaluate(() => __debug.viewport());
-      assert(focused.portraitLayout.pane === 2 && focused.portraitLayout.logicalLeft === 240 && focused.portraitLayout.logicalWidth === 240,
-        'Portrait right-column control did not expose the complete right half.');
-      assert(focused.scale > overviewScale * 1.8, 'Portrait focused column was not meaningfully enlarged.');
-      await page.mouse.click(metrics.portraitLayout.margin + metrics.portraitLayout.paneWidth / 2, focused.portraitLayout.paneY + 18);
-      await page.waitForTimeout(100);
-      assert((await page.evaluate(() => __debug.viewport())).portraitLayout.pane === 0, 'Portrait overview control did not restore the complete page.');
-      await page.mouse.click(metrics.portraitLayout.newX + metrics.portraitLayout.utilityWidth / 2, metrics.portraitLayout.newY + 19);
+      const dungeonMetrics = await page.evaluate(() => __debug.viewport());
+      await page.mouse.click(dungeonMetrics.portraitLayout.menuButton.x + dungeonMetrics.portraitLayout.menuButton.w / 2,
+        dungeonMetrics.portraitLayout.menuButton.y + dungeonMetrics.portraitLayout.menuButton.h / 2);
+      const menuMetrics = await page.evaluate(() => __debug.viewport());
+      assert(menuMetrics.portraitLayout.menuOpen && menuMetrics.portraitLayout.menuNew, 'Portrait system menu did not open.');
+      await page.mouse.click(menuMetrics.portraitLayout.menuNew.x + menuMetrics.portraitLayout.menuNew.w / 2,
+        menuMetrics.portraitLayout.menuNew.y + menuMetrics.portraitLayout.menuNew.h / 2);
       assert(await page.evaluate(() => __debug.newGameConfirm), 'Portrait new-game button did not receive the click.');
       await page.evaluate(() => __debug.cancelNewGame());
+      const closeMetrics = await page.evaluate(() => __debug.viewport());
+      await page.mouse.click(closeMetrics.portraitLayout.menuButton.x + closeMetrics.portraitLayout.menuButton.w / 2,
+        closeMetrics.portraitLayout.menuButton.y + closeMetrics.portraitLayout.menuButton.h / 2);
     }
   }
+
+  // Native portrait onboarding must be playable without exposing or clicking the hidden desktop canvas.
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => localStorage.removeItem('yqh-save-v2'));
+  await page.reload();
+  await page.waitForFunction(() => window.__gpReady && window.__debug?.viewport()?.nativePortrait);
+  const clickPortraitAction = async (name) => {
+    const rect = await page.evaluate((key) => __debug.viewport().portraitActions[key] ?? null, name);
+    assert(rect, `Missing native portrait action: ${name}`);
+    await page.mouse.click(rect.x + rect.w / 2, rect.y + rect.h / 2);
+    await page.waitForTimeout(80);
+  };
+  await clickPortraitAction('nav-mob');
+  await clickPortraitAction('recruit-slime');
+  await clickPortraitAction('recruit-archer');
+  await clickPortraitAction('nav-dungeon');
+  const portraitUnits = await page.evaluate(() => ({
+    slime: __debug.monsters.find((unit) => unit.kind === 'slime')?.uid,
+    archer: __debug.monsters.find((unit) => unit.kind === 'archer')?.uid,
+  }));
+  await clickPortraitAction(`deploy-front-${portraitUnits.slime}`);
+  await clickPortraitAction(`deploy-back-${portraitUnits.archer}`);
+  await clickPortraitAction('nav-throne');
+  assert(await page.evaluate(() => __debug.progression.deploymentReady && __debug.progression.tutorialStep >= 6), 'Native portrait deployment did not complete the tutorial state.');
+  await clickPortraitAction('primary');
+  assert(await page.evaluate(() => __debug.screen === 'battle' && __debug.battle?.heroesAlive === 1), 'Native portrait flow did not start the one-enemy teaching battle.');
 
   assert(errors.length === 0, `Browser errors:\n${errors.join('\n')}`);
   console.log('Browser smoke passed: boot, legacy save, story/facility flows, battle/report links, constrained text, landscape touch targets and portrait controls.');
