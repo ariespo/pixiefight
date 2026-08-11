@@ -80,7 +80,7 @@
 
 ## 仓库约定
 
-- 后续功能开发默认在长期分支 `codex/yongzhe-qusi` 提交与部署；`main` 保留为分支建立时的稳定版本，只有明确要求合并时才回写。
+- 后续功能开发默认在长期分支 `codex/yongzhe-qusi` 提交，并部署到 Vercel 项目 `klymds-projects/pixiefight`（生产域名 `pixiefight.vercel.app`）；`main` 保留为分支建立时的稳定版本，只有明确要求合并时才回写。
 - 当前入口只使用 `index.html` 和 `game.js`；历史编号副本已删除，版本回溯统一使用 Git。
 - 正式图片与音频资源统一放在 `assets/`；根目录测试截图和 Playwright 临时截图不纳入版本控制。
 - 实现计划的复选框代表当前代码完成状态，不再仅代表最初编写计划时的状态。
