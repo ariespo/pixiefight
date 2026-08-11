@@ -52,6 +52,9 @@ try {
       chronicle: '门轴响了第一声，守军便开始计算抚恤。\n\n战斗结束时，账本比剑士完整。', highlights: ['所有数字仍由原始战报作证。'] };
     else if (prompt.includes('地牢编年史作者')) content = { who: '旧档案员', text: '旧账从柜底爬出来，准确叫出了当事人的名字。',
       choices: [{ index: 0, label: '照旧办理', reply: '印章落下，原有效果一项不少。' }] };
+    else if (prompt.includes('重构一名英雄档案')) content = { personalityName: '账簿式冷静',
+      personalityDesc: '越危险越先核对伤亡与欠款，仿佛死亡只是一张填错栏目的表。',
+      backgroundName: '欠薪墓园', backgroundStory: '他曾替一座墓园守夜，领到的薪水只有逝者留下的道歉。后来账本自行补上了地牢地址，他便带着旧钥匙来讨一份不会拖欠的差事。' };
     else content = { name: '试作毒躯', word: '毒', desc: '模型选择链路测试。', look: 'rock', stats: { hp: 60, atk: 4, def: 1, spd: 0 }, powers: ['poisonSkill'] };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }) });
   });
@@ -224,6 +227,7 @@ try {
     __debug.giveResources(20000, 20000);
     const heroA = __debug.devChamp('lich', 8, []);
     const heroB = __debug.devChamp('lich', 2, []);
+    const optimizedLore = await __debug.heroLoreOptimize(heroA);
     __debug.devHeroRelations([heroA, heroB]);
     __debug.devHeroRelations([heroA, heroB]);
     const relationLead = __debug.story.leads.find((x) => x.sceneId === 'heroes-mentor');
@@ -275,12 +279,14 @@ try {
     const nextRoundUpgrade = __debug.devUpgradeUtility(1);
     const facilityActionLock = built.level === 1 && blockedUpgrade.level === 1 && nextRoundUpgrade.level === 2;
     const audit = __debug.uiBounds();
-    return { relationLead: !!relationLead, sameSubjectBlocked, facilityActionLock, facility, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
+    return { relationLead: !!relationLead, sameSubjectBlocked, optimizedLore, facilityActionLock, facility, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
       battleDone: battleRun?.screen === 'result', facilityVisual, returnAdvanced, reportLinked: report?.storyRefs?.includes(archive?.id) && linkedArchive?.battleRefs?.includes(report.raidNo),
       exileLead: !!exileLead, exiles: __debug.story.exiles.length, violations: audit.violations };
   });
   assert(result.relationLead, 'Multi-hero relationship lead was not generated.');
   assert(result.sameSubjectBlocked, 'The same hero generated more than one lead in a single raid.');
+  assert(result.optimizedLore?.personalityName === '账簿式冷静' && result.optimizedLore?.backgroundName === '欠薪墓园',
+    'AI hero archive reconstruction did not persist its sanitized result.');
   assert(result.facilityActionLock, 'Facility build/upgrade was not limited to one action per raid.');
   assert(result.facility.persona === 'scarred' && result.facility.nickname, 'Facility personality did not awaken after repeated damage.');
   assert(result.archive && result.chronicle, 'Story archive or hero chronicle filtering failed.');

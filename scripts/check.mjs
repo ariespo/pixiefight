@@ -34,7 +34,7 @@ for (const provider of ['openai', 'anthropic', 'deepseek', 'glm', 'kimi', 'custo
   if (!llmSource.includes(`id: '${provider}'`)) throw new Error(`Missing AI provider preset: ${provider}`);
 }
 if (!llmSource.includes("endpoint(clean.baseUrl, 'models')")) throw new Error('AI model refresh endpoint is missing.');
-for (const api of ['requestBattleDialogue', 'requestLiteraryReport', 'requestContextStory', 'requestPart', 'requestAffix']) {
+for (const api of ['requestBattleDialogue', 'requestLiteraryReport', 'requestContextStory', 'requestHeroLore', 'requestPart', 'requestAffix']) {
   if (!llmSource.includes(`export async function ${api}`)) throw new Error(`Missing AI generation contract: ${api}`);
 }
 const setBody = source.match(/const STORY_LEAD_SCENES = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? '';

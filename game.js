@@ -8,7 +8,7 @@ import { createBattle, stepBattle, ROOM_W, affixText, actionProgress, deployUtil
 import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, AFFIX_BUDGET, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, clampAffixDraft, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, legendaryPartCount, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
                                                                                                                           
 import { AI_PRESETS, getBackend, hasBackend, llmStatus, loadCfg, loadMode, normalizeBaseUrl, presetById, refreshModels,
-  requestAffix, requestBattleDialogue, requestContextStory, requestLiteraryReport, requestPart,
+  requestAffix, requestBattleDialogue, requestContextStory, requestHeroLore, requestLiteraryReport, requestPart,
   restoreBackend, saveCfg, saveMode, setBackend, requestScene as llmScene } from './llm.js';
                                         
                                            
@@ -373,6 +373,15 @@ function sanitizeSave() {
     c.lawMarks = Array.isArray(c.lawMarks) ? [...new Set(c.lawMarks.filter((x) => x in LAW_AUDIT_TEXT))] : [];
     c.traits = (Array.isArray(c.traits) ? c.traits : []).filter((t) => t in TRAITS).slice(0, 2);
     c.talents = (Array.isArray(c.talents) ? c.talents : []).filter((t) => t in TALENTS).slice(0, talentSlots(c));
+    const lore = c.aiLore;
+    if (lore && typeof lore === 'object' && ['personalityName', 'personalityDesc', 'backgroundName', 'backgroundStory']
+      .every((key) => typeof lore[key] === 'string' && lore[key].trim())) {
+      c.aiLore = {
+        personalityName: lore.personalityName.trim().slice(0, 8), personalityDesc: lore.personalityDesc.trim().slice(0, 140),
+        backgroundName: lore.backgroundName.trim().slice(0, 14), backgroundStory: lore.backgroundStory.trim().slice(0, 360),
+        via: String(lore.via ?? 'AI').slice(0, 80), updatedRaid: Math.max(1, Math.round(lore.updatedRaid || 1)),
+      };
+    } else delete c.aiLore;
     // 英雄可改造全身四部位；清除旧档中的无效件和重复部位。
     if (Array.isArray(c.graft)) {
       const seen = new Set();
@@ -1288,9 +1297,57 @@ let toast = { text: '', t: 0 };
 let endingT = 0;
 let pendingResultRaid = 0;
 let battlePrepBusy = false;
+let heroLoreBusyUid = null;
 const battleDialogueCache = new Map();
 
 function say(text        ) { toast = { text, t: 2.2 }; }
+
+function heroLoreOf(c) {
+  const personality = personalityById(c.personality), background = backgroundById(c.background);
+  const ai = c.aiLore;
+  return ai?.personalityName && ai?.personalityDesc && ai?.backgroundName && ai?.backgroundStory
+    ? { personalityName: ai.personalityName, personalityDesc: ai.personalityDesc,
+      backgroundName: ai.backgroundName, backgroundStory: ai.backgroundStory, via: ai.via ?? 'AI' }
+    : { personalityName: personality.name, personalityDesc: personality.desc,
+      backgroundName: background.name, backgroundStory: background.story, via: '' };
+}
+
+function heroLoreSnapshot(c) {
+  const base = heroLoreOf(c), kind = champKind(c);
+  return {
+    name: c.name, race: kind.name, level: c.lv, potential: POT_NAME[S.champPot[c.uid] ?? c.potential ?? 0],
+    traits: c.traits.map((id) => ({ name: TRAITS[id]?.name, description: TRAITS[id]?.desc })).filter((item) => item.name),
+    title: titleOf(c)?.name ?? '', battles: c.battles, kills: c.kills, wounds: c.wounds ?? 0,
+    restTurns: c.restTurns ?? 0, oldPersonality: `${base.personalityName}：${base.personalityDesc}`,
+    oldBackground: `${base.backgroundName}：${base.backgroundStory}`,
+    history: S.story.archive.filter((item) => item.refs?.includes(c.uid) || item.context?.ref === c.uid)
+      .slice(0, 6).map((item) => ({ title: item.title, outcome: item.outcome ?? item.summary, raid: item.resolvedRaid })),
+  };
+}
+
+async function optimizeHeroLore(c) {
+  if (!c?.uid || heroLoreBusyUid != null) return false;
+  if (!hasBackend()) { say('请先在设置中接入并选择 AI 模型'); return false; }
+  heroLoreBusyUid = c.uid;
+  say(`AI 正在重构${c.name}的档案…`);
+  render();
+  try {
+    const result = await requestHeroLore(heroLoreSnapshot(c));
+    const live = champById(c.uid);
+    if (!result || !live) { say(llmStatus().note || 'AI 没有交回有效档案'); return false; }
+    live.aiLore = { ...result.lore, via: result.via, updatedRaid: S.raidNo };
+    persist();
+    playSfx('tab');
+    say(`${live.name}的档案已由 AI 重构`);
+    return true;
+  } catch (error) {
+    say(error?.message || 'AI 档案重构失败');
+    return false;
+  } finally {
+    heroLoreBusyUid = null;
+    render();
+  }
+}
 
 function aiGenerationEnabled() {
   const mode = loadMode();
@@ -1319,7 +1376,7 @@ function battleDialogueSnapshot(raid) {
       const kind = champKind(champ), stats = statOf(champ);
       add({ key: `mon:${champ.name}`, side: '地牢英雄', name: champ.name, kind: kind.name, level: champ.lv,
         position: `${floor + 1}层统领`, skill: kind.skill, title: titleOf(champ)?.name ?? '',
-        traits: champ.traits.map((id) => TRAITS[id]?.name).filter(Boolean), personality: personalityById(champ.personality)?.name ?? '',
+        traits: champ.traits.map((id) => TRAITS[id]?.name).filter(Boolean), personality: heroLoreOf(champ).personalityName,
         stats: { hp: stats.hp, atk: stats.atk, def: stats.def, thorns: stats.eff?.thorns ?? 0 } });
     }
   });
@@ -2669,7 +2726,7 @@ function openAISettings() {
   card.style.cssText = 'width:min(560px,96vw);max-height:calc(100vh - 24px);overflow:auto;box-sizing:border-box;padding:18px;border:3px solid #8f6fc4;box-shadow:0 0 0 3px #21172d,0 12px 40px #000;background:#191423;image-rendering:pixelated;';
   card.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">
-      <div><div style="font-size:20px;color:#e2bd64">游戏设置・AI 接入</div><div style="margin-top:4px;font-size:12px;color:#918aa0">用于秘闻、部件与词缀创作</div></div>
+      <div><div style="font-size:20px;color:#e2bd64">游戏设置・AI 接入</div><div style="margin-top:4px;font-size:12px;color:#918aa0">用于战报、秘闻、英雄档案与工坊创作</div></div>
       <button data-ai="close" style="width:42px;height:34px">关闭</button>
     </div>
     <label>服务商预设<select data-ai="provider"></select></label>
@@ -3958,6 +4015,24 @@ function drawPortraitHeroTraits(x, y, w, h, c) {
   void cost;
 }
 
+function drawPortraitHeroLore(x, y, w, h, c) {
+  const lore = heroLoreOf(c), busy = heroLoreBusyUid === c.uid;
+  panelF(portraitGfx, portraitLayer, 'stone', x + 8, y + 2, w - 16, 100, C.wall);
+  label(portraitLayer, `性格・${lore.personalityName}`, x + 20, y + 13, 15, C.purple);
+  boundedText(portraitLayer, lore.personalityDesc, x + 20, y + 40, w - 40, 50, 13, C.bone);
+  portraitHits.add(x + 8, y + 2, w - 16, 100,
+    () => openDetailPopup(`性格・${lore.personalityName}`, lore.personalityDesc, C.purple));
+  const bgH = Math.max(100, h - 160);
+  panelF(portraitGfx, portraitLayer, 'gold', x + 8, y + 110, w - 16, bgH, C.wall);
+  label(portraitLayer, `背景・${lore.backgroundName}`, x + 20, y + 121, 15, C.gold);
+  boundedText(portraitLayer, lore.backgroundStory, x + 20, y + 148, w - 40, bgH - 40, 13, C.bone);
+  portraitHits.add(x + 8, y + 110, w - 16, bgH,
+    () => openDetailPopup(`背景故事・${lore.backgroundName}`, lore.backgroundStory, C.gold));
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + h - 44, w - 16, 40,
+    busy ? 'AI 正在重构档案…' : lore.via ? 'AI 再次重构优化' : 'AI 来重构优化', () => void optimizeHeroLore(c),
+    { size: 14, enabled: hasBackend() && heroLoreBusyUid == null, fill: C.purpleDark, border: C.purple, color: C.white });
+}
+
 function drawPortraitHeroGear(x, y, w, h, c) {
   const slotW = Math.floor((w - 28) / 3);
   GEAR_SLOTS.forEach((slot, i) => {
@@ -4027,13 +4102,14 @@ function drawPortraitHeroDetail(x, y, w, h, c) {
   portraitActionMap.heroRosterBack = { x: x + 8, y: y + 2, w: 68, h: 36 };
   portraitLayer.addChild(portraitEffect(sprite(champKind(c).tex, x + 104, y + 40, 34), c.lv >= CHAMP_LV_CAP, true, c.uid));
   label(portraitLayer, `${c.name}　Lv${c.lv}　资质${POT_NAME[S.champPot[c.uid] ?? c.potential ?? 0]}`, x + 128, y + 11, 15, C.gold);
-  const sections = [['status', '状态'], ['traits', '特质'], ['gear', '装备'], ['talent', '专精'], ['titles', '称号']];
-  const sw = Math.floor((w - 16 - 4 * 5) / 5);
+  const sections = [['status', '状态'], ['traits', '特质'], ['lore', '档案'], ['gear', '装备'], ['talent', '专精'], ['titles', '称号']];
+  const sw = Math.floor((w - 16 - 5 * 5) / 6);
   sections.forEach(([id, name], i) => button(portraitGfx, portraitLayer, portraitHits, x + 8 + i * (sw + 5), y + 50, sw, 34, name, () => { portraitHeroSection = id; render(); },
     { size: 12, fill: portraitHeroSection === id ? C.wallLit : C.wall, border: portraitHeroSection === id ? C.gold : C.stoneLit, color: C.white }));
   const bodyY = y + 92, bodyH = h - 92;
   if (portraitHeroSection === 'status') drawPortraitHeroStatus(x, bodyY, w, bodyH, c);
   else if (portraitHeroSection === 'traits') drawPortraitHeroTraits(x, bodyY, w, bodyH, c);
+  else if (portraitHeroSection === 'lore') drawPortraitHeroLore(x, bodyY, w, bodyH, c);
   else if (portraitHeroSection === 'gear') drawPortraitHeroGear(x, bodyY, w, bodyH, c);
   else if (portraitHeroSection === 'talent') drawPortraitHeroTalent(x, bodyY, w, bodyH, c);
   else drawPortraitHeroTitles(x, bodyY, w, bodyH, c);
@@ -5262,7 +5338,8 @@ function contextualStorySnapshot(lead, sc) {
   const heroIds = subjects.filter((token) => token.startsWith('hero:')).map((token) => Number(token.slice(5))).filter(Number.isFinite);
   const heroes = heroIds.map(champById).filter(Boolean).map((champ) => ({
     name: champ.name, race: champKind(champ).name, level: champ.lv, title: titleOf(champ)?.name ?? '',
-    personality: personalityById(champ.personality)?.name ?? '', traits: champ.traits.map((id) => TRAITS[id]?.name).filter(Boolean),
+    personality: heroLoreOf(champ).personalityName, background: heroLoreOf(champ).backgroundName,
+    traits: champ.traits.map((id) => TRAITS[id]?.name).filter(Boolean),
     battles: champ.battles, kills: champ.kills, wounds: champ.wounds ?? 0, restTurns: champ.restTurns ?? 0,
   }));
   const facilityRefs = subjects.filter((token) => token.startsWith('facility:')).map((token) => token.slice(9));
@@ -6458,15 +6535,16 @@ function drawChampInfo(g, c) {
   }
 
   // 右列：英雄档案。完整背景可点击查看，避免和机制说明抢高度。
-  const personality = personalityById(c.personality);
-  const background = backgroundById(c.background);
+  const lore = heroLoreOf(c);
   const loreY = Math.min(Math.max(my + 4, 150), 174);
   label(uiLayer, '英雄档案', 320, loreY, 12, C.gold);
-  button(g, uiLayer, hits, 320, loreY + 15, 140, 16, `性格・${personality.name}`,
-    () => openDetailPopup(`性格・${personality.name}`, personality.desc, C.purple),
+  button(g, uiLayer, hits, 406, loreY - 2, 54, 15, heroLoreBusyUid === c.uid ? '重构中…' : lore.via ? 'AI再优化' : 'AI优化',
+    () => void optimizeHeroLore(c), { size: 9, enabled: hasBackend() && heroLoreBusyUid == null, fill: C.purpleDark, border: C.purple, color: C.white });
+  button(g, uiLayer, hits, 320, loreY + 15, 140, 16, `性格・${lore.personalityName}`,
+    () => openDetailPopup(`性格・${lore.personalityName}`, lore.personalityDesc, C.purple),
     { size: 11, fill: C.ink, border: C.purpleDark, color: C.purple });
-  button(g, uiLayer, hits, 320, loreY + 34, 140, 16, `背景・${background.name}`,
-    () => openDetailPopup(`背景故事・${background.name}`, background.story, C.gold),
+  button(g, uiLayer, hits, 320, loreY + 34, 140, 16, `背景・${lore.backgroundName}`,
+    () => openDetailPopup(`背景故事・${lore.backgroundName}`, lore.backgroundStory, C.gold),
     { size: 11, fill: C.ink, border: C.goldDark, color: C.gold });
 }
 
@@ -8316,6 +8394,12 @@ window.__debug = {
     c.restTurns = Math.max(0, Math.min(HERO_REST_ROUNDS, Math.round(restTurns || 0)));
     persist(); render();
     return { sorties: c.sorties, restTurns: c.restTurns };
+  },
+  heroLoreOptimize: async (uid) => {
+    const c = champById(uid);
+    if (!c) return null;
+    await optimizeHeroLore(c);
+    return champById(uid)?.aiLore ?? null;
   },
   devRest: (uid        ) => { const c = champById(uid); if (c) restChamp(c); return c ? c.restTurns : -1; },
   devRecruitChamp: (i = 0) => { const c = S.cands[i]; if (c) recruitChamp(c); return S.champs.length; },

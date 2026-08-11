@@ -344,6 +344,34 @@ export async function requestAffix(cat         , brief        , snap            
   return draft ? { draft, via: backend?.name ?? 'llm' } : null;
 }
 
+// ---------- 英雄档案重构 ----------
+export function heroLorePrompt(snap) {
+  return [
+    '你为中文像素风地牢经营游戏《勇者去死！》重构一名英雄档案。只输出 JSON，不要解释。',
+    '根据种族、姓名、特质、称号、战绩、旧性格和旧背景，写出彼此呼应且专属于该英雄的性格与背景。',
+    '保持地牢守方视角与克制的黑色幽默；不得改变英雄数值、特质、称号、经历或其他事实。',
+    'personalityName 2至4个汉字，personalityDesc 30至70字；backgroundName 2至7个汉字，backgroundStory 80至180字。',
+    `<英雄档案>${JSON.stringify(snap)}</英雄档案>`,
+    '输出格式：{"personalityName":"性格名","personalityDesc":"性格说明","backgroundName":"背景名","backgroundStory":"背景故事"}',
+  ].join('\n');
+}
+
+export function sanitizeHeroLore(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const personalityName = cleanLine(raw.personalityName, 8);
+  const personalityDesc = String(raw.personalityDesc ?? '').trim().slice(0, 140);
+  const backgroundName = cleanLine(raw.backgroundName, 14);
+  const backgroundStory = String(raw.backgroundStory ?? '').trim().slice(0, 360);
+  if (!personalityName || personalityDesc.length < 12 || !backgroundName || backgroundStory.length < 30) return null;
+  return { personalityName, personalityDesc, backgroundName, backgroundStory };
+}
+
+export async function requestHeroLore(snap) {
+  const j = await ask(heroLorePrompt(snap), 'heroLore', 15000);
+  const lore = sanitizeHeroLore(j);
+  return lore ? { lore, via: backend?.name ?? 'llm' } : null;
+}
+
 // ---------- 场景 ----------
 const MON_KINDS = ['slime', 'goblin', 'archer', 'bat', 'shaman', 'ogre'];
 const clampNum = (v         , lo        , hi        , dflt        ) => {
@@ -594,12 +622,13 @@ export function makePlatformBackend()             {
 
 export function makeHttpBackend(cfg         )             {
   const clean = normalizeCfg(cfg);
+  const isDeepSeek = !!clean && (clean.provider === 'deepseek' || clean.baseUrl.includes('api.deepseek.com') || /^deepseek-/i.test(clean.model));
   return {
     id: 'http',
     name: clean?.model ? `${presetById(clean.provider).name}・${clean.model}` : '外部模型',
     async complete(prompt, opts) {
       if (!clean?.baseUrl || !clean.model) throw new Error('请先刷新并选择模型');
-      const maxTokens = ({ scene: 700, dialogue: 800, report: 1100, context: 800 })[opts.kind] ?? 320;
+      const maxTokens = ({ scene: 700, dialogue: 800, report: 1100, context: 800, heroLore: 900, part: 640, affix: 480 })[opts.kind] ?? 480;
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
       try {
@@ -621,6 +650,7 @@ export function makeHttpBackend(cfg         )             {
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.9,
             max_tokens: maxTokens,
+            ...(isDeepSeek ? { thinking: { type: 'disabled' }, response_format: { type: 'json_object' } } : {}),
           }),
           signal: ctrl.signal,
         });
@@ -628,8 +658,14 @@ export function makeHttpBackend(cfg         )             {
         const j = await res.json();
         const anthropicText = Array.isArray(j?.content)
           ? j.content.filter((item) => item?.type === 'text').map((item) => item.text).join('') : '';
-        const txt = j?.choices?.[0]?.message?.content || anthropicText || j?.content || j?.output_text || '';
-        if (!txt) throw new Error('返回为空');
+        const openAiContent = j?.choices?.[0]?.message?.content;
+        const openAiText = Array.isArray(openAiContent)
+          ? openAiContent.map((item) => typeof item === 'string' ? item : item?.text ?? '').join('') : openAiContent;
+        const txt = openAiText || anthropicText || j?.content || j?.output_text || '';
+        if (!txt) {
+          const finish = j?.choices?.[0]?.finish_reason;
+          throw new Error(finish === 'length' ? '模型输出额度不足，未返回最终内容' : '模型返回为空');
+        }
         return String(txt);
       } finally {
         clearTimeout(timer);
