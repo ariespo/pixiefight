@@ -15,6 +15,65 @@ let status            = { state: 'idle', note: '未接入外部叙事者' };
 export function llmStatus()            { return { ...status }; }
 function setStatus(state                    , note        ) { status = { state, note }; }
 
+// 玩家自带 Key 的常用服务商。除 Claude 官方接口外，其余均走 OpenAI 兼容协议。
+// 自定义地址填写 Base URL；同时兼容玩家直接粘贴 /chat/completions 或 /models 地址。
+export const AI_PRESETS = [
+  { id: 'openai', name: 'GPT', protocol: 'openai', baseUrl: 'https://api.openai.com/v1' },
+  { id: 'anthropic', name: 'Claude', protocol: 'anthropic', baseUrl: 'https://api.anthropic.com/v1' },
+  { id: 'deepseek', name: 'DeepSeek', protocol: 'openai', baseUrl: 'https://api.deepseek.com' },
+  { id: 'glm', name: 'GLM', protocol: 'openai', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
+  { id: 'kimi', name: 'Kimi', protocol: 'openai', baseUrl: 'https://api.moonshot.cn/v1' },
+  { id: 'custom', name: '自定义', protocol: 'openai', baseUrl: '' },
+];
+
+export function presetById(id) {
+  return AI_PRESETS.find((item) => item.id === id) ?? AI_PRESETS[AI_PRESETS.length - 1];
+}
+
+export function normalizeBaseUrl(raw) {
+  return String(raw ?? '').trim().replace(/\/+$/, '')
+    .replace(/\/(?:chat\/completions|models)$/i, '');
+}
+
+function endpoint(baseUrl, path) { return `${normalizeBaseUrl(baseUrl)}/${path.replace(/^\//, '')}`; }
+
+function authHeaders(cfg) {
+  if (cfg.protocol === 'anthropic') return {
+    'x-api-key': cfg.key,
+    'anthropic-version': '2023-06-01',
+    'anthropic-dangerous-direct-browser-access': 'true',
+  };
+  return cfg.key ? { authorization: `Bearer ${cfg.key}` } : {};
+}
+
+export async function refreshModels(cfg, timeoutMs = 12000) {
+  const clean = normalizeCfg(cfg);
+  if (!clean?.baseUrl) throw new Error('请先填写接口地址');
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  setStatus('busy', '正在刷新可用模型…');
+  try {
+    const res = await fetch(endpoint(clean.baseUrl, 'models'), {
+      headers: { accept: 'application/json', ...authHeaders(clean) },
+      signal: ctrl.signal,
+    });
+    if (!res.ok) throw new Error(`模型列表请求失败（HTTP ${res.status}）`);
+    const json = await res.json();
+    const rows = Array.isArray(json?.data) ? json.data : Array.isArray(json?.models) ? json.models : Array.isArray(json) ? json : [];
+    const models = [...new Set(rows.map((item) => typeof item === 'string' ? item : item?.id ?? item?.name)
+      .filter((id) => typeof id === 'string' && id.trim()).map((id) => id.trim()))].sort((a, b) => a.localeCompare(b));
+    if (!models.length) throw new Error('接口没有返回可用模型');
+    setStatus('ok', `已发现 ${models.length} 个模型`);
+    return models;
+  } catch (error) {
+    const note = error?.name === 'AbortError' ? '刷新模型超时' : (error?.message || '刷新模型失败');
+    setStatus('error', note);
+    throw new Error(note);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ---------- 后端接口 ----------
 // 玩家/开发者只需提供一个 complete(prompt) => 文本。默认没有后端。
 ;                         
@@ -428,30 +487,41 @@ export function makePlatformBackend()             {
 }
 
 export function makeHttpBackend(cfg         )             {
+  const clean = normalizeCfg(cfg);
   return {
     id: 'http',
-    name: cfg.model ? `外部模型 ${cfg.model}` : '外部模型',
+    name: clean?.model ? `${presetById(clean.provider).name}・${clean.model}` : '外部模型',
     async complete(prompt, opts) {
+      if (!clean?.baseUrl || !clean.model) throw new Error('请先刷新并选择模型');
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
       try {
-        const res = await fetch(cfg.url, {
+        const anthropic = clean.protocol === 'anthropic';
+        const res = await fetch(endpoint(clean.baseUrl, anthropic ? 'messages' : 'chat/completions'), {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
-            ...(cfg.key ? { authorization: `Bearer ${cfg.key}` } : {}),
+            ...authHeaders(clean),
           },
-          body: JSON.stringify({
-            model: cfg.model || 'gpt-4o-mini',
+          body: JSON.stringify(anthropic ? {
+            model: clean.model,
+            system: '你是一款中文 8-bit 地牢经营游戏的设计助手。严格只输出一个 JSON 对象，不要解释、不要 markdown 代码块。',
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.9,
-            max_tokens: 700,
+            max_tokens: opts.kind === 'scene' ? 700 : 320,
+          } : {
+            model: clean.model,
+            messages: [{ role: 'user', content: prompt }],
+            temperature: 0.9,
+            max_tokens: opts.kind === 'scene' ? 700 : 320,
           }),
           signal: ctrl.signal,
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const j = await res.json();
-        const txt = j?.choices?.[0]?.message?.content ?? j?.content ?? j?.output_text ?? '';
+        const anthropicText = Array.isArray(j?.content)
+          ? j.content.filter((item) => item?.type === 'text').map((item) => item.text).join('') : '';
+        const txt = j?.choices?.[0]?.message?.content || anthropicText || j?.content || j?.output_text || '';
         if (!txt) throw new Error('返回为空');
         return String(txt);
       } finally {
@@ -462,20 +532,39 @@ export function makeHttpBackend(cfg         )             {
 }
 
 const CFG_KEY = 'yqh-llm-cfg';
+export function normalizeCfg(value) {
+  if (!value || typeof value !== 'object') return null;
+  const provider = presetById(String(value.provider ?? 'custom')).id;
+  const preset = presetById(provider);
+  const baseUrl = normalizeBaseUrl(value.baseUrl ?? value.url ?? preset.baseUrl);
+  if (!baseUrl) return null;
+  return {
+    provider,
+    protocol: provider === 'custom' ? (value.protocol === 'anthropic' ? 'anthropic' : 'openai') : preset.protocol,
+    baseUrl,
+    key: String(value.key ?? ''),
+    model: String(value.model ?? ''),
+    models: Array.isArray(value.models) ? [...new Set(value.models.map(String).filter(Boolean))].slice(0, 500) : [],
+  };
+}
 export function loadCfg()                 {
   try {
     const raw = localStorage.getItem(CFG_KEY);
     if (!raw) return null;
-    const j = JSON.parse(raw);
-    if (!j || typeof j.url !== 'string' || !j.url) return null;
-    return { url: String(j.url), key: String(j.key ?? ''), model: String(j.model ?? '') };
+    return normalizeCfg(JSON.parse(raw));
   } catch { return null; }
 }
 export function saveCfg(c                ) {
   try {
-    if (c) localStorage.setItem(CFG_KEY, JSON.stringify(c));
+    if (c) {
+      const clean = normalizeCfg(c);
+      if (!clean) return false;
+      localStorage.setItem(CFG_KEY, JSON.stringify(clean));
+    }
     else localStorage.removeItem(CFG_KEY);
+    return true;
   } catch { /* 忽略 */ }
+  return false;
 }
 
 ;                                                    
@@ -486,7 +575,7 @@ export function restoreBackend()          {
   if (mode === 'echo') { setBackend(makeEchoBackend()); return 'echo'; }
   if (mode === 'http') {
     const c = loadCfg();
-    if (c) { setBackend(makeHttpBackend(c)); return 'http'; }
+    if (c?.model && c.models.includes(c.model)) { setBackend(makeHttpBackend(c)); return 'http'; }
     setBackend(makePlatformBackend());
     return 'gp';
   }

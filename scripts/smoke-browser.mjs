@@ -34,6 +34,40 @@ try {
   await page.evaluate(() => __debug.titleNew());
   assert(await page.evaluate(() => __debug.screen === 'manage'), 'First new game did not leave the title screen.');
 
+  // AI 设置必须走“地址/Key → 刷新模型 → 选择模型 → 保存”的完整链路。
+  let requestedModel = '';
+  await page.route('https://api.example.test/v1/models', async (route) => {
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: [{ id: 'test-model-a' }, { id: 'test-model-b' }] }) });
+  });
+  await page.route('https://api.example.test/v1/chat/completions', async (route) => {
+    requestedModel = route.request().postDataJSON()?.model ?? '';
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({
+      name: '试作毒躯', word: '毒', desc: '模型选择链路测试。', look: 'rock', stats: { hp: 60, atk: 4, def: 1, spd: 0 }, powers: ['poisonSkill'],
+    }) } }] }) });
+  });
+  await page.evaluate(() => __debug.aiSettingsOpen());
+  await page.selectOption('[data-ai="provider"]', 'custom');
+  await page.fill('[data-ai="url"]', 'https://api.example.test/v1/chat/completions');
+  await page.fill('[data-ai="key"]', 'test-browser-key');
+  await page.click('[data-ai="refresh"]');
+  await page.waitForFunction(() => document.querySelector('[data-ai="model"]')?.options.length === 2);
+  await page.selectOption('[data-ai="model"]', 'test-model-b');
+  await page.click('[data-ai="save"]');
+  const aiCfg = await page.evaluate(() => __debug.llm);
+  assert(aiCfg.mode === 'http' && aiCfg.cfg?.provider === 'custom' && aiCfg.cfg?.baseUrl === 'https://api.example.test/v1'
+    && aiCfg.cfg?.model === 'test-model-b' && aiCfg.cfg?.models.length === 2, 'AI settings did not persist the refreshed model selection.');
+  await page.evaluate(() => __debug.forgeOpen('part'));
+  const aiDraft = await page.evaluate(async () => await __debug.forgeAsk('测试毒物'));
+  assert(aiDraft?.draft?.name === '试作毒躯' && requestedModel === 'test-model-b', 'AI generation did not use the selected refreshed model.');
+  await page.evaluate(() => __debug.closeForge());
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => __debug.aiSettingsOpen());
+  const aiPanelBox = await page.locator('#ai-settings-overlay > div').boundingBox();
+  assert(aiPanelBox && aiPanelBox.x >= 0 && aiPanelBox.y >= 0 && aiPanelBox.x + aiPanelBox.width <= 390
+    && aiPanelBox.y + aiPanelBox.height <= 844, 'AI settings panel exceeds the portrait viewport.');
+  await page.evaluate(() => __debug.aiSettingsClose());
+  await page.setViewportSize({ width: 1280, height: 720 });
+
   const onboarding = await page.evaluate(() => {
     const initial = __debug.progression;
     __debug.setTab('hero');

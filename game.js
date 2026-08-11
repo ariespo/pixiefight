@@ -7,7 +7,8 @@ import { createBattle, stepBattle, ROOM_W, affixText, actionProgress, deployUtil
                                                                       
 import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, AFFIX_BUDGET, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, clampAffixDraft, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, legendaryPartCount, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
                                                                                                                           
-import { getBackend, hasBackend, llmStatus, loadCfg, loadMode, requestAffix, requestPart, restoreBackend, saveCfg, saveMode, setBackend, requestScene as llmScene } from './llm.js';
+import { AI_PRESETS, getBackend, hasBackend, llmStatus, loadCfg, loadMode, normalizeBaseUrl, presetById, refreshModels,
+  requestAffix, requestPart, restoreBackend, saveCfg, saveMode, setBackend, requestScene as llmScene } from './llm.js';
                                         
                                            
 import { applyEffects, fillText, getProvider, requestScene, sceneById, setProvider, testConds, localProvider, SCENES } from './story.js';
@@ -2584,21 +2585,129 @@ let forge               = null;
 let forgeInput                          = null;
 const FORGE_INPUT = { x: 108, y: 58, w: 250, h: 18 };
 
-// 三档：关闭 / 本地回声（离线可用的参考实现） / 外部模型（玩家自填接口）
-function setLlmMode(mode         ) {
-  if (mode === 'http') {
-    const cur = loadCfg();
-    const url = window.prompt('外部模型接口地址（OpenAI 兼容的 /chat/completions）', cur?.url ?? '');
-    if (url == null) return;
-    if (!url.trim()) { saveMode('gp'); restoreBackend(); render(); return; }
-    const key = window.prompt('API Key（留空表示接口不需要）', cur?.key ?? '') ?? '';
-    const model = window.prompt('模型名', cur?.model ?? 'gpt-4o-mini') ?? '';
-    saveCfg({ url: url.trim(), key: key.trim(), model: model.trim() });
+let aiSettingsRoot = null;
+
+function closeAISettings() {
+  if (aiSettingsRoot) aiSettingsRoot.remove();
+  aiSettingsRoot = null;
+  render();
+}
+
+function openAISettings() {
+  closeAISettings();
+  const saved = loadCfg();
+  const initial = saved ?? { provider: 'openai', protocol: 'openai', baseUrl: presetById('openai').baseUrl, key: '', model: '', models: [] };
+  const root = document.createElement('div');
+  root.id = 'ai-settings-overlay';
+  root.style.cssText = 'position:fixed;inset:0;z-index:80;display:flex;align-items:center;justify-content:center;padding:12px;box-sizing:border-box;background:rgba(8,6,14,.86);font-family:monospace;color:#eadcae;';
+  const card = document.createElement('div');
+  card.style.cssText = 'width:min(560px,96vw);max-height:calc(100vh - 24px);overflow:auto;box-sizing:border-box;padding:18px;border:3px solid #8f6fc4;box-shadow:0 0 0 3px #21172d,0 12px 40px #000;background:#191423;image-rendering:pixelated;';
+  card.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">
+      <div><div style="font-size:20px;color:#e2bd64">游戏设置・AI 接入</div><div style="margin-top:4px;font-size:12px;color:#918aa0">用于秘闻、部件与词缀创作</div></div>
+      <button data-ai="close" style="width:42px;height:34px">关闭</button>
+    </div>
+    <label>服务商预设<select data-ai="provider"></select></label>
+    <label data-ai="protocol-row">接口协议<select data-ai="protocol"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select></label>
+    <label>接口 Base URL<input data-ai="url" type="url" autocomplete="off" spellcheck="false"></label>
+    <label>API Key<div style="display:flex;gap:8px"><input data-ai="key" type="password" autocomplete="new-password" spellcheck="false" style="flex:1"><button data-ai="show-key" type="button" style="width:72px">显示</button></div></label>
+    <button data-ai="refresh" type="button" style="width:100%;height:40px;margin:4px 0 10px">刷新模型</button>
+    <label>可用模型<select data-ai="model" disabled><option value="">请先刷新模型</option></select></label>
+    <div data-ai="status" style="min-height:34px;padding:8px;border:1px solid #484054;background:#100d17;color:#918aa0;box-sizing:border-box">修改地址或 Key 后，需要重新刷新模型。</div>
+    <div style="margin-top:10px;font-size:12px;line-height:1.5;color:#918aa0">Key 只保存在这个浏览器中，不进入游戏存档或上传到部署文件。自定义服务需允许浏览器跨域访问。</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
+      <button data-ai="echo" type="button">使用本地回声</button><button data-ai="off" type="button">关闭 AI</button>
+      <button data-ai="sound" type="button">${S.muted ? '开启声音' : '关闭声音'}</button><button data-ai="save" type="button" disabled>保存并启用</button>
+    </div>`;
+  const css = document.createElement('style');
+  css.textContent = '#ai-settings-overlay label{display:block;margin:10px 0 5px;font-size:13px;color:#cbbd91}#ai-settings-overlay input,#ai-settings-overlay select,#ai-settings-overlay button{box-sizing:border-box;border:1px solid #76698a;border-radius:0;background:#272033;color:#f1e5bd;font:14px monospace;min-height:36px;padding:7px 9px;outline:none}#ai-settings-overlay input,#ai-settings-overlay select{display:block;width:100%;margin-top:5px}#ai-settings-overlay button:not(:disabled){cursor:pointer}#ai-settings-overlay button:disabled{opacity:.42}#ai-settings-overlay input:focus,#ai-settings-overlay select:focus,#ai-settings-overlay button:focus{border-color:#e2bd64;box-shadow:0 0 0 1px #e2bd64}';
+  root.append(css, card);
+  document.body.appendChild(root);
+  aiSettingsRoot = root;
+
+  const el = (name) => card.querySelector(`[data-ai="${name}"]`);
+  const provider = el('provider'), protocol = el('protocol'), url = el('url'), key = el('key');
+  const model = el('model'), refresh = el('refresh'), save = el('save'), status = el('status');
+  for (const item of AI_PRESETS) {
+    const option = document.createElement('option'); option.value = item.id; option.textContent = item.name; provider.appendChild(option);
   }
+  provider.value = initial.provider;
+  protocol.value = initial.protocol;
+  url.value = initial.baseUrl;
+  key.value = initial.key;
+  let refreshedSignature = initial.models?.length ? `${initial.protocol}|${normalizeBaseUrl(initial.baseUrl)}|${initial.key}` : '';
+
+  const signature = () => `${protocol.value}|${normalizeBaseUrl(url.value)}|${key.value}`;
+  const setStatusText = (text, tone = 'idle') => {
+    status.textContent = text;
+    status.style.color = tone === 'ok' ? '#67d391' : tone === 'error' ? '#ed6b6b' : '#918aa0';
+  };
+  const fillModels = (models, picked = '') => {
+    model.replaceChildren();
+    for (const id of models) { const option = document.createElement('option'); option.value = id; option.textContent = id; model.appendChild(option); }
+    model.disabled = !models.length;
+    model.value = models.includes(picked) ? picked : (models[0] ?? '');
+    save.disabled = !models.length || refreshedSignature !== signature();
+  };
+  const invalidate = () => {
+    refreshedSignature = '';
+    fillModels([], '');
+    setStatusText('地址或 Key 已改变，请点击“刷新模型”。');
+  };
+  const syncPreset = (replaceUrl = false) => {
+    const item = presetById(provider.value);
+    el('protocol-row').style.display = item.id === 'custom' ? 'block' : 'none';
+    if (item.id !== 'custom') protocol.value = item.protocol;
+    if (replaceUrl && item.baseUrl) url.value = item.baseUrl;
+  };
+  syncPreset(false);
+  fillModels(initial.models ?? [], initial.model);
+  if (initial.models?.length) setStatusText(`已保存 ${initial.models.length} 个模型；修改连接信息后需重新刷新。`, 'ok');
+
+  provider.addEventListener('change', () => { syncPreset(true); invalidate(); });
+  protocol.addEventListener('change', invalidate);
+  url.addEventListener('input', invalidate);
+  key.addEventListener('input', invalidate);
+  model.addEventListener('change', () => { save.disabled = !model.value || refreshedSignature !== signature(); });
+  el('show-key').addEventListener('click', () => { key.type = key.type === 'password' ? 'text' : 'password'; el('show-key').textContent = key.type === 'password' ? '显示' : '隐藏'; });
+  refresh.addEventListener('click', async () => {
+    refresh.disabled = true; save.disabled = true; model.disabled = true;
+    refresh.textContent = '刷新中…'; setStatusText('正在连接接口并读取模型列表…');
+    try {
+      const cfg = { provider: provider.value, protocol: protocol.value, baseUrl: url.value, key: key.value, model: '', models: [] };
+      const models = await refreshModels(cfg);
+      refreshedSignature = signature();
+      fillModels(models, initial.model);
+      setStatusText(`连接成功，发现 ${models.length} 个可用模型。`, 'ok');
+    } catch (error) {
+      fillModels([], '');
+      setStatusText(`${error.message || '刷新失败'}。请检查地址、Key 与浏览器跨域权限。`, 'error');
+    } finally {
+      refresh.disabled = false; refresh.textContent = '刷新模型';
+    }
+  });
+  save.addEventListener('click', () => {
+    const models = [...model.options].map((option) => option.value).filter(Boolean);
+    if (!model.value || refreshedSignature !== signature()) { invalidate(); return; }
+    const ok = saveCfg({ provider: provider.value, protocol: protocol.value, baseUrl: url.value, key: key.value, model: model.value, models });
+    if (!ok) { setStatusText('保存失败，请检查浏览器存储权限。', 'error'); return; }
+    saveMode('http'); restoreBackend(); playSfx('buy'); closeAISettings(); say(`AI 已启用：${model.value}`);
+  });
+  el('echo').addEventListener('click', () => { saveMode('echo'); restoreBackend(); closeAISettings(); say('已切到本地回声（离线可用）'); });
+  el('off').addEventListener('click', () => { saveMode('off'); restoreBackend(); closeAISettings(); say('已关闭 AI'); });
+  el('sound').addEventListener('click', () => { toggleMute(); el('sound').textContent = S.muted ? '开启声音' : '关闭声音'; });
+  el('close').addEventListener('click', closeAISettings);
+  root.addEventListener('click', (event) => { if (event.target === root) closeAISettings(); });
+  root.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.key === 'Escape') closeAISettings(); });
+  url.focus();
+}
+
+function setLlmMode(mode         ) {
+  if (mode === 'http') { openAISettings(); return; }
   saveMode(mode);
   restoreBackend();
   playSfx('tab');
-  say(mode === 'off' ? '已关闭叙事者' : mode === 'gp' ? '已用平台内置的地牢叙事者' : mode === 'echo' ? '已切到本地回声（离线可用）' : '已接入外部模型');
+  say(mode === 'off' ? '已关闭 AI' : mode === 'gp' ? '已用平台内置的地牢叙事者' : '已切到本地回声（离线可用）');
   render();
 }
 
@@ -3424,7 +3533,7 @@ function drawTopBar(g               ) {
   button(g, uiLayer, hits, 306, 6, 36, 22, '+1000', addTestResources, { size: 11, fill: C.greenDark, border: C.green, color: C.white });
   button(g, uiLayer, hits, 344, 6, 30, 22, '导出', exportSave, { size: 10 });
   button(g, uiLayer, hits, 376, 6, 30, 22, '导入', importSave, { size: 10 });
-  button(g, uiLayer, hits, 408, 6, 30, 22, S.muted ? '静音' : '音量', toggleMute, { size: 10 });
+  button(g, uiLayer, hits, 408, 6, 30, 22, '设置', openAISettings, { size: 10, border: C.purple, color: C.purple });
   button(g, uiLayer, hits, 440, 6, 36, 22, '新档', requestNewGame,
     { size: 12, border: confirmNew ? C.red : C.bone, color: confirmNew ? C.red : C.bone });
 }
@@ -4019,13 +4128,14 @@ function drawPortraitNativeManage() {
     const menuItems = [
       ['导出存档', exportSave, C.bone], ['导入存档', importSave, C.bone],
       [S.muted ? '开启声音' : '关闭声音', toggleMute, C.purple],
+      ['AI 接入设置', openAISettings, C.purple],
       [confirmNew ? '确认清空并开始新档' : '开始新档', requestNewGame, confirmNew ? C.red : C.gold],
     ];
     menuItems.forEach(([name, action, color], i) => {
       const by = pageY + 38 + i * 54;
-      if (i === 3) menuNewY = by;
+      if (i === 4) menuNewY = by;
       button(portraitGfx, portraitLayer, portraitHits, contentX + 18, by, contentW - 36, 46, name, action,
-        { size: 16, fill: i === 3 && confirmNew ? C.redDark : C.wall, border: color, color: i === 3 && confirmNew ? C.white : color });
+        { size: 16, fill: i === 4 && confirmNew ? C.redDark : C.wall, border: color, color: i === 4 && confirmNew ? C.white : color });
     });
   } else {
     if (guideOnPage) pageY += portraitGuideBanner(contentX + 6, pageY, contentW - 12);
@@ -8077,6 +8187,8 @@ window.__debug = {
   storySetProvider: (p                      ) => { setProvider(p ?? hybridProvider); render(); return getProvider().id; },
   // ---- LLM 外壳 / DIY 造件 ----
   get llm() { return { mode: loadMode(), backend: getBackend()?.name ?? null, status: llmStatus(), cfg: loadCfg() }; },
+  aiSettingsOpen: () => { openAISettings(); return !!aiSettingsRoot; },
+  aiSettingsClose: () => { closeAISettings(); return !aiSettingsRoot; },
   llmSetBackend: (b                   ) => { setBackend(b); render(); return getBackend()?.name ?? null; },
   llmEcho: () => { saveMode('echo'); restoreBackend(); render(); return getBackend()?.name ?? null; },
   llmOff: () => { saveMode('off'); restoreBackend(); render(); return getBackend()?.name ?? null; },

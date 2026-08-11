@@ -29,6 +29,11 @@ for (const id of followups) if (!ids.has(id)) throw new Error(`Missing follow-up
 const source = readFileSync('game.js', 'utf8');
 if (!source.includes("const GAME_NAME = '勇者去死！'")) throw new Error('The unified player-visible game name is missing.');
 if (/夜曲地牢|夜 曲 地 牢/.test(source)) throw new Error('A legacy game title remains in game.js.');
+const llmSource = readFileSync('llm.js', 'utf8');
+for (const provider of ['openai', 'anthropic', 'deepseek', 'glm', 'kimi', 'custom']) {
+  if (!llmSource.includes(`id: '${provider}'`)) throw new Error(`Missing AI provider preset: ${provider}`);
+}
+if (!llmSource.includes("endpoint(clean.baseUrl, 'models')")) throw new Error('AI model refresh endpoint is missing.');
 const setBody = source.match(/const STORY_LEAD_SCENES = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? '';
 const leadIds = [...setBody.matchAll(/'([^']+)'/g)].map((m) => m[1]);
 for (const id of leadIds) if (!ids.has(id)) throw new Error(`Lead references missing scene: ${id}`);
