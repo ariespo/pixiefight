@@ -280,6 +280,20 @@ try {
   await page.mouse.click(portraitWorkbench.portraitActions.modalClose.x + portraitWorkbench.portraitActions.modalClose.w / 2,
     portraitWorkbench.portraitActions.modalClose.y + portraitWorkbench.portraitActions.modalClose.h / 2);
 
+  // The post-clear overtime screen must remain fully inside its logical canvas
+  // before large-screen scaling, and its primary action must still be clickable.
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await page.evaluate(() => __debug.devEnding());
+  await page.waitForTimeout(100);
+  const endingLayout = await page.evaluate(() => __debug.endingLayout);
+  assert(endingLayout?.action && endingLayout.bounds.x >= 0 && endingLayout.bounds.y >= 0
+    && endingLayout.bounds.right <= 480 && endingLayout.bounds.bottom <= 270,
+  `Overtime ending screen exceeds the 480x270 logical viewport: ${JSON.stringify(endingLayout)}`);
+  const endingButton = await page.evaluate((action) => __debug.toScreen(action.x + action.w / 2, action.y + action.h / 2), endingLayout.action);
+  await page.mouse.click(endingButton.x, endingButton.y);
+  await page.waitForTimeout(80);
+  assert(await page.evaluate(() => __debug.overtime.on && __debug.screen === 'manage'), 'Large-screen overtime action did not receive the click.');
+
   // Native portrait onboarding must be playable without exposing or clicking the hidden desktop canvas.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => localStorage.removeItem('yqh-save-v2'));

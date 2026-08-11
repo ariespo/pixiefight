@@ -7019,8 +7019,14 @@ function buildEnding() {
   labelC(overlay, '解锁：加班勇者（循环词缀 · 等级持续增长）', 240, 60, 12, C.purple);
   const g2 = new PIXI.Graphics();
   overlay.addChild(g2);
-  labelC(overlay, 'Enter 进入', 240, 262, 12, C.stoneLit);
-  button(g2, overlay, hits, 165, 232, 150, 26, '进入加班勇者', () => enterOvertime(), { fill: C.purpleDark, border: C.purple, color: C.white });
+  // Keep the complete action cluster inside the 480x270 logical viewport.
+  // The old hint started at y=262 and its measured font height was clipped
+  // before large-screen scaling, so increasing the display size could never
+  // reveal the missing bottom pixels.
+  labelC(overlay, 'Enter 进入', 240, 215, 11, C.stoneLit);
+  endingActionRect = { x: 150, y: 232, w: 180, h: 28 };
+  button(g2, overlay, hits, endingActionRect.x, endingActionRect.y, endingActionRect.w, endingActionRect.h,
+    '进入加班勇者', () => enterOvertime(), { size: 13, fill: C.purpleDark, border: C.purple, color: C.white });
 }
 
 function enterOvertime() {
@@ -7034,6 +7040,7 @@ function enterOvertime() {
   for (const c of overlay.removeChildren()) c.destroy({ children: true });
   hits.clear();
   endingBuilt = false;
+  endingActionRect = null;
   tab = 'throne';
   playMusic('bgm-manage');
   render();
@@ -7041,6 +7048,7 @@ function enterOvertime() {
 
 // ---------- 主循环 ----------
 let endingBuilt = false;
+let endingActionRect = null;
 function tick(dt        ) {
   tickAudio();
   ensurePortraitChrome();
@@ -7254,6 +7262,24 @@ window.__debug = {
   get reports() { return S.reports; },
   get audio() { return audioSnapshot(); },
   get endingT() { return endingT; },
+  get endingLayout() {
+    if (screen !== 'ending') return null;
+    const b = overlay.getLocalBounds();
+    return {
+      bounds: { x: b.x, y: b.y, width: b.width, height: b.height, right: b.x + b.width, bottom: b.y + b.height },
+      action: endingActionRect ? { ...endingActionRect } : null,
+    };
+  },
+  devEnding: () => {
+    screen = 'ending';
+    endingT = 0;
+    endingBuilt = false;
+    battleLayer.visible = false;
+    for (const c of overlay.removeChildren()) c.destroy({ children: true });
+    hits.clear();
+    scheduleLayout();
+    return screen;
+  },
   setTab: (t     ) => setTab(t),
   ackGuide: () => { acknowledgeRoundGuide(); return window.__debug.progression; },
   backManage: () => { backToManage(); return screen; },
