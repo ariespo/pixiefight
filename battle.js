@@ -166,12 +166,23 @@ function mulberry(seed        ) {
 function makeMonUnit(inst             , row       , roomIdx        , mod             = NO_MODS, leaderSeat = false)       {
   const k = graftKind(kindById(inst.kind) , inst.graft);
   const mult = LEVEL_MULT[inst.lv - 1];
-  const hp = Math.max(1, Math.round(k.hp * mult * mod.monHpMult));
+  let hp = k.hp * mult * mod.monHpMult;
+  let atk = k.atk * mult * mod.monAtkMult;
+  let def = k.def * mult;
+  let spd = k.spd + mod.monSpdAdd;
+  const eff = { ...k.eff };
+  for (const mark of inst.lawMarks ?? []) {
+    if (mark === 'thorns') { eff.thorns = Math.min(0.55, eff.thorns ?? 0); atk *= 1.18; }
+    if (mark === 'mitigation') { eff.dmgTakenMult = Math.max(0.35, eff.dmgTakenMult ?? 1); eff.lawMitigationFloor = 0.35; hp *= 1.20; }
+    if (mark === 'defense') { def *= 0.70; atk *= 1.15; spd *= 1.06; }
+    if (mark === 'lifesteal') { eff.lifestealPct = Math.min(0.45, eff.lifestealPct ?? 0); spd *= 1.12; }
+  }
+  hp = Math.max(1, Math.round(hp));
   const slotX = leaderSeat ? MON_LEAD_X : row === 0 ? MON_FRONT_X : MON_BACK_X;
   return {
-    side: 'mon', kind: k.id, name: k.name, tex: k.tex, lv: inst.lv, monsterUid: inst.uid, eff: k.eff,
-    maxHp: hp, hp, atk: Math.max(1, Math.round(k.atk * mult * mod.monAtkMult)), def: Math.round(k.def * mult),
-    spd: Math.max(0.15, k.spd + mod.monSpdAdd),
+    side: 'mon', kind: k.id, name: k.name, tex: k.tex, lv: inst.lv, monsterUid: inst.uid, eff,
+    maxHp: hp, hp, atk: Math.max(1, Math.round(atk)), def: Math.round(def),
+    spd: Math.max(0.15, spd),
     row, x: slotX, y: leaderSeat ? LEAD_Y : row === 0 ? 0 : BACK_Y,
     homeX: slotX,
     alive: true, cd: 0.6 + Math.random() * 0.3, skillCd: k.eff.skill === 'alt' ? 2.5 : 4,
@@ -488,6 +499,57 @@ const BREACH_LINES = [
   '别回头看门，去看还能守住的人！', '把统领的旗带走，不能留给勇者！', '让废墟拖住他们，我们从侧道撤！',
 ];
 
+const STAT_LINES = {
+  max: {
+    hero: ['我已经升无可升，工资倒还有下降空间。', '履历写满了。遗书还空着。', '满级只说明我活得比培训手册久。'],
+    mon: ['我的等级满了，胃口没有。', '工坊说我已经没有可升级的地方，真没礼貌。', '五级满编，今日也拒绝善终。'],
+  },
+  attack: {
+    hero: ['这一剑的报价，比你整间地牢都贵。', '我的攻击很高，命中率由会计另行解释。', '让开，我的数值已经先冲进去了。'],
+    mon: ['我的攻击高得需要单独报税。', '别挡，我这一爪按拆迁费结算。', '工坊把“适量”两个字锻没了。'],
+  },
+  defense: {
+    hero: ['这身甲能挡刀，挡不住差旅报销。', '尽管打，维修单会寄给王国。', '我的防御很高，主要因为不想回家。'],
+    mon: ['你砍的是甲，疼的是你的预算。', '我的防御来自多年拒绝沟通。', '请继续，你的剑比较先需要治疗。'],
+  },
+  hp: {
+    hero: ['血条很长，假期很短。', '我能撑很久，遗憾的是远征也是。', '这点生命够我写完三份阵亡报告。'],
+    mon: ['我的血条比你们的补给线长。', '慢慢砍，夜班才刚开始。', '生命很多，生活没有。'],
+  },
+  thorns: {
+    hero: ['碰我之前，先签反伤知情书。', '盔甲会还手，我只负责站着。', '你打我一下，算我们共同受伤。'],
+    mon: ['请用力，我靠反伤完成绩效。', '盔甲长刺，是因为社交边界很重要。', '打我吧，疼痛会自动抄送。'],
+  },
+  mitigation: {
+    hero: ['伤害会被折算，痛苦不会。', '减伤很高，但会议仍是真实伤害。', '刀只能进来一部分，加班可以全部进来。'],
+    mon: ['伤害正在衰减，你的士气也是。', '我不是无敌，只是很擅长浪费你的时间。', '再高的减伤也挡不住月底考核。'],
+  },
+};
+
+function statProfile(u) {
+  if (!u || u.__statSpeech) return null;
+  const rawThorns = u.eff?.thorns ?? 0;
+  const taken = (u.dmgTakenMult ?? 1) * (u.eff?.dmgTakenMult ?? 1) * (u.eff?.backGuard ?? 1);
+  if (rawThorns >= 0.40) return 'thorns';
+  if (taken <= 0.70) return 'mitigation';
+  if (u.atk >= 85) return 'attack';
+  if (u.def >= 30) return 'defense';
+  if (u.maxHp >= 520) return 'hp';
+  if ((u.side === 'mon' && !u.champUid && u.lv >= 5) || (u.champUid && u.lv >= 10) || (u.side === 'hero' && u.lv >= 16)) return 'max';
+  return null;
+}
+
+function statSpeech(b, units) {
+  const unit = units.find((u) => u.alive && statProfile(u));
+  if (!unit) return;
+  const kind = statProfile(unit);
+  unit.__statSpeech = true;
+  const side = unit.side === 'hero' ? 'hero' : 'mon';
+  const line = pickLine(STAT_LINES[kind][side], b.rng);
+  log(b, `　${unit.name}【${kind}】：${line}`, side === 'hero' ? 'bad' : 'good');
+  speak(b, unit, line, `stat-${kind}`, true);
+}
+
 function enterRoom(b        ) {
   const room = b.rooms[b.roomIndex];
   b.heroes.forEach((h) => {
@@ -525,6 +587,9 @@ function enterRoom(b        ) {
     speak(b, z, reply, 'banter');
   }
   if (monSpeaker) log(b, `　${monSpeaker.name}：${MON_ROOM_LINES[Math.floor(b.rng() * MON_ROOM_LINES.length)]}`, 'good');
+  // 每进一房各挑一名尚未发过属性台词的单位。高属性获得辨识度，但不会在同一瞬间把气泡铺满屏幕。
+  statSpeech(b, room.mons);
+  statSpeech(b, livingHeroes);
   // 足部件的入场效果：进房瞬间结算一次
   for (const m of room.mons) {
     if (!m.alive || !m.eff?.entry) continue;
@@ -654,6 +719,27 @@ function atkMult(b        , u      ) {
   return mult * (u.rallyT > 0 ? 1.2 : 1);
 }
 
+// 统一软上限：阈值以内保持线性，超过后逐渐逼近 ceiling，永远不会达到100%。
+// 这让高阶构筑仍然有收益，但不能靠堆叠反伤/减伤变成数学意义上的无敌。
+export function diminishingRate(raw, knee = 0.45, ceiling = 0.85) {
+  const value = Math.max(0, Number(raw) || 0);
+  if (value <= knee) return value;
+  const span = Math.max(0.001, ceiling - knee);
+  const over = value - knee;
+  return knee + span * (over / (over + span));
+}
+export function effectiveThorns(raw) { return diminishingRate(raw, 0.40, 0.85); }
+export function effectiveMitigationMultiplier(rawMultiplier) {
+  const mult = Number.isFinite(rawMultiplier) ? rawMultiplier : 1;
+  if (mult >= 1) return mult;
+  return 1 - diminishingRate(1 - Math.max(0, mult), 0.45, 0.85);
+}
+export function armorMultiplier(def, pierce = 0) {
+  const armor = Math.max(0, (Number(def) || 0) * Math.max(0, 1 - pierce));
+  // 防御再高也至少承受原始伤害的20%；其余80%按标准双曲线递减。
+  return 0.20 + 0.80 * (120 / (120 + armor));
+}
+
 function damage(b        , src      , tgt      , raw        , heavy         , pierce = 0) {
   if (!tgt.alive) return;
   const dodge = tgt.side === 'mon' ? dodgeChance(tgt) : 0;
@@ -661,12 +747,13 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
     b.events.push({ k: 'hit', room: b.roomIndex, x: tgt.x, y: tgt.y, dmg: 0, heavy: false, target: tgt });
     return;
   }
-  let dmg = Math.max(1, Math.round(raw - tgt.def * (1 - pierce) * 0.6));
+  let dmg = Math.max(1, Math.round(raw * armorMultiplier(tgt.def, pierce)));
+  let mitigationMult = 1;
   if (tgt.side === 'mon' && tgt.eff) {
-    if (heavy && tgt.eff.passive === 'tough' && tgt.lv >= 5) dmg = Math.round(dmg * 0.75);
+    if (heavy && tgt.eff.passive === 'tough' && tgt.lv >= 5) mitigationMult *= 0.75;
     if (tgt.eff.passive === 'stone' && tgt.lv >= 5) dmg = Math.max(1, dmg - 4);
-    if (tgt.eff.dmgTakenMult) dmg = Math.max(1, Math.round(dmg * tgt.eff.dmgTakenMult));
-    if (tgt.eff.backGuard && tgt.row === 1) dmg = Math.max(1, Math.round(dmg * tgt.eff.backGuard));
+    if (tgt.eff.dmgTakenMult) mitigationMult *= tgt.eff.dmgTakenMult;
+    if (tgt.eff.backGuard && tgt.row === 1) mitigationMult *= tgt.eff.backGuard;
     // 余烬：被近战打到就点燃对手（满级）
     if (tgt.eff.passive === 'ember' && tgt.lv >= 5 && src.side === 'hero' && src.alive) applyBurn(src, 5, 3);
     // 熔壳：反弹一部分伤害并点燃对手（thorns 走既有通路，这里只补点燃）
@@ -700,8 +787,8 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
   if (src.side === 'mon' && auraOf(b, src) === 'atk') dmg = Math.max(1, Math.round(dmg * (1 + 0.25 * auraPow(b, src.room))));
   // 失去带领：统领阵亡后，本房兵种士气下降
   if (src.side === 'mon' && !src.legend && b.rooms[src.room]?.routed) dmg = Math.max(1, Math.round(dmg * 0.85));
-  if (tgt.side === 'mon' && auraOf(b, tgt) === 'guard') dmg = Math.max(1, Math.round(dmg * Math.max(0.4, 1 - 0.2 * auraPow(b, tgt.room))));
-  if (tgt.dmgTakenMult && tgt.dmgTakenMult !== 1) dmg = Math.max(1, Math.round(dmg * tgt.dmgTakenMult));
+  if (tgt.side === 'mon' && auraOf(b, tgt) === 'guard') mitigationMult *= Math.max(0, 1 - 0.2 * auraPow(b, tgt.room));
+  if (tgt.dmgTakenMult && tgt.dmgTakenMult !== 1) mitigationMult *= tgt.dmgTakenMult;
   // 狂战士：血越少打得越狠（最多 +80%），代价是吃不到治疗
   if (src.side === 'hero' && src.kind === 'berserker') {
     dmg = Math.max(1, Math.round(dmg * (1 + 0.8 * (1 - src.hp / src.maxHp))));
@@ -711,8 +798,10 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
   // 镇棺（石棺胎）：同房有它站着，本房怪物集体减伤
   if (tgt.side === 'mon' && tgt.lv >= 1) {
     const bul = bulwarkMult(b, tgt);
-    if (bul < 1) dmg = Math.max(1, Math.round(dmg * bul));
+    if (bul < 1) mitigationMult *= bul;
   }
+  if (tgt.eff?.lawMitigationFloor) mitigationMult = Math.max(tgt.eff.lawMitigationFloor, mitigationMult);
+  dmg = Math.max(1, Math.round(dmg * effectiveMitigationMultiplier(mitigationMult)));
   // 圣骑士护佑：把 30% 伤害转给场上还活着的圣骑士自己
   if (tgt.side === 'hero' && tgt.guardT > 0 && tgt.kind !== 'paladin') {
     const pal = b.heroes.find((h) => h.alive && h.kind === 'paladin' && h.room === tgt.room);
@@ -877,7 +966,7 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
   }
   // 荆棘词缀：反伤不走 damage()，避免与对方效果互相递归
   if (tgt.side === 'mon' && tgt.eff?.thorns && src.side === 'hero' && src.alive && dmg > 0) {
-    const back = Math.max(1, Math.round(dmg * tgt.eff.thorns));
+    const back = Math.max(1, Math.round(dmg * effectiveThorns(tgt.eff.thorns)));
     src.hp -= back;
     src.flashT = 0.12;
     tgt.dmgDealt += back;

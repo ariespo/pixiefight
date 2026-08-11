@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { SCENES } from '../story.js';
-import { TEXTURES, RAIDS, NORMAL_RAID_COUNT } from '../data.js';
-import { createBattle, stepBattle } from '../battle.js';
+import { TEXTURES, RAIDS, RAID_BRIEFINGS, NORMAL_RAID_COUNT } from '../data.js';
+import { createBattle, stepBattle, effectiveThorns, effectiveMitigationMultiplier, armorMultiplier } from '../battle.js';
 import { newChamp, champStats } from '../heroes.js';
 
 const core = ['game.js', 'battle.js', 'story.js', 'vars.js', 'ui.js', 'heroes.js', 'modules.js', 'gear.js', 'data.js', 'llm.js', 'audio.js'];
@@ -33,6 +33,12 @@ for (const id of leadIds) if (!ids.has(id)) throw new Error(`Lead references mis
 for (const name of TEXTURES) if (!existsSync(`assets/${name}.png`)) throw new Error(`Missing texture asset: assets/${name}.png`);
 
 if (NORMAL_RAID_COUNT !== 20 || RAIDS.length !== 20) throw new Error('The standard campaign must contain exactly 20 raids.');
+if (RAID_BRIEFINGS.length !== 20 || new Set(RAID_BRIEFINGS.map((x) => x.no)).size !== 20)
+  throw new Error('Every standard raid must have one unique pre-battle briefing.');
+if (!(effectiveThorns(2) < 0.85 && effectiveThorns(2) > effectiveThorns(1) && effectiveThorns(1) < 1))
+  throw new Error('Thorns diminishing returns are not monotonic and safely capped.');
+if (!(effectiveMitigationMultiplier(0) > 0.14 && armorMultiplier(1000000) > 0.20))
+  throw new Error('Mitigation/armor can still reach mathematical invulnerability.');
 if (RAIDS[0].reward.bone >= RAIDS[9].reward.bone || RAIDS[9].reward.mana >= RAIDS[19].reward.mana)
   throw new Error('The 20-round bone/mana economy curve is not progressive.');
 for (let i = 16; i < RAIDS.length; i++) {
@@ -110,4 +116,12 @@ if (!lancer.monsters.every((m) => m.hp < 9999)) throw new Error('Lancer did not 
 const warlock = triggerNewEnemySkill('warlock');
 if (!warlock.monsters.every((m) => m.burnT > 0)) throw new Error('Warlock curse-fire skill did not trigger.');
 
-console.log(`Static check passed: ${core.length} scripts, ${TEXTURES.length} textures, 20 raids, calibrated final formation, 4 new enemy skills, ${SCENES.length} scenes, ${followups.length} follow-up links, ${leadIds.length} contextual leads.`);
+const statRoom = { theme: 'stone', trap: 'none', front: null, back: null, flank: null, leader: 99,
+  utility: { kind: 'none', level: 0, condition: 100 } };
+const statBattle = createBattle({ no: 98, title: 'attribute speech', members: [{ cls: 'knight', lv: 16 }], affixes: [], reward: { bone: 0, mana: 0 } },
+  [statRoom], [], { champs: { 99: { name: '法则测试员', race: 'lich', tex: 'mon-lich', lv: 10,
+    hp: 600, atk: 100, def: 40, spd: 1, auraId: 'undying', auraPow: 1, dmgTakenMult: 1, eff: { thorns: 0.8 } } } });
+if (!statBattle.dialogue.some((x) => x.kind === 'stat-thorns') || !statBattle.dialogue.some((x) => x.kind === 'stat-max'))
+  throw new Error('High-stat or max-level battle dialogue did not trigger for both sides.');
+
+console.log(`Static check passed: ${core.length} scripts, ${TEXTURES.length} textures, 20 raid stories, diminishing defenses, attribute dialogue, calibrated final formation, 4 new enemy skills, ${SCENES.length} scenes, ${followups.length} follow-up links, ${leadIds.length} contextual leads.`);

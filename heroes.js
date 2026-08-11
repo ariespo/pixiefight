@@ -506,6 +506,14 @@ export function champStats(c       , potentialMult = 1, chem          = NO_CHEM)
   if (ge.cd !== 1) eff.skillCdMult = (eff.skillCdMult ?? 1) * ge.cd;
   mergeEff(eff, ge.eff);        // 铭文机制（反伤/吸血/嘲讽…）与词缀走同一套 MonEff 字段
   atk *= chem.atk; hp *= chem.hp; auraPow *= chem.aura;
+  // “法则审计”是写在角色身上的永久印记：对应极端属性被压回安全区，
+  // 同时补偿另一条成长路线。每次重算都应用，换装/洗点也无法绕过处罚。
+  for (const mark of c.lawMarks ?? []) {
+    if (mark === 'thorns') { eff.thorns = Math.min(0.55, eff.thorns ?? 0); atk *= 1.18; }
+    if (mark === 'mitigation') { dmgTaken = Math.max(0.35, dmgTaken); eff.lawMitigationFloor = 0.35; hp *= 1.20; }
+    if (mark === 'defense') { def *= 0.70; atk *= 1.15; spd *= 1.06; }
+    if (mark === 'lifesteal') { eff.lifestealPct = Math.min(0.45, eff.lifestealPct ?? 0); spd *= 1.12; }
+  }
   return {
     name: c.name, race: c.race, tex: k.tex, lv: c.lv,
     hp: Math.max(1, Math.round(hp)), atk: Math.max(1, Math.round(atk)), def: Math.round(def),

@@ -50,6 +50,9 @@ try {
     __debug.setTab('throne');
     const ready = __debug.progression;
     __debug.startBattle();
+    const briefing = __debug.raidBriefing;
+    __debug.confirmRaidBriefing();
+    const briefingArchived = __debug.story.archive.some((x) => x.key === 'raid-briefing:1');
     const battle = __debug.battle;
     __debug.backManage();
     const unlocks = {};
@@ -66,12 +69,15 @@ try {
       unlocks[raid] = { tabs: before.visibleTabs, kinds: before.recruitKinds, guide: before.guide, features: before.features,
         heroGift: before.heroGift, complete: __debug.progression.teachingComplete };
     }
-    return { initial, hiddenRouteBlocked, afterSlime, ready, battle, unlocks };
+    return { initial, hiddenRouteBlocked, afterSlime, ready, briefing, briefingArchived, battle, unlocks };
   });
   assert(JSON.stringify(onboarding.initial.visibleTabs) === JSON.stringify(['throne', 'dungeon', 'mob']), 'First raid exposed locked pages.');
   assert(onboarding.initial.enemyClasses.length === 1 && onboarding.initial.enemyClasses[0] === 'knight', 'First raid is not a single swordsman.');
   assert(onboarding.hiddenRouteBlocked, 'A hidden page was still reachable directly.');
   assert(onboarding.afterSlime.tutorialStep === 2 && onboarding.ready.tutorialStep === 6 && onboarding.ready.deploymentReady, 'Guided recruitment/deployment did not advance.');
+  assert(onboarding.briefing?.no === 1 && onboarding.briefing.body.includes('地牢'),
+    `First raid did not show its pre-battle campaign story: ${JSON.stringify({ briefing: onboarding.briefing, ready: onboarding.ready, battle: onboarding.battle })}`);
+  assert(onboarding.briefingArchived, 'Confirmed campaign briefing was not added to the chronicle.');
   assert(onboarding.battle?.heroesAlive === 1, 'Guided battle did not start against one enemy.');
   assert(onboarding.unlocks[2].tabs.includes('report') && !onboarding.unlocks[2].tabs.includes('hero'), 'Raid 2 unlock schedule is incorrect.');
   assert(!onboarding.unlocks[3].tabs.includes('hero') && !onboarding.unlocks[3].tabs.includes('shop'), 'Raid 3 unlock schedule is incorrect.');
@@ -87,6 +93,17 @@ try {
   assert(onboarding.unlocks[7].features.equipmentForge && !onboarding.unlocks[7].features.heroTalent, 'Raid 7 forge unlock is incorrect.');
   assert(onboarding.unlocks[8].features.heroTalent && !onboarding.unlocks[8].features.heroGraft, 'Raid 8 talent unlock is incorrect.');
   assert(onboarding.unlocks[9].features.heroGraft, 'Raid 9 hero graft did not unlock.');
+
+  const lawAudit = await page.evaluate(() => {
+    const uid = __debug.monsters[0].uid;
+    __debug.devLawAudit('monster', uid, 'thorns');
+    const forced = __debug.lawAudit;
+    __debug.acceptLawAudit();
+    return { forced, marks: __debug.monsters.find((m) => m.uid === uid)?.lawMarks,
+      archived: __debug.story.archive.some((x) => x.sceneId === 'law-audit-thorns') };
+  });
+  assert(lawAudit.forced?.penalty.includes('55%') && lawAudit.marks?.includes('thorns') && lawAudit.archived,
+    'Forced law-limit story did not apply and archive its permanent tradeoff.');
 
   // A deliberately sparse legacy save must be upgraded, not rejected.
   await page.evaluate(() => localStorage.setItem('yqh-save-v2', JSON.stringify({ bone: 321, mana: 17, raidNo: 4, story: { archive: [] } })));
@@ -169,6 +186,7 @@ try {
     __debug.devAssign(0, 'back', guardB);
     __debug.devDev(8, 8);
     __debug.startBattle();
+    if (__debug.raidBriefing) __debug.confirmRaidBriefing();
     const facilityVisual = __debug.battle.utilityVisual;
     const battleRun = __debug.runBattleToEnd();
     const report = __debug.reports[0];
@@ -325,6 +343,8 @@ try {
   await clickPortraitAction('nav-throne');
   assert(await page.evaluate(() => __debug.progression.deploymentReady && __debug.progression.tutorialStep >= 6), 'Native portrait deployment did not complete the tutorial state.');
   await clickPortraitAction('primary');
+  assert(await page.evaluate(() => __debug.raidBriefing?.no === 1), 'Portrait onboarding did not open the first raid briefing.');
+  await clickPortraitAction('raidBriefingFight');
   assert(await page.evaluate(() => __debug.screen === 'battle' && __debug.battle?.heroesAlive === 1), 'Native portrait flow did not start the one-enemy teaching battle.');
   const portraitBattle = await page.evaluate(() => __debug.viewport());
   assert(portraitBattle.portraitLayout?.logicalLeft === 0 && portraitBattle.portraitLayout?.logicalWidth === 480,

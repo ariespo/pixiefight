@@ -1,8 +1,9 @@
 import * as PIXI from 'pixi.js';
-import { C, VIEW_W, VIEW_H, MONSTERS, HERO_CLASSES, THEMES, TRAPS, RAIDS, NORMAL_RAID_COUNT, AFFIXES, AURAS, LEVEL_MULT, UPGRADE_COST, XP_PER_LEVEL, TEXTURES, HERO_LV_MULT, SYNERGY, synergyOf, kindById, registerKinds, unregisterKind, isCustomKind, isEliteKind } from './data.js';
+import { C, VIEW_W, VIEW_H, MONSTERS, HERO_CLASSES, THEMES, TRAPS, RAIDS, RAID_BRIEFINGS, NORMAL_RAID_COUNT, AFFIXES, AURAS, LEVEL_MULT, UPGRADE_COST, XP_PER_LEVEL, TEXTURES, HERO_LV_MULT, SYNERGY, synergyOf, kindById, registerKinds, unregisterKind, isCustomKind, isEliteKind } from './data.js';
 import { GEARS, GEAR_SLOTS, GEAR_CAP, MELT_MANA, REFORGE_MANA, FRAMES, RUNES, TEMPERS, FORGED_CAP, craftCost, craftKind, craftName, frameById, runeById, runesFor, temperById, planValid, registerForged, gearById, gearEff, gearSet,                                                               } from './gear.js';
                                                                                         
-import { createBattle, stepBattle, ROOM_W, affixText, actionProgress, deployUtilityWorker, evacuateUtilityWorker } from './battle.js';
+import { createBattle, stepBattle, ROOM_W, affixText, actionProgress, deployUtilityWorker, evacuateUtilityWorker,
+  effectiveThorns, effectiveMitigationMultiplier } from './battle.js';
                                                                       
 import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, AFFIX_BUDGET, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, clampAffixDraft, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, legendaryPartCount, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
                                                                                                                           
@@ -54,10 +55,10 @@ const SAVE_KEY = 'yqh-save-v2';
 const META_KEY = 'yqh-meta-v1';
 
 const DOCTRINES = {
-  default: { id: 'default', name: '旧日法则', tag: '标准', desc: '没有额外修正。以完整的标准经济与战斗规则经营地牢。' },
-  swarm: { id: 'swarm', name: '群巢敕令', tag: '扩军', desc: '怪群扩编费用-30%，但怪物升级骨币费用+15%。适合多房消耗与频繁轮换。' },
-  elite: { id: 'elite', name: '精兵誓约', tag: '精锐', desc: '怪物与英雄战后经验+25%，但怪群编制上限少2。适合少数高等级核心。' },
-  economy: { id: 'economy', name: '深层经营', tag: '设施', desc: '设施产出+30%，但战斗直接获得的骨币与魔质-15%。适合长期建设。' },
+  default: { id: 'default', name: '守成王座', tag: '标准', desc: '封印上限+25%。经济与兵力保持标准规则，容错最高，适合稳步构筑四层防线。' },
+  swarm: { id: 'swarm', name: '群巢敕令', tag: '扩军', desc: '怪群编制+4；招募与扩编费用-40%。代价：怪物生命和攻击-15%，升级费用+30%。以数量、轮换和多房消耗取胜。' },
+  elite: { id: 'elite', name: '精兵誓约', tag: '精锐', desc: '怪物与英雄生命、攻击+30%，战后经验+75%，升级费用-25%。代价：怪群编制-2，招募费用+30%。' },
+  economy: { id: 'economy', name: '深层经营', tag: '设施', desc: '设施产出+100%，设施与扩层费用-35%。代价：战斗奖励-40%、封印上限-20%。用经营滚起后期优势。' },
 };
 const MONSTER_CAP_TIERS = [4, 6, 8, 10, 12, 14];
 const MONSTER_CAP_UNLOCK = [1, 4, 7, 10, 14, 18];
@@ -72,15 +73,26 @@ function loadMeta() {
 }
 function persistMeta() { localStorage.setItem(META_KEY, JSON.stringify(meta)); }
 function doctrine() { return DOCTRINES[S.doctrine] ?? DOCTRINES.default; }
-function monsterCap() { return Math.max(2, Math.round(S.monsterCap || MONSTER_CAP_TIERS[0]) - (S.doctrine === 'elite' ? 2 : 0)); }
+function monsterCap() { return Math.max(2, Math.round(S.monsterCap || MONSTER_CAP_TIERS[0]) + (S.doctrine === 'swarm' ? 4 : S.doctrine === 'elite' ? -2 : 0)); }
 function nextMonsterCapTier() {
   const baseCap = Math.round(S.monsterCap || MONSTER_CAP_TIERS[0]);
   const index = MONSTER_CAP_TIERS.findIndex((n) => n > baseCap);
   if (index < 0) return null;
   const raw = MONSTER_CAP_COST[index];
-  const discount = S.doctrine === 'swarm' ? 0.7 : 1;
-  return { index, cap: MONSTER_CAP_TIERS[index] - (S.doctrine === 'elite' ? 2 : 0), unlock: MONSTER_CAP_UNLOCK[index],
+  const discount = S.doctrine === 'swarm' ? 0.6 : 1;
+  return { index, cap: MONSTER_CAP_TIERS[index] + (S.doctrine === 'swarm' ? 4 : S.doctrine === 'elite' ? -2 : 0), unlock: MONSTER_CAP_UNLOCK[index],
     bone: Math.round(raw.bone * discount), mana: raw.mana };
+}
+
+function doctrineCost(kind, bone, mana = 0) {
+  let mult = 1;
+  if (kind === 'facility' && S.doctrine === 'economy') mult = 0.65;
+  if (kind === 'floor' && S.doctrine === 'economy') mult = 0.65;
+  if (kind === 'recruit' && S.doctrine === 'swarm') mult = 0.60;
+  if (kind === 'recruit' && S.doctrine === 'elite') mult = 1.30;
+  if (kind === 'upgrade' && S.doctrine === 'swarm') mult = 1.30;
+  if (kind === 'upgrade' && S.doctrine === 'elite') mult = 0.75;
+  return { bone: Math.max(0, Math.ceil(bone * mult)), mana: Math.max(0, Math.ceil(mana * mult)) };
 }
 
 const MAX_FLOORS = 6;
@@ -130,6 +142,7 @@ function freshSave(selectedDoctrine = 'default')       {
     sealLv: 0, trapLv: 0,
     best: {}, reports: [],
     overtime: false, otRaid: NORMAL_RAID_COUNT + 1, clearRecorded: false,
+    raidBriefingsSeen: [],
     customs: [], cstNext: 1,
     diy: [], diyNext: 1,
     diyAf: [], diyAfNext: 1,
@@ -212,6 +225,8 @@ function sanitizeSave() {
   if (Math.round(S.campaignVersion || 0) < 2 && S.overtime) S.otRaid = Math.max(NORMAL_RAID_COUNT + 1, Math.round(S.otRaid || 13) + 8);
   S.campaignVersion = 2;
   S.doctrine = S.doctrine in DOCTRINES ? S.doctrine : 'default';
+  S.raidBriefingsSeen = Array.isArray(S.raidBriefingsSeen)
+    ? [...new Set(S.raidBriefingsSeen.map((n) => Math.round(n)).filter((n) => n >= 1 && n <= NORMAL_RAID_COUNT))] : [];
   const legacyCap = MONSTER_CAP_TIERS.find((n) => n >= Math.max(MONSTER_CAP_TIERS[0], S.monsters?.length || 0))
     ?? MONSTER_CAP_TIERS.at(-1);
   S.monsterCap = MONSTER_CAP_TIERS.includes(Math.round(S.monsterCap)) ? Math.round(S.monsterCap) : legacyCap;
@@ -293,6 +308,7 @@ function sanitizeSave() {
   S.monsters = S.monsters.filter((m) => kindById(m.kind) != null || S.customs.some((d) => d.id === m.kind));
   // 改造件：清掉已不存在的部件 id（拆解 DIY 造件后旧存档里可能残留），并截到上限
   for (const m of S.monsters) {
+    m.lawMarks = Array.isArray(m.lawMarks) ? [...new Set(m.lawMarks.filter((x) => x in LAW_AUDIT_TEXT))] : [];
     if (!Array.isArray(m.graft)) { delete m.graft; continue; }
     const ok = m.graft.filter((id) => typeof id === 'string' && partById(id)).slice(0, GRAFT_CAP);
     if (ok.length) m.graft = ok; else delete m.graft;
@@ -338,6 +354,7 @@ function sanitizeSave() {
     c.wounds = Math.max(0, Math.min(WOUND_CAP, Math.round(c.wounds || 0)));
     c.activeTitle = c.activeTitle ?? '';
     c.stats = c.stats ?? {};
+    c.lawMarks = Array.isArray(c.lawMarks) ? [...new Set(c.lawMarks.filter((x) => x in LAW_AUDIT_TEXT))] : [];
     c.traits = (Array.isArray(c.traits) ? c.traits : []).filter((t) => t in TRAITS).slice(0, 2);
     c.talents = (Array.isArray(c.talents) ? c.talents : []).filter((t) => t in TALENTS).slice(0, talentSlots(c));
     // 英雄可改造全身四部位；清除旧档中的无效件和重复部位。
@@ -554,7 +571,7 @@ function utilityOutput(floorIndex) {
   const condition = u.persona === 'steadfast' && u.condition <= 50 ? Math.min(1, rawCondition + 0.15) : rawCondition;
   const staffed = workerEff(u);
   const personaYield = u.persona === 'ambitious' ? 1.1 : 1;
-  const doctrineYield = S.doctrine === 'economy' ? 1.3 : 1;
+  const doctrineYield = S.doctrine === 'economy' ? 2 : 1;
   const mult = depth * condition * staffed * personaYield * doctrineYield;
   const targets = u.trainTargets.map((x) => ({ ...x }));
   return {
@@ -574,6 +591,7 @@ function utilityOutput(floorIndex) {
 
 function utilityBuildDetail(kind, floorIndex) {
   const d = UTILITY_KINDS[kind];
+  const cost = doctrineCost('facility', d.bone, d.mana);
   const depth = Math.round((DEPTH_MULT[floorIndex] ?? 0.8) * 100);
   const effect = kind === 'bone-yard' ? `Lv1基础每轮10骨币；本层深度效率${depth}%，可指派员工。`
     : kind === 'mana-well' ? `Lv1基础每轮3魔质；本层深度效率${depth}%，可指派员工。`
@@ -582,7 +600,7 @@ function utilityBuildDetail(kind, floorIndex) {
           : kind === 'workshop' ? 'Lv1每轮提供10维修点，并提供1次5%的锻造或改造优惠。'
             : kind === 'hatchery' ? 'Lv1每轮提供1次普通怪物招募优惠，骨币消耗降低8%。'
               : 'Lv1保护20骨币与5魔质；被攻破后保护能力会随损坏下降。';
-  return `${d.desc}\n${effect}\n建造成本：${d.bone}骨币${d.mana ? `＋${d.mana}魔质` : ''}。`;
+  return `${d.desc}\n${effect}\n建造成本：${cost.bone}骨币${cost.mana ? `＋${cost.mana}魔质` : ''}。`;
 }
 
 function repairQuote(u) {
@@ -607,7 +625,8 @@ function consumeWorkshopCharge(quote) {
 function recruitQuote(k) {
   const eligible = !isCustomKind(k.id) && !k.legend && S.dungeon.hatcheryCharges > 0;
   const discount = eligible ? S.dungeon.hatcheryDiscount : 0;
-  return { cost: Math.max(1, Math.ceil(k.cost * (1 - discount))), discount };
+  const base = doctrineCost('recruit', k.cost).bone;
+  return { cost: Math.max(1, Math.ceil(base * (1 - discount))), discount, base };
 }
 
 function consumeHatcheryCharge(quote) {
@@ -649,7 +668,7 @@ function dungeonEconomyPreview() {
 function utilityUpgradeCost(u) {
   const d = utilityDef(u);
   const mult = u.level === 1 ? 1.5 : 2.5;
-  return { bone: Math.round(d.bone * mult), mana: Math.round(d.mana * mult) };
+  return doctrineCost('facility', Math.round(d.bone * mult), Math.round(d.mana * mult));
 }
 
 function facilityActionAvailable() { return S.dungeon.facilityActionRaid !== S.raidNo; }
@@ -658,8 +677,9 @@ function buildUtility(floorIndex, kind) {
   const floor = S.floors[floorIndex], d = UTILITY_KINDS[kind];
   if (!floor || !d || kind === 'none' || floor.utility.kind !== 'none') return;
   if (!facilityActionAvailable()) { say('本轮已经建设过设施，完成下一次袭击后才能继续'); return; }
-  if (S.bone < d.bone || S.mana < d.mana) { say('建造资源不足'); return; }
-  S.bone -= d.bone; S.mana -= d.mana;
+  const cost = doctrineCost('facility', d.bone, d.mana);
+  if (S.bone < cost.bone || S.mana < cost.mana) { say('建造资源不足'); return; }
+  S.bone -= cost.bone; S.mana -= cost.mana;
   floor.utility = freshUtilityRoom({ kind, level: 1, condition: 100, workerUid: null, trainTargets: [] });
   S.dungeon.facilityActionRaid = S.raidNo;
   addFacilityHistory(floorIndex, 'built', `${d.name}建成`);
@@ -779,7 +799,8 @@ function demolishUtility(floorIndex) {
 
 function expandFloor() {
   if (S.floors.length >= MAX_FLOORS) { say('地牢已达到六层上限'); return; }
-  const cost = FLOOR_EXPAND[S.floors.length];
+  const raw = FLOOR_EXPAND[S.floors.length];
+  const cost = raw && doctrineCost('floor', raw.bone, raw.mana);
   if (!cost || S.bone < cost.bone || S.mana < cost.mana) { say('扩层资源不足'); return; }
   S.bone -= cost.bone; S.mana -= cost.mana;
   S.floors.push(freshFloor(S.floors.length + 1));
@@ -1009,10 +1030,7 @@ function makeOvertimeRaid(no        )          {
 const MONSTER_UPGRADE_MANA = [0, 0, 12, 28];
 function monsterUpgradeQuote(inst) {
   const index = Math.max(0, Math.min(UPGRADE_COST.length - 1, inst.lv - 1));
-  return {
-    bone: Math.round(UPGRADE_COST[index] * (S.doctrine === 'swarm' ? 1.15 : 1)),
-    mana: MONSTER_UPGRADE_MANA[index],
-  };
+  return doctrineCost('upgrade', UPGRADE_COST[index], MONSTER_UPGRADE_MANA[index]);
 }
 function upgradeMonster(inst) {
   if (!inst || inst.lv >= 5) return false;
@@ -1022,7 +1040,12 @@ function upgradeMonster(inst) {
   playSfx('buy'); persist(); say(`${instKind(inst).name} 升到 Lv${inst.lv}`); render();
   return true;
 }
-function heroUpgradeMana(c) { return c.lv < 5 ? 0 : [10, 15, 20, 30, 45][Math.min(4, c.lv - 5)]; }
+function heroUpgradeQuote(c) {
+  const mana = c.lv < 5 ? 0 : [10, 15, 20, 30, 45][Math.min(4, c.lv - 5)];
+  return doctrineCost('upgrade', upCostOf(c), mana);
+}
+function heroUpgradeMana(c) { return heroUpgradeQuote(c).mana; }
+function heroUpgradeBone(c) { return heroUpgradeQuote(c).bone; }
 function expandMonsterCap() {
   const next = nextMonsterCapTier();
   if (!next) { say('怪群编制已经扩至上限'); return; }
@@ -1235,6 +1258,8 @@ let champTitleExpand                     = '';         // 详情页当前展开�
 let gearSlotSel           = 'crown';                 // 装备页当前编辑的槽
 let talentPreview = null;                            // 专精页预览；确认前不写存档
 let detailPopup = null;                              // 统一长说明弹层
+let raidBriefing = null;                             // 正式战役战前章回；确认后才真正开战
+let lawAudit = null;                                 // 属性触及法则极限时强制触发的永久处罚秘闻
 let relicForgeConfirm = false;                       // 英雄遗物熔铸二次确认
 let monDetailMode = false;                             // 已招募魔物卡片默认/详情切换
 let lastSelInstUid        = null;                      // 用于切换魔物实例时重置详情模式
@@ -1258,6 +1283,57 @@ function closeDetailPopup() {
   detailPopup = null;
   playSfx('tab');
   render();
+}
+
+const LAW_AUDIT_TEXT = {
+  thorns: { title: '反伤超过了工伤保险范围', penalty: '原始反伤永久压至55%', boon: '攻击永久提高18%',
+    body: '法则审计员发现该角色只要站着就能让攻击者先死。这会导致战斗部门失去存在意义，也会让保险部门获得存在意义。经紧急表决，尖刺被磨钝一部分；作为补偿，磨下来的铁被铸进了武器。' },
+  mitigation: { title: '伤害拒绝进入当事人账户', penalty: '受伤倍率永久不得低于35%', boon: '生命永久提高20%',
+    body: '伤害连续三次投递失败后向法则管理处投诉。审计结果显示，该角色已接近“概念上存在、物理上不收件”。管理处强制打开一条伤害通道，并补发一条更长的血条，方便损失看起来仍然体面。' },
+  defense: { title: '盔甲被认定为违章建筑', penalty: '防御永久削减30%', boon: '攻击提高15%，速度提高6%',
+    body: '工程署测量后确认，这已经不是盔甲，而是一座未经许可、还能自行走动的城堡。拆迁队削掉了最厚的外墙；角色因此终于能弯腰，也第一次发现武器原来可以挥得这么快。' },
+  lifesteal: { title: '生命回收形成市场垄断', penalty: '吸血永久压至45%', boon: '速度永久提高12%',
+    body: '该角色吸走的生命已经超过战场自然死亡总额。死神工会以恶性竞争为由发起仲裁。抽成比例被强制下调，但获准更频繁地出手——这样每一口少一点，总量看起来就不那么可疑。' },
+};
+
+function lawKindOf(stats) {
+  if ((stats.eff?.thorns ?? 0) >= 0.75) return 'thorns';
+  if ((stats.dmgTakenMult ?? 1) * (stats.eff?.dmgTakenMult ?? 1) <= 0.25) return 'mitigation';
+  if ((stats.def ?? 0) >= 100) return 'defense';
+  if ((stats.eff?.lifestealPct ?? 0) >= 0.75) return 'lifesteal';
+  return null;
+}
+function lawMarkSummary(marks = []) {
+  return marks.map((kind) => LAW_AUDIT_TEXT[kind] ? `${LAW_AUDIT_TEXT[kind].penalty}；${LAW_AUDIT_TEXT[kind].boon}` : '').filter(Boolean).join('；');
+}
+
+function findLawAudit() {
+  const chem = chemMap();
+  for (const c of S.champs) {
+    const kind = lawKindOf(statOf(c, chem));
+    if (kind && !(c.lawMarks ?? []).includes(kind)) return { type: 'hero', uid: c.uid, name: c.name, kind, ...LAW_AUDIT_TEXT[kind] };
+  }
+  for (const inst of S.monsters) {
+    const k = instKind(inst), mult = LEVEL_MULT[inst.lv - 1] ?? 1;
+    const stats = { hp: k.hp * mult, atk: k.atk * mult, def: k.def * mult, spd: k.spd,
+      dmgTakenMult: k.eff?.dmgTakenMult ?? 1, eff: k.eff ?? {} };
+    const kind = lawKindOf(stats);
+    if (kind && !(inst.lawMarks ?? []).includes(kind)) return { type: 'monster', uid: inst.uid, name: k.name, kind, ...LAW_AUDIT_TEXT[kind] };
+  }
+  return null;
+}
+
+function acceptLawAudit() {
+  if (!lawAudit) return;
+  const target = lawAudit.type === 'hero' ? champById(lawAudit.uid) : instById(lawAudit.uid);
+  if (target) {
+    target.lawMarks = [...new Set([...(target.lawMarks ?? []), lawAudit.kind])];
+    S.story.archive.unshift({ id: S.story.leadNext++, sceneId: `law-audit-${lawAudit.kind}`, source: '强制秘闻・法则审计',
+      title: `${lawAudit.name}・${lawAudit.title}`, summary: lawAudit.body, resolvedRaid: S.raidNo,
+      outcome: `${lawAudit.penalty}；${lawAudit.boon}`, effects: '永久生效', refs: [], battleRefs: [] });
+  }
+  lawAudit = null;
+  persist(); playSfx('break'); say('法则处罚已经永久写入角色档案'); scheduleLayout(); render();
 }
 
 // ---------- PIXI 启动 ----------
@@ -1503,9 +1579,9 @@ let portraitHeroSection = 'status';
 let portraitHeroDetail = false;
 function portraitNativeManage() {
   return portrait && screen === 'manage' && PORTRAIT_NATIVE_TABS.has(tab)
-    && !portraitNativeBypass && !stitch && !forge && !graft && !smith;
+    && !portraitNativeBypass && !lawAudit && !raidBriefing && !stitch && !forge && !graft && !smith;
 }
-function portraitModalOpen() { return portrait && screen === 'manage' && (!!stitch || !!forge || !!graft || !!smith); }
+function portraitModalOpen() { return portrait && screen === 'manage' && (!!lawAudit || !!raidBriefing || !!stitch || !!forge || !!graft || !!smith); }
 function closePortraitModal() {
   if (stitch) closeStitch(); else if (forge) closeForge(); else if (graft) closeGraft(); else if (smith) closeSmith();
   portraitNativeBypass = false;
@@ -1572,6 +1648,10 @@ function bindInput() {
       }
       return;
     } else if (screen === 'manage') {
+      if (lawAudit || raidBriefing) {
+        if (e.key === 'Enter') { if (lawAudit) acceptLawAudit(); else confirmRaidBriefing(); }
+        return;
+      }
       if (smith) {
         if (e.key === 'Escape') { closeSmith(); return; }
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -1713,7 +1793,11 @@ function render() {
   portraitChromeKey = '';
   if (nameInput) nameInput.style.display = screen === 'manage' && (stitch || smith) && !detailPopup ? 'block' : 'none';
   if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !detailPopup ? 'block' : 'none';
-  const modalOpen = screen === 'manage' && (!!stitch || !!forge || !!graft || !!smith);
+  if (screen === 'manage' && !lawAudit && !raidBriefing && !detailPopup && !stitch && !forge && !graft && !smith) {
+    lawAudit = findLawAudit();
+    if (lawAudit && portrait) scheduleLayout();
+  }
+  const modalOpen = screen === 'manage' && (!!lawAudit || !!raidBriefing || !!stitch || !!forge || !!graft || !!smith);
   if (portrait && screen === 'manage' && (modalOpen || detailPopup) && portraitPane !== 0) {
     portraitPane = 0;
     scheduleLayout();
@@ -1743,7 +1827,9 @@ function render() {
   }
   // 模态期间不画背后页面：0.88 遮罩压不住 12px 点阵字，两层文字会互相糊成一片
   if (modalOpen) {
-    if (stitch) drawStitch();
+    if (lawAudit) drawLawAudit();
+    else if (raidBriefing) drawRaidBriefing();
+    else if (stitch) drawStitch();
     else if (graft) drawGraft();
     else if (smith) drawSmith();
     else drawForge();
@@ -1764,6 +1850,43 @@ function render() {
   drawProgressGuide();
   syncStoryInput();
   ensurePortraitChrome();
+}
+
+function drawRaidBriefing() {
+  const scene = raidBriefing;
+  if (!scene) return;
+  const g = modalGfx;
+  g.rect(0, 0, VIEW_W, VIEW_H).fill(C.bg);
+  if (TEX['tile-wall']) {
+    const wall = new PIXI.TilingSprite({ texture: TEX['tile-wall'], width: VIEW_W, height: VIEW_H });
+    wall.tileScale.set(0.72); wall.tint = 0x292039; wall.alpha = 0.54; modalLayer.addChildAt(wall, 1);
+  }
+  panelF(g, modalLayer, 'scroll', 44, 24, 392, 222, C.wall);
+  labelC(modalLayer, `第${scene.no}轮・${scene.title}`, 240, 38, 15, C.gold);
+  labelC(modalLayer, scene.speaker, 240, 62, 10, C.purple);
+  boundedText(modalLayer, scene.body, 72, 84, 336, 82, 12, C.bone);
+  panelF(g, modalLayer, 'stone', 68, 172, 344, 35, C.wall);
+  boundedText(modalLayer, `王座回应：${scene.reply}`, 82, 182, 316, 17, 10, C.stoneLit);
+  hits.add(44, 24, 392, 222, () => { /* 战前章回不可点穿，也不可跳过 */ });
+  button(g, modalLayer, hits, 146, 214, 188, 26, '迎战吧', confirmRaidBriefing,
+    { size: 13, fill: C.redDark, border: C.gold, color: C.white });
+}
+
+function drawLawAudit() {
+  const scene = lawAudit;
+  if (!scene) return;
+  const g = modalGfx;
+  g.rect(0, 0, VIEW_W, VIEW_H).fill(C.bg);
+  panelF(g, modalLayer, 'scroll', 42, 18, 396, 234, C.red);
+  labelC(modalLayer, '强制秘闻・法则审计', 240, 31, 14, C.red);
+  labelC(modalLayer, `${scene.name}：${scene.title}`, 240, 55, 12, C.gold);
+  boundedText(modalLayer, scene.body, 68, 78, 344, 78, 11, C.bone);
+  panelF(g, modalLayer, 'stone', 66, 162, 348, 47, C.wall);
+  label(modalLayer, `处罚：${scene.penalty}`, 78, 173, 10, C.red);
+  label(modalLayer, `补偿：${scene.boon}`, 78, 190, 10, C.green);
+  hits.add(42, 18, 396, 234, () => { /* 强制秘闻必须确认，不允许点背景跳过 */ });
+  button(g, modalLayer, hits, 136, 218, 208, 27, '接受处罚并归档', acceptLawAudit,
+    { size: 12, fill: C.redDark, border: C.gold, color: C.white });
 }
 
 function drawDetailPopup() {
@@ -3062,7 +3185,7 @@ function toggleMute() {
 }
 
 function clearTransientUi() {
-  sel = null; heroSel = null; detailPopup = null; stitch = null; forge = null; graft = null; smith = null;
+  sel = null; heroSel = null; detailPopup = null; raidBriefing = null; lawAudit = null; stitch = null; forge = null; graft = null; smith = null;
   battle = null; battleLayer.visible = false; confirmNew = false; titleNewConfirm = false;
   for (const c of overlay.removeChildren()) c.destroy({ children: true });
   hits.clear(); endingBuilt = false; endingActionRect = null; endingRebirthRect = null;
@@ -3145,7 +3268,7 @@ function buildTitle() {
   });
   const picked = DOCTRINES[titleDoctrinePick] ?? DOCTRINES.default;
   panelF(bg, overlay, 'scroll', 42, 160, 396, 54, C.wall);
-  boundedText(overlay, picked.desc, 58, 173, 364, 30, 10, C.bone, { align: 'center' });
+  boundedText(overlay, picked.desc, 58, 171, 364, 38, 9, C.bone);
   titleActionRects.back = { x: 82, y: 224, w: 120, h: 30 };
   titleActionRects.confirm = { x: 278, y: 224, w: 120, h: 30 };
   button(bg, overlay, hits, 82, 224, 120, 30, '返回', () => { titleMode = 'main'; titleNewConfirm = false; render(); }, { size: 12 });
@@ -3389,13 +3512,14 @@ function drawPortraitFacility(x, y, w, h, floor) {
     const pg = portraitPage(kinds, `portrait-facility-build-${floor}`, Math.max(2, Math.min(5, Math.floor((h - 98) / 64))));
     pg.view.forEach((kind, i) => {
       const def = UTILITY_KINDS[kind], cy = y + 48 + i * 64, active = sel.buildKind === kind;
+      const buildCost = doctrineCost('facility', def.bone, def.mana);
       portraitGfx.roundRect(x + 8, cy, w - 16, 58, 4).fill(active ? C.wallLit : C.wall)
         .stroke({ width: 1, color: active ? C.gold : def.color, alignment: 0 });
       label(portraitLayer, def.name, x + 20, cy + 7, 15, active ? C.gold : def.color);
       label(portraitLayer, cut(def.desc, 22), x + 20, cy + 31, 11, C.stoneLit);
-      button(portraitGfx, portraitLayer, portraitHits, x + w - 112, cy + 10, 96, 38, `${def.bone}骨${def.mana ? ` ${def.mana}魔` : ''}`, () => {
+      button(portraitGfx, portraitLayer, portraitHits, x + w - 112, cy + 10, 96, 38, `${buildCost.bone}骨${buildCost.mana ? ` ${buildCost.mana}魔` : ''}`, () => {
         if (sel.buildKind === kind) buildUtility(floor, kind); else { sel = { kind: 'utility', floor, buildKind: kind }; playSfx('tab'); render(); }
-      }, { size: 12, enabled: sel.buildKind !== kind || (facilityActionAvailable() && S.bone >= def.bone && S.mana >= def.mana),
+      }, { size: 12, enabled: sel.buildKind !== kind || (facilityActionAvailable() && S.bone >= buildCost.bone && S.mana >= buildCost.mana),
         fill: active ? C.greenDark : C.ink, border: active ? C.green : def.color, color: active ? C.white : def.color });
     });
     labelC(portraitLayer, sel.buildKind ? '再次点击价格按钮确认建造' : '先选择设施，再次点击确认建造', x + w / 2, y + h - 58, 12, sel.buildKind ? C.gold : C.stoneLit);
@@ -3479,12 +3603,13 @@ function drawPortraitShop(x, y, w, h) {
 function drawPortraitHeroStatus(x, y, w, h, c) {
   const st = statOf(c, chemistry(S.champs, seatedChampUids()).map);
   const lines = [`生命 ${st.hp}　攻击 ${st.atk}`, `防御 ${st.def}　攻速 ${st.spd.toFixed(2)}`,
-    `出战 ${c.battles}　击倒 ${c.kills}`, c.restTurns ? `强制休息还需 ${c.restTurns} 回合` : `出战计数 ${c.sortiesSinceRest || 0}/${HERO_SORTIE_LIMIT}`];
+    `出战 ${c.battles}　击倒 ${c.kills}${c.lawMarks?.length ? `　法则印记${c.lawMarks.length}` : ''}`,
+    c.restTurns ? `强制休息还需 ${c.restTurns} 回合` : `出战计数 ${c.sortiesSinceRest || 0}/${HERO_SORTIE_LIMIT}`];
   lines.forEach((line, i) => label(portraitLayer, line, x + 14, y + 12 + i * 25, 14, i === 3 && c.restTurns ? C.red : C.bone));
   if (c.lv < CHAMP_LV_CAP) {
-    label(portraitLayer, `经验 ${c.xp}/${xpNeed(c.lv)}　升级 ${upCostOf(c)}骨${heroUpgradeMana(c) ? ` ${heroUpgradeMana(c)}魔` : ''}`, x + 14, y + 118, 13, C.gold);
+    label(portraitLayer, `经验 ${c.xp}/${xpNeed(c.lv)}　升级 ${heroUpgradeBone(c)}骨${heroUpgradeMana(c) ? ` ${heroUpgradeMana(c)}魔` : ''}`, x + 14, y + 118, 13, C.gold);
     button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 146, w - 16, 40, '升级英雄', () => levelChamp(c),
-      { size: 15, enabled: canLevel(c) && S.bone >= upCostOf(c) && S.mana >= heroUpgradeMana(c), fill: C.greenDark, border: C.green, color: C.white });
+      { size: 15, enabled: canLevel(c) && S.bone >= heroUpgradeBone(c) && S.mana >= heroUpgradeMana(c), fill: C.greenDark, border: C.green, color: C.white });
   }
   if (c.restTurns) button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 194, w - 16, 40, `疗愈 ${REST_MANA}魔・休息-1`, () => restChamp(c),
     { size: 14, enabled: healingCapacity() > 0 && S.dungeon.healingCharges > 0 && S.mana >= REST_MANA, border: C.green, color: C.green });
@@ -3791,11 +3916,14 @@ function drawPortraitModalChrome() {
   const w = app.screen.width, h = app.screen.height;
   const top = Math.max(0, Math.ceil(portraitContentBottom));
   portraitGfx.rect(0, top, w, Math.min(64, h - top)).fill(C.bg).stroke({ width: 2, color: C.wallLit, alignment: 0 });
-  const name = stitch ? '怪物创造' : graft ? '部件改造' : smith ? '装备锻造' : '叙事工坊';
-  label(portraitLayer, `${name}・完整工作台`, 14, top + 17, 15, C.gold);
-  button(portraitGfx, portraitLayer, portraitHits, w - 128, top + 8, 114, 44, '关闭工作台', closePortraitModal,
-    { size: 15, border: C.red, color: C.red });
-  portraitActionMap.modalClose = { x: w - 128, y: top + 8, w: 114, h: 44 };
+  const forced = lawAudit || raidBriefing;
+  const name = lawAudit ? '法则审计' : raidBriefing ? `第${raidBriefing.no}轮战前剧情` : stitch ? '怪物创造' : graft ? '部件改造' : smith ? '装备锻造' : '叙事工坊';
+  label(portraitLayer, forced ? name : `${name}・完整工作台`, 14, top + 17, 15, forced && lawAudit ? C.red : C.gold);
+  const action = lawAudit ? acceptLawAudit : raidBriefing ? confirmRaidBriefing : closePortraitModal;
+  const actionName = lawAudit ? '接受处罚' : raidBriefing ? '迎战吧' : '关闭工作台';
+  button(portraitGfx, portraitLayer, portraitHits, w - 128, top + 8, 114, 44, actionName, action,
+    { size: 15, border: forced ? C.gold : C.red, color: forced ? C.white : C.red, fill: forced ? C.redDark : C.wall });
+  portraitActionMap[lawAudit ? 'lawAuditAccept' : raidBriefing ? 'raidBriefingFight' : 'modalClose'] = { x: w - 128, y: top + 8, w: 114, h: 44 };
   portraitLayoutInfo = { nativeModal: true, contentTop: root.y, contentBottom: portraitContentBottom, primaryY: top + 8, bottom: Math.min(h, top + 64) };
 }
 
@@ -3841,9 +3969,9 @@ function drawPortraitTitle() {
     portraitActionMap[`doctrine-${d.id}`] = { x, y, w: w - margin * 2, h: cardH };
   });
   const detailY = listY + 4 * (cardH + 8) + 4;
-  panelF(portraitGfx, portraitLayer, 'scroll', margin, detailY, w - margin * 2, 86, C.wall);
-  boundedText(portraitLayer, (DOCTRINES[titleDoctrinePick] ?? DOCTRINES.default).desc, margin + 18, detailY + 15, w - margin * 2 - 36, 58, 14, C.bone);
-  const bottomY = Math.min(h - 70, detailY + 98), bw = Math.floor((w - margin * 2 - 10) / 2);
+  panelF(portraitGfx, portraitLayer, 'scroll', margin, detailY, w - margin * 2, 98, C.wall);
+  boundedText(portraitLayer, (DOCTRINES[titleDoctrinePick] ?? DOCTRINES.default).desc, margin + 18, detailY + 13, w - margin * 2 - 36, 72, 13, C.bone);
+  const bottomY = Math.min(h - 70, detailY + 110), bw = Math.floor((w - margin * 2 - 10) / 2);
   button(portraitGfx, portraitLayer, portraitHits, margin, bottomY, bw, 52, '返回', () => { titleMode = 'main'; titleNewConfirm = false; render(); }, { size: 17 });
   button(portraitGfx, portraitLayer, portraitHits, margin + bw + 10, bottomY, bw, 52, '以此方针开局', () => beginNewRun(titleDoctrinePick),
     { size: 16, fill: C.purpleDark, border: C.gold, color: C.white });
@@ -4066,9 +4194,9 @@ function pageThrone(g               ) {
   uiLayer.addChild(th);
   const sealW = 110;
   bar(g, 350, 122, sealW, 8, 1, C.purple);
-  const sealEff = Math.max(25, sealMax() + battleMods().sealAdd);
-  labelC(uiLayer, sealEff === sealMax() ? `封印 ${sealEff}` : `封印 ${sealEff}（${sealMax()}）`, 405, 133, 12,
-    sealEff < sealMax() ? C.red : C.purple);
+  const doctrineSeal = S.doctrine === 'default' ? 1.25 : S.doctrine === 'economy' ? 0.8 : 1;
+  const sealEff = Math.max(25, Math.round((sealMax() + battleMods().sealAdd) * doctrineSeal));
+  labelC(uiLayer, `封印 ${sealEff}・${doctrine().tag}`, 405, 133, 12, doctrineSeal < 1 ? C.red : C.purple);
   labelC(uiLayer, '突围勇者每名 -25', 405, 148, 12, C.stoneLit);
   labelC(uiLayer, placed === 0 ? '空防必败' : cut(`待产＋${economy.bone}骨＋${economy.mana}魔`, 14), 405, 163, 11, placed === 0 ? C.red : C.gold);
   button(g, uiLayer, hits, 344, 181, 122, 30, '迎 战', () => startBattle(), { fill: C.redDark, border: C.red, color: C.white });
@@ -4086,7 +4214,8 @@ function pageDungeon(g               ) {
   const eco = dungeonEconomyPreview();
   label(uiLayer, `地牢 ${S.floors.length}层  预计＋${eco.bone}骨＋${eco.mana}魔`, 8, 40, 12, C.white);
   if (featureOpen('dungeonTools') && S.floors.length < MAX_FLOORS) {
-    const cost = FLOOR_EXPAND[S.floors.length];
+    const raw = FLOOR_EXPAND[S.floors.length];
+    const cost = doctrineCost('floor', raw.bone, raw.mana);
     button(g, uiLayer, hits, 236, 39, 90, 14, `扩层${cost.bone}骨${cost.mana ? `${cost.mana}魔` : ''}`, () => expandFloor(),
       { size: 10, enabled: S.bone >= cost.bone && S.mana >= cost.mana, border: C.goldDark, color: C.gold });
   } else if (featureOpen('dungeonTools')) label(uiLayer, '已达六层', 272, 40, 10, C.gold);
@@ -4223,12 +4352,13 @@ function drawSidePanel(g               ) {
       let y = 76;
       for (const kind of pk.view) {
         const k = UTILITY_KINDS[kind];
-        const can = facilityActionAvailable() && S.bone >= k.bone && S.mana >= k.mana;
+        const buildCost = doctrineCost('facility', k.bone, k.mana);
+        const can = facilityActionAvailable() && S.bone >= buildCost.bone && S.mana >= buildCost.mana;
         const active = sel.buildKind === kind;
         g.rect(340, y, 130, 21).fill(active ? C.wallLit : C.ink)
           .stroke({ width: 1, color: active ? C.gold : can ? k.color : C.wallLit, alignment: 0 });
         label(uiLayer, k.name, 344, y + 4, 10, active ? C.gold : can ? k.color : C.stoneLit);
-        label(uiLayer, `${k.bone}骨${k.mana ? `＋${k.mana}魔` : ''}`, 408, y + 4, 9, can ? C.bone : C.redDark);
+        label(uiLayer, `${buildCost.bone}骨${buildCost.mana ? `＋${buildCost.mana}魔` : ''}`, 408, y + 4, 9, can ? C.bone : C.redDark);
         hits.add(340, y, 130, 21, () => { sel = { kind: 'utility', floor, buildKind: kind }; playSfx('tab'); render(); });
         y += 23;
       }
@@ -4239,8 +4369,9 @@ function drawSidePanel(g               ) {
         return;
       }
       const preview = UTILITY_KINDS[previewKind];
+      const buildCost = doctrineCost('facility', preview.bone, preview.mana);
       const body = utilityBuildDetail(previewKind, floor);
-      const canBuild = facilityActionAvailable() && S.bone >= preview.bone && S.mana >= preview.mana;
+      const canBuild = facilityActionAvailable() && S.bone >= buildCost.bone && S.mana >= buildCost.mana;
       label(uiLayer, `${preview.name}・建造预览`, 340, 146, 10, preview.color);
       boundedText(uiLayer, body, 340, 159, 130, 52, 7, C.bone);
       button(g, uiLayer, hits, 340, 214, 36, 16, '全文', () => openDetailPopup(`${preview.name}・设施介绍`, body, preview.color),
@@ -4494,6 +4625,7 @@ function drawSidePanel(g               ) {
     } else {
       label(uiLayer, '已达满级', 340, 170, 12, C.gold);
     }
+    if (inst.lawMarks?.length) label(uiLayer, cut(`法则印记：${lawMarkSummary(inst.lawMarks)}`, 20), 340, 202, 9, C.red);
     button(g, uiLayer, hits, 340, 224, 40, 16, '详情', () => { monDetailMode = true; playSfx('tab'); render(); },
       { size: 12, fill: C.purpleDark, border: C.purple, color: C.white });
 
@@ -4530,7 +4662,8 @@ function drawSidePanel(g               ) {
       dy = 194;
     }
 
-    const passiveBody = k.passiveDesc ?? k.passive ?? '无被动说明';
+    const lawBody = inst.lawMarks?.length ? `\n法则印记：${lawMarkSummary(inst.lawMarks)}` : '';
+    const passiveBody = `${k.passiveDesc ?? k.passive ?? '无被动说明'}${lawBody}`;
     const passiveTitle = inst.lv < 5 ? '被动・Lv5 解锁' : '被动';
     const passiveH = Math.max(18, 222 - dy);
     g.rect(340, dy, 130, passiveH).fill(C.ink).stroke({ width: 1, color: C.goldDark, alignment: 0 });
@@ -5022,6 +5155,8 @@ function battleMods() {
   const scale = dungeonRaidScale();
   out.heroHpMult *= scale.hp;
   out.heroAtkMult *= scale.atk;
+  if (S.doctrine === 'swarm') { out.monHpMult *= 0.85; out.monAtkMult *= 0.85; }
+  if (S.doctrine === 'elite') { out.monHpMult *= 1.30; out.monAtkMult *= 1.30; }
   return out;
 }
 
@@ -5493,7 +5628,7 @@ const countPlaced = () => S.rooms.reduce((n, r) =>
 let mobPage = 0;
 
 // ---------- 英雄（麾下统领的具体个体：征召、培养、专精、疲劳轮换） ----------
-const heroHasNew = () => S.champs.some((c) => canLevel(c) && S.bone >= upCostOf(c) && S.mana >= heroUpgradeMana(c)) || S.champs.some((c) => pendingTier(c) > 0);
+const heroHasNew = () => S.champs.some((c) => canLevel(c) && S.bone >= heroUpgradeBone(c) && S.mana >= heroUpgradeMana(c)) || S.champs.some((c) => pendingTier(c) > 0);
 
 function refreshCands(force = false) {
   // 候选池每轮袭击刷新一次；玩家也能花魔质手动重掷
@@ -5523,11 +5658,11 @@ function recruitChamp(c      ) {
   say(`${ch.name} 加入了麾下`);
   render();
 }
-const candCostOf = (c      ) => Math.round((monKind(c.race).cost) * (1 + c.potential * 0.18));
+const candCostOf = (c      ) => doctrineCost('recruit', Math.round((monKind(c.race).cost) * (1 + c.potential * 0.18))).bone;
 
 function levelChamp(c       ) {
   if (!canLevel(c)) return;
-  const cost = upCostOf(c), mana = heroUpgradeMana(c);
+  const cost = heroUpgradeBone(c), mana = heroUpgradeMana(c);
   if (S.bone < cost || S.mana < mana) { say('英雄升级资源不足'); return; }
   S.bone -= cost; S.mana -= mana;
   c.xp -= xpNeed(c.lv);
@@ -5663,7 +5798,7 @@ function drawRoster(g               ) {
     label(uiLayer, `${c.lv}`, 86, y + 6, 12, C.bone);
     label(uiLayer, at >= 0 ? `${at + 1}房` : training >= 0 ? `${training + 1}训` : '待', 102, y + 6, 12, at >= 0 ? C.gold : training >= 0 ? C.purple : C.green);
     label(uiLayer, c.restTurns ? `休${c.restTurns}` : ft.text.slice(0, 2), 128, y + 6, 12, c.restTurns || ft.bad ? C.red : C.steel);
-    if (canLevel(c) && S.bone >= upCostOf(c) && S.mana >= heroUpgradeMana(c)) g.circle(151, y + 6, 3).fill(C.red);
+    if (canLevel(c) && S.bone >= heroUpgradeBone(c) && S.mana >= heroUpgradeMana(c)) g.circle(151, y + 6, 3).fill(C.red);
     else if (pendingTier(c)) g.circle(151, y + 6, 3).fill(C.purple);
     for (let w = 0; w < (c.wounds || 0); w++) g.rect(140 + w * 5, y + 18, 4, 3).fill(C.red);
     hits.add(8, y, 150, 26, () => { heroSel = c.uid; playSfx('tab'); render(); });
@@ -5680,7 +5815,7 @@ function drawRoster(g               ) {
 function effText(e        )         {
   const out           = [];
   if (e.hpRegen) out.push(`回血${e.hpRegen}/秒`);
-  if (e.thorns) out.push(`反伤${Math.round(e.thorns * 100)}%`);
+  if (e.thorns) out.push(`反伤${Math.round(effectiveThorns(e.thorns) * 100)}%${e.thorns > 0.4 ? '（软上限）' : ''}`);
   if (e.lifestealPct) out.push(`吸血${Math.round(e.lifestealPct * 100)}%`);
   if (e.splash) out.push(`溅射${Math.round(e.splash * 100)}%`);
   if (e.execute) out.push(`残血${Math.round(e.execute * 100)}%斩杀`);
@@ -5710,7 +5845,7 @@ function traitColor(t        ) {
 
 function effDetailText(e        ) {
   const out = [];
-  if (e.thorns)        out.push(`反伤 ${Math.round(e.thorns * 100)}%`);
+  if (e.thorns)        out.push(`反伤 ${Math.round(effectiveThorns(e.thorns) * 100)}%${e.thorns > 0.4 ? '（递减）' : ''}`);
   if (e.splash)        out.push(`溅射 ${Math.round(e.splash * 100)}%`);
   if (e.lifestealPct)  out.push(`吸血 ${Math.round(e.lifestealPct * 100)}%`);
   if (e.hpRegen)       out.push(`回血 ${e.hpRegen}/秒`);
@@ -5777,13 +5912,14 @@ function drawChampStat(g, c) {
     : training >= 0 ? `第${training + 1}层训练中` : '未上阵（休息及疲劳随战斗恢复）',
     174, 144, 12, at >= 0 ? C.steel : training >= 0 ? C.purple : C.stoneLit);
   const nt = nextTitle(c);
-  label(uiLayer, cut(`${c.battles}战${c.kills}杀${nt ? `→${nt.t.name}` : '・满'}`, 14), 174, 160, 12, C.stoneLit);
+  const lawTag = c.lawMarks?.length ? `・法则${c.lawMarks.length}` : '';
+  label(uiLayer, cut(`${c.battles}战${c.kills}杀${nt ? `→${nt.t.name}` : '・满'}${lawTag}`, 18), 174, 160, 12, c.lawMarks?.length ? C.red : C.stoneLit);
 
   if (c.lv < CHAMP_LV_CAP) {
     const need = xpNeed(c.lv);
     label(uiLayer, `经验 ${c.xp}/${need}`, 174, 176, 12, C.bone);
     bar(uiGfx, 262, 180, 88, 5, Math.min(1, c.xp / need), C.green);
-    const cost = upCostOf(c), mana = heroUpgradeMana(c);
+    const cost = heroUpgradeBone(c), mana = heroUpgradeMana(c);
     button(g, uiLayer, hits, 362, 176, 106, 15, `升级 ${cost}骨${mana ? ` ${mana}魔` : ''}`, () => levelChamp(c),
       { size: 10, enabled: canLevel(c) && S.bone >= cost && S.mana >= mana, fill: C.greenDark, border: C.green, color: C.white });
   } else {
@@ -5870,7 +6006,7 @@ function drawChampInfo(g, c) {
   label(uiLayer, `攻击 ${st.atk}`, 174, 112, 12, C.bone);
   label(uiLayer, `防御 ${st.def}`, 174, 128, 12, C.bone);
   label(uiLayer, `攻速 ${st.spd.toFixed(2)}`, 174, 144, 12, C.bone);
-  label(uiLayer, `受伤 ${Math.round(st.dmgTakenMult * 100)}%`, 250, 96, 12, C.bone);
+  label(uiLayer, `受伤 ${Math.round(effectiveMitigationMultiplier(st.dmgTakenMult) * 100)}%`, 250, 96, 12, C.bone);
   label(uiLayer, `经验 ${Math.round(st.xpMult * 100)}%`, 250, 112, 12, C.bone);
   label(uiLayer, `冷却 ${Math.round(st.eff.skillCdMult * 100)}%`, 250, 128, 12, C.bone);
   const auraFull = auraText(st.auraId, st.auraPow);
@@ -6461,6 +6597,22 @@ function initBattleLayers() {
   battleLayer.addChild(battleWorld, hudLayer);
 }
 
+function confirmRaidBriefing() {
+  if (!raidBriefing) return;
+  const scene = raidBriefing;
+  const no = scene.no;
+  if (!S.raidBriefingsSeen.includes(no)) S.raidBriefingsSeen.push(no);
+  const key = `raid-briefing:${no}`;
+  if (!S.story.archive.some((x) => x.key === key)) {
+    S.story.archive.unshift({ id: S.story.leadNext++, key, sceneId: key, source: '正式战役',
+      title: `第${no}轮・${scene.title}`, summary: scene.body, resolvedRaid: no,
+      outcome: `王座回应：${scene.reply}`, effects: '迎战', refs: [], battleRefs: [] });
+  }
+  raidBriefing = null;
+  persist(); playSfx('tab');
+  startBattle();
+}
+
 function startBattle() {
   if (screen !== 'manage') return;
   confirmNew = false;
@@ -6489,13 +6641,18 @@ function startBattle() {
     say(`${unavailable.map((c) => c.name).join('、')}仍在强制休息，请先更换统领`);
     return;
   }
+  if (!S.overtime && !S.raidBriefingsSeen.includes(S.raidNo)) {
+    raidBriefing = RAID_BRIEFINGS[S.raidNo - 1] ?? null;
+    if (raidBriefing) { playSfx('tab'); scheduleLayout(); render(); return; }
+  }
   // 战斗逻辑只携带纹理 key；开战前先烘焙固定怪物/精英怪物的四部位组合与当前改造外观。
   for (const m of S.monsters) instKind(m);
   for (const c of S.champs) champKind(c);
   const raid = currentRaid();
   const dungeonEconomy = dungeonEconomyPreview();
+  const doctrineSeal = S.doctrine === 'default' ? 1.25 : S.doctrine === 'economy' ? 0.8 : 1;
   battle = createBattle(raid, S.rooms, S.monsters,
-    { sealMax: sealMax(), trapPower: trapPower(), mods: battleMods(), champs: champStatMap(), dungeonEconomy });
+    { sealMax: Math.round(sealMax() * doctrineSeal), trapPower: trapPower(), mods: battleMods(), champs: champStatMap(), dungeonEconomy });
   pendingResultRaid = raid.no;
   screen = 'battle';
   scheduleLayout();
@@ -7013,7 +7170,7 @@ function finishBattle() {
   scheduleLayout();
   resultLayerBuilt = false;
   const rewardMult = dungeonRaidScale().reward;
-  const directReward = S.doctrine === 'economy' ? 0.85 : 1;
+  const directReward = S.doctrine === 'economy' ? 0.60 : 1;
   r.bone = Math.round(r.bone * rewardMult * directReward);
   r.mana = Math.round(r.mana * rewardMult * directReward);
   S.bone += r.bone;
@@ -7021,7 +7178,7 @@ function finishBattle() {
   S.relic += r.relicLoot ?? 0;
   for (const x of r.xp) {
     const inst = instById(x.uid);
-    if (inst && inst.lv < 5) inst.xp += Math.round(x.xp * (S.doctrine === 'elite' ? 1.25 : 1));
+    if (inst && inst.lv < 5) inst.xp += Math.round(x.xp * (S.doctrine === 'elite' ? 1.75 : 1));
   }
   // 英雄结算：经验/战功归到具体个体，疲劳按"上没上场"分别涨落
   const deployedChampUids = seatedChampUids();
@@ -7031,7 +7188,7 @@ function finishBattle() {
     if (!c) continue;
     if (c.lv < CHAMP_LV_CAP) {
       const st = statOf(c, chemBefore);
-      c.xp += Math.round(x.xp * chemOf(chemBefore, c.uid).xp * (st.xpMult ?? 1) * (S.doctrine === 'elite' ? 1.25 : 1));
+      c.xp += Math.round(x.xp * chemOf(chemBefore, c.uid).xp * (st.xpMult ?? 1) * (S.doctrine === 'elite' ? 1.75 : 1));
     }
     c.kills += x.kills;
     // 被打倒不会永久死亡，但会留一道伤：压属性、更容易累，得花魔质疗
@@ -7529,6 +7686,16 @@ window.__debug = {
   deployWorker: () => battle ? deployUtilityWorker(battle) : false,
   evacuateWorker: () => battle ? evacuateUtilityWorker(battle) : false,
   startBattle: () => { startBattle(); return screen; },
+  get raidBriefing() { return raidBriefing ? { ...raidBriefing } : null; },
+  confirmRaidBriefing: () => { confirmRaidBriefing(); return screen; },
+  get lawAudit() { return lawAudit ? { ...lawAudit } : null; },
+  acceptLawAudit: () => { acceptLawAudit(); return lawAudit; },
+  devLawAudit: (type, uid, kind = 'thorns') => {
+    const target = type === 'hero' ? champById(uid) : instById(uid);
+    if (!target || !LAW_AUDIT_TEXT[kind]) return false;
+    lawAudit = { type, uid, name: type === 'hero' ? target.name : instKind(target).name, kind, ...LAW_AUDIT_TEXT[kind] };
+    render(); return true;
+  },
   runBattleToEnd: (maxSteps = 20000) => {
     if (!battle || screen !== 'battle') return null;
     let steps = 0;
