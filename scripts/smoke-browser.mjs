@@ -236,6 +236,22 @@ try {
     }
   }
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.evaluate(() => __debug.forceRaid(10));
+  for (const targetTab of ['throne', 'dungeon', 'hero', 'mob', 'shop', 'report', 'story']) {
+    await page.evaluate((id) => __debug.setTab(id), targetTab);
+    await page.waitForTimeout(80);
+    const nativePage = await page.evaluate(() => __debug.viewport());
+    assert(nativePage.nativePortrait && nativePage.portraitLayout?.native && !nativePage.rootVisible,
+      `Raid-ten portrait page ${targetTab} fell back to the desktop canvas.`);
+  }
+  await page.evaluate(() => __debug.openDetail('竖屏详情', '这是一段用于确认原生竖屏详情卡片和关闭操作的测试文本。'));
+  await page.waitForTimeout(80);
+  const nativeDetail = await page.evaluate(() => __debug.viewport());
+  assert(nativeDetail.nativePortrait && nativeDetail.portraitActions.primary, 'Portrait detail popup fell back to the desktop canvas.');
+  await page.mouse.click(nativeDetail.portraitActions.primary.x + nativeDetail.portraitActions.primary.w / 2,
+    nativeDetail.portraitActions.primary.y + nativeDetail.portraitActions.primary.h / 2);
+
   // Native portrait onboarding must be playable without exposing or clicking the hidden desktop canvas.
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => localStorage.removeItem('yqh-save-v2'));

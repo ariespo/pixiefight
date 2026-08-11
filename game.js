@@ -1202,6 +1202,7 @@ let portraitContentBottom = 0;
 let portraitChromeKey = '';
 let portraitLayoutInfo = null;
 let portraitActionMap = {};
+let portraitStoryInputRect = null;
 let guidePulseNodes = [];
 
 const loadingEl   = document.getElementById('loading');
@@ -1379,7 +1380,7 @@ function layout() {
   const w = app.screen.width, h = app.screen.height;
   portrait = h > w * 1.15;
   const portraitManage = portrait && screen === 'manage';
-  const portraitLogicalWidth = portraitManage ? (portraitPane === 0 ? VIEW_W : VIEW_W / 2) : 360;
+  const portraitLogicalWidth = portraitManage ? (portraitPane === 0 ? VIEW_W : VIEW_W / 2) : VIEW_W;
   const portraitSceneHeight = portraitManage ? 202 : VIEW_H;
   const portraitControlsHeight = portrait ? portraitConsoleHeight() : 0;
   viewScale = portrait
@@ -1388,7 +1389,7 @@ function layout() {
   smallScreen = w < 720 || h < 420 || viewScale < 1;
   const snap = (v) => Math.round(v * renderResolution) / renderResolution;
   root.scale.set(viewScale);
-  const portraitFocusX = portraitManage ? (portraitPane === 2 ? VIEW_W / 2 : 0) : 60;
+  const portraitFocusX = portraitManage ? (portraitPane === 2 ? VIEW_W / 2 : 0) : 0;
   root.x = portrait ? snap((w - portraitLogicalWidth * viewScale) / 2 - portraitFocusX * viewScale) : snap((w - VIEW_W * viewScale) / 2);
   // 竖屏经营页只展示横屏画布中真正的页面区域（y=36..238）。顶部 HUD 与底部标签
   // 由下方触控控制台统一承接，避免同一组资源、导航和存档操作重复出现两次。
@@ -1415,10 +1416,13 @@ let portraitNativeBypass = false;
 let portraitMobileMenu = false;
 let layoutQueued = false;
 
-const PORTRAIT_NATIVE_TABS = new Set(['throne', 'dungeon', 'mob']);
+const PORTRAIT_NATIVE_TABS = new Set(['throne', 'dungeon', 'hero', 'mob', 'shop', 'report', 'story']);
+let portraitStoryView = 'leads';
+let portraitHeroMode = 'roster';
+let portraitHeroSection = 'status';
 function portraitNativeManage() {
   return portrait && screen === 'manage' && PORTRAIT_NATIVE_TABS.has(tab)
-    && !portraitNativeBypass && !detailPopup && !stitch && !forge && !graft && !smith;
+    && !portraitNativeBypass && !stitch && !forge && !graft && !smith;
 }
 
 function portraitConsoleHeight() {
@@ -3116,7 +3120,75 @@ function drawPortraitDungeonAssign(x, y, w, h, room, which) {
   portraitPager(`portrait-slot-${which}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
 }
 
+function drawPortraitFacilityPeople(x, y, w, h, floor, u, d) {
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, 72, 36, '← 设施', () => { sel = { kind: 'utility', floor }; render(); }, { size: 14 });
+  label(portraitLayer, u.kind === 'training' ? '管理训练对象' : '指派工作人员', x + 94, y + 10, 16, d.color);
+  const units = u.kind === 'training'
+    ? [...S.monsters.map((unit) => ({ type: 'monster', uid: unit.uid, name: instKind(unit).name, lv: unit.lv })),
+      ...S.champs.map((unit) => ({ type: 'hero', uid: unit.uid, name: unit.name, lv: unit.lv }))]
+    : S.monsters.map((unit) => ({ type: 'monster', uid: unit.uid, name: instKind(unit).name, lv: unit.lv }));
+  const pg = portraitPage(units, `portrait-facility-people-${floor}`, Math.max(2, Math.min(6, Math.floor((h - 84) / 58))));
+  pg.view.forEach((unit, i) => {
+    const cy = y + 48 + i * 58;
+    const active = u.kind === 'training' ? u.trainTargets.some((item) => item.type === unit.type && item.uid === unit.uid) : u.workerUid === unit.uid;
+    const deployed = unit.type === 'hero' ? roomOfChamp(unit.uid) >= 0 : roomOf(unit.uid) >= 0;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 52, 4).fill(active ? C.wallLit : C.wall)
+      .stroke({ width: 1, color: active ? C.gold : C.stoneLit, alignment: 0 });
+    label(portraitLayer, `${unit.type === 'hero' ? '英雄・' : ''}${unit.name}　Lv${unit.lv}`, x + 20, cy + 8, 14, active ? C.gold : C.white);
+    label(portraitLayer, active ? '当前已指派' : deployed ? '正在驻守，无法指派' : '当前待命', x + 20, cy + 29, 11, active ? C.gold : deployed ? C.red : C.stoneLit);
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 94, cy + 8, 78, 36, active ? '撤下' : '指派', () => {
+      if (u.kind === 'training') toggleTrainingTarget(floor, unit.type, unit.uid); else assignWorker(floor, unit.uid);
+    }, { size: 13, enabled: active || !deployed, border: active ? C.red : C.green, color: active ? C.red : C.green });
+  });
+  portraitPager(`portrait-facility-people-${floor}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
+}
+
+function drawPortraitFacility(x, y, w, h, floor) {
+  const u = utilityAt(floor), d = utilityDef(u);
+  if (!u) { sel = null; return; }
+  if (sel.people) { drawPortraitFacilityPeople(x, y, w, h, floor, u, d); return; }
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, 72, 36, '← 楼层', () => { sel = null; render(); }, { size: 14 });
+  label(portraitLayer, `${floor + 1}层・${u.kind === 'none' ? '空资源房' : facilityName(u)}`, x + 94, y + 10, 16, u.kind === 'none' ? C.white : d.color);
+  if (u.kind === 'none') {
+    const kinds = ['bone-yard', 'mana-well', 'training', 'healing', 'workshop', 'hatchery', 'vault'];
+    const pg = portraitPage(kinds, `portrait-facility-build-${floor}`, Math.max(2, Math.min(5, Math.floor((h - 98) / 64))));
+    pg.view.forEach((kind, i) => {
+      const def = UTILITY_KINDS[kind], cy = y + 48 + i * 64, active = sel.buildKind === kind;
+      portraitGfx.roundRect(x + 8, cy, w - 16, 58, 4).fill(active ? C.wallLit : C.wall)
+        .stroke({ width: 1, color: active ? C.gold : def.color, alignment: 0 });
+      label(portraitLayer, def.name, x + 20, cy + 7, 15, active ? C.gold : def.color);
+      label(portraitLayer, cut(def.desc, 22), x + 20, cy + 31, 11, C.stoneLit);
+      button(portraitGfx, portraitLayer, portraitHits, x + w - 112, cy + 10, 96, 38, `${def.bone}骨${def.mana ? ` ${def.mana}魔` : ''}`, () => {
+        if (sel.buildKind === kind) buildUtility(floor, kind); else { sel = { kind: 'utility', floor, buildKind: kind }; playSfx('tab'); render(); }
+      }, { size: 12, enabled: sel.buildKind !== kind || (facilityActionAvailable() && S.bone >= def.bone && S.mana >= def.mana),
+        fill: active ? C.greenDark : C.ink, border: active ? C.green : def.color, color: active ? C.white : def.color });
+    });
+    labelC(portraitLayer, sel.buildKind ? '再次点击价格按钮确认建造' : '先选择设施，再次点击确认建造', x + w / 2, y + h - 58, 12, sel.buildKind ? C.gold : C.stoneLit);
+    portraitPager(`portrait-facility-build-${floor}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
+    return;
+  }
+  const out = utilityOutput(floor);
+  panelF(portraitGfx, portraitLayer, 'stone', x + 8, y + 50, w - 16, 112, C.wall);
+  label(portraitLayer, `${facilityName(u)}　Lv${u.level}`, x + 20, y + 62, 17, d.color);
+  boundedText(portraitLayer, d.desc, x + 20, y + 88, w - 40, 36, 12, C.bone);
+  label(portraitLayer, `耐久 ${u.condition}/100　${out.bone ? `待产${out.bone}骨` : out.mana ? `待产${out.mana}魔` : '服务设施'}`, x + 20, y + 135, 13, u.condition <= 25 ? C.red : C.gold);
+  const cost = u.level < 3 ? utilityUpgradeCost(u) : null;
+  const repair = repairQuote(u);
+  const actions = [
+    [u.level < 3 ? `升级 ${cost.bone}骨${cost.mana ? ` ${cost.mana}魔` : ''}` : '已满级', () => upgradeUtility(floor), u.level < 3 ? C.gold : C.stoneLit, u.level < 3],
+    [u.condition < 100 ? `维修 ${repair.bone}骨` : '无需维修', () => repairUtility(floor), C.green, u.condition < 100],
+    [sel.confirmDemolish ? '确认拆除' : '拆除设施', () => demolishUtility(floor), C.red, true],
+  ];
+  const actionStart = 164, actionGap = 44;
+  actions.forEach(([name, action, color, enabled], i) => button(portraitGfx, portraitLayer, portraitHits, x + 8, y + actionStart + i * actionGap, w - 16, 40, name, action,
+    { size: 15, enabled, fill: C.wall, border: color, color }));
+  if (WORKER_KINDS.has(u.kind) || u.kind === 'training') button(portraitGfx, portraitLayer, portraitHits, x + 8, y + actionStart + 3 * actionGap, w - 16, 40,
+    u.kind === 'training' ? `训练对象 ${u.trainTargets.length}/${d.slots[u.level - 1]}` : `工作人员・${workerName(u)}`,
+    () => { sel = { kind: 'utility', floor, people: true }; render(); }, { size: 15, border: d.color, color: d.color });
+}
+
 function drawPortraitDungeon(x, y, w, h) {
+  if (sel?.kind === 'utility') { drawPortraitFacility(x, y, w, h, sel.floor); return; }
   if (sel?.kind === 'slot' && ['front', 'back', 'leader', 'flank'].includes(sel.which)) {
     drawPortraitDungeonAssign(x, y, w, h, sel.room, sel.which); return;
   }
@@ -3138,12 +3210,271 @@ function drawPortraitDungeon(x, y, w, h) {
     });
     if (featureOpen('facilities')) {
       button(portraitGfx, portraitLayer, portraitHits, x + 14, cy + 80, w - 28, 20,
-        util.kind === 'none' ? '＋ 建造资源房（下一阶段迁移）' : `${ud.name} Lv${util.level}・耐久${util.condition}`,
-        () => { sel = { kind: 'utility', floor }; portraitPane = 0; portraitNativeBypass = true; scheduleLayout(); render(); },
+        util.kind === 'none' ? '＋ 建造资源房' : `${ud.name} Lv${util.level}・耐久${util.condition}`,
+        () => { sel = { kind: 'utility', floor }; render(); },
         { size: 11, border: util.kind === 'none' ? C.green : ud.color, color: util.kind === 'none' ? C.green : ud.color });
     }
   });
   portraitPager('portrait-dungeon-floors', pg.page, pg.pages, x + 8, y + h - 38, w - 16);
+}
+
+function drawPortraitShop(x, y, w, h) {
+  label(portraitLayer, `工坊・魔质 ${S.mana}・遗物 ${S.relic}`, x + 8, y + 5, 17, C.white);
+  const items = shopItems();
+  const per = Math.max(2, Math.min(6, Math.floor((h - 92) / 64)));
+  const pg = portraitPage(items, 'portrait-shop', per);
+  pg.view.forEach((item, i) => {
+    const cy = y + 36 + i * 64;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 58, 4).fill(C.wall).stroke({ width: 1, color: item.owned ? C.green : C.purple, alignment: 0 });
+    label(portraitLayer, item.name, x + 20, cy + 7, 14, item.owned ? C.green : C.white);
+    label(portraitLayer, cut(item.desc, 24), x + 20, cy + 31, 11, C.stoneLit);
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 104, cy + 10, 88, 38, item.owned ? '已拥有' : `${item.cost}魔`, () => {
+      if (item.owned || S.mana < item.cost) return;
+      S.mana -= item.cost; item.buy(); playSfx('buy'); persist(); say(`${item.name} 已解锁`); render();
+    }, { size: 13, enabled: !item.owned && S.mana >= item.cost, fill: C.purpleDark, border: item.owned ? C.green : C.purple, color: item.owned ? C.green : C.white });
+  });
+  const bottomY = y + h - 42;
+  portraitPager('portrait-shop', pg.page, pg.pages, x + 8, bottomY, Math.min(150, w - 180));
+  button(portraitGfx, portraitLayer, portraitHits, x + w - 170, bottomY, 74, 36, '造部件', () => { portraitNativeBypass = true; openForge('part'); scheduleLayout(); },
+    { size: 12, enabled: hasBackend(), border: C.purple, color: C.purple });
+  button(portraitGfx, portraitLayer, portraitHits, x + w - 90, bottomY, 74, 36, '造词缀', () => { portraitNativeBypass = true; openForge('affix'); scheduleLayout(); },
+    { size: 12, enabled: hasBackend(), border: C.purple, color: C.purple });
+}
+
+function drawPortraitHeroStatus(x, y, w, h, c) {
+  const st = statOf(c, chemistry(S.champs, seatedChampUids()).map);
+  const lines = [`生命 ${st.hp}　攻击 ${st.atk}`, `防御 ${st.def}　攻速 ${st.spd.toFixed(2)}`,
+    `出战 ${c.battles}　击倒 ${c.kills}`, c.restTurns ? `强制休息还需 ${c.restTurns} 回合` : `出战计数 ${c.sortiesSinceRest || 0}/${HERO_SORTIE_LIMIT}`];
+  lines.forEach((line, i) => label(portraitLayer, line, x + 14, y + 12 + i * 25, 14, i === 3 && c.restTurns ? C.red : C.bone));
+  if (c.lv < CHAMP_LV_CAP) {
+    label(portraitLayer, `经验 ${c.xp}/${xpNeed(c.lv)}　升级 ${upCostOf(c)}骨`, x + 14, y + 118, 13, C.gold);
+    button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 146, w - 16, 40, '升级英雄', () => levelChamp(c),
+      { size: 15, enabled: canLevel(c) && S.bone >= upCostOf(c), fill: C.greenDark, border: C.green, color: C.white });
+  }
+  if (c.restTurns) button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 194, w - 16, 40, `疗愈 ${REST_MANA}魔・休息-1`, () => restChamp(c),
+    { size: 14, enabled: healingCapacity() > 0 && S.dungeon.healingCharges > 0 && S.mana >= REST_MANA, border: C.green, color: C.green });
+  if (c.wounds) button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 242, w - 16, 40, `疗伤 ${HEAL_MANA}魔・伤势-1`, () => healChamp(c),
+    { size: 14, enabled: S.mana >= HEAL_MANA, border: C.red, color: C.red });
+  void h;
+}
+
+function drawPortraitHeroTraits(x, y, w, h, c) {
+  const entries = c.traits.map((id) => ({ id, ...TRAITS[id] }));
+  entries.forEach((trait, i) => {
+    const cy = y + i * 86;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 78, 4).fill(C.wall).stroke({ width: 1, color: traitColor(trait.id), alignment: 0 });
+    label(portraitLayer, trait.name, x + 20, cy + 9, 15, traitColor(trait.id));
+    boundedText(portraitLayer, trait.desc, x + 20, cy + 34, w - 40, 35, 12, C.bone);
+  });
+  const cost = REROLL_TRAIT_BONE + REROLL_TRAIT_MANA;
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + Math.min(h - 46, entries.length * 86 + 4), w - 16, 40, `重随特质 ${REROLL_TRAIT_BONE}骨 ${REROLL_TRAIT_MANA}魔`, () => rerollChampTraits(c),
+    { size: 14, enabled: S.bone >= REROLL_TRAIT_BONE && S.mana >= REROLL_TRAIT_MANA, border: C.purple, color: C.purple });
+  void cost;
+}
+
+function drawPortraitHeroGear(x, y, w, h, c) {
+  const slotW = Math.floor((w - 28) / 3);
+  GEAR_SLOTS.forEach((slot, i) => {
+    const id = c.gear?.[slot.id], item = gearById(id ?? '');
+    button(portraitGfx, portraitLayer, portraitHits, x + 8 + i * (slotW + 6), y + 2, slotW, 52, item ? `${slot.name}\n${cut(item.name, 6)}` : `${slot.name}\n空`, () => { gearSlotSel = slot.id; render(); },
+      { size: 12, fill: gearSlotSel === slot.id ? C.wallLit : C.wall, border: gearSlotSel === slot.id ? C.gold : C.stoneLit, color: item ? C.white : C.stoneLit });
+  });
+  const equipped = c.gear?.[gearSlotSel];
+  if (equipped) button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 62, w - 16, 36, `卸下 ${gearById(equipped)?.name ?? ''}`, () => unequipGear(c, gearSlotSel),
+    { size: 13, border: C.red, color: C.red });
+  const pool = S.vault.map((id, idx) => ({ id, idx, item: gearById(id) })).filter((entry) => entry.item?.slot === gearSlotSel);
+  const pg = portraitPage(pool, `portrait-gear-${gearSlotSel}`, Math.max(2, Math.min(5, Math.floor((h - 150) / 62))));
+  pg.view.forEach((entry, i) => {
+    const cy = y + 108 + i * 62;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 56, 4).fill(C.wall).stroke({ width: 1, color: C.steel, alignment: 0 });
+    label(portraitLayer, entry.item.name, x + 20, cy + 7, 14, C.steel);
+    label(portraitLayer, cut(entry.item.desc, 22), x + 20, cy + 31, 11, C.stoneLit);
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 88, cy + 10, 72, 36, '装备', () => equipGear(c, entry.idx), { size: 13, border: C.green, color: C.green });
+  });
+  portraitPager(`portrait-gear-${gearSlotSel}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
+}
+
+function drawPortraitHeroTalent(x, y, w, h, c) {
+  const pending = pendingTier(c);
+  const owned = c.talents.map((id) => TALENTS[id]).filter(Boolean);
+  if (!pending) {
+    label(portraitLayer, owned.length ? '已学习专精' : '升级后将获得专精选择', x + 12, y + 8, 15, owned.length ? C.gold : C.stoneLit);
+    owned.forEach((talent, i) => {
+      const cy = y + 38 + i * 68;
+      portraitGfx.roundRect(x + 8, cy, w - 16, 62, 4).fill(C.wall).stroke({ width: 1, color: C.goldDark, alignment: 0 });
+      label(portraitLayer, talent.name, x + 20, cy + 8, 14, C.gold);
+      boundedText(portraitLayer, talent.desc, x + 20, cy + 31, w - 40, 24, 11, C.bone);
+    });
+    return;
+  }
+  const choices = Object.entries(TALENTS).filter(([, talent]) => talent.tier === pending).map(([id, talent]) => ({ id, ...talent }));
+  const pg = portraitPage(choices, `portrait-talents-${pending}`, 5);
+  pg.view.forEach((talent, i) => {
+    const cy = y + i * 66, selected = talentPreview?.uid === c.uid && talentPreview.id === talent.id;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 60, 4).fill(selected ? C.wallLit : C.wall).stroke({ width: 1, color: selected ? C.gold : C.purple, alignment: 0 });
+    label(portraitLayer, talent.name, x + 20, cy + 7, 14, selected ? C.gold : C.white);
+    label(portraitLayer, cut(talent.desc, 24), x + 20, cy + 31, 11, C.stoneLit);
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 86, cy + 10, 70, 36, selected ? '已预选' : '预选', () => previewTalent(c, talent.id),
+      { size: 12, border: selected ? C.gold : C.purple, color: selected ? C.gold : C.purple });
+  });
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + h - 44, w - 16, 40, '确认学习所选专精', () => confirmTalent(c),
+    { size: 14, enabled: talentPreview?.uid === c.uid, fill: C.purpleDark, border: C.gold, color: C.white });
+}
+
+function drawPortraitHeroTitles(x, y, w, h, c) {
+  const titles = unlockedTitles(c).map((id) => titleById(id)).filter(Boolean);
+  const pg = portraitPage(titles, `portrait-titles-${c.uid}`, Math.max(3, Math.min(6, Math.floor((h - 56) / 62))));
+  pg.view.forEach((title, i) => {
+    const cy = y + i * 62, active = c.activeTitle === title.id;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 56, 4).fill(active ? C.wallLit : C.wall).stroke({ width: 1, color: active ? C.gold : C.purple, alignment: 0 });
+    label(portraitLayer, title.name, x + 20, cy + 7, 14, active ? C.gold : C.white);
+    label(portraitLayer, cut(title.desc, 23), x + 20, cy + 31, 11, C.stoneLit);
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 86, cy + 10, 70, 36, active ? '使用中' : '启用', () => {
+      c.activeTitle = title.id; persist(); playSfx('place'); render();
+    }, { size: 12, enabled: !active, border: active ? C.gold : C.purple, color: active ? C.gold : C.purple });
+  });
+  portraitPager(`portrait-titles-${c.uid}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
+}
+
+function drawPortraitHeroDetail(x, y, w, h, c) {
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, 68, 36, '← 名册', () => { heroSel = null; render(); }, { size: 13 });
+  portraitLayer.addChild(portraitEffect(sprite(champKind(c).tex, x + 104, y + 40, 34), c.lv >= CHAMP_LV_CAP, true, c.uid));
+  label(portraitLayer, `${c.name}　Lv${c.lv}　资质${POT_NAME[S.champPot[c.uid] ?? c.potential ?? 0]}`, x + 128, y + 11, 15, C.gold);
+  const sections = [['status', '状态'], ['traits', '特质'], ['gear', '装备'], ['talent', '专精'], ['titles', '称号']];
+  const sw = Math.floor((w - 16 - 4 * 5) / 5);
+  sections.forEach(([id, name], i) => button(portraitGfx, portraitLayer, portraitHits, x + 8 + i * (sw + 5), y + 50, sw, 34, name, () => { portraitHeroSection = id; render(); },
+    { size: 12, fill: portraitHeroSection === id ? C.wallLit : C.wall, border: portraitHeroSection === id ? C.gold : C.stoneLit, color: C.white }));
+  const bodyY = y + 92, bodyH = h - 92;
+  if (portraitHeroSection === 'status') drawPortraitHeroStatus(x, bodyY, w, bodyH, c);
+  else if (portraitHeroSection === 'traits') drawPortraitHeroTraits(x, bodyY, w, bodyH, c);
+  else if (portraitHeroSection === 'gear') drawPortraitHeroGear(x, bodyY, w, bodyH, c);
+  else if (portraitHeroSection === 'talent') drawPortraitHeroTalent(x, bodyY, w, bodyH, c);
+  else drawPortraitHeroTitles(x, bodyY, w, bodyH, c);
+}
+
+function drawPortraitHero(x, y, w, h) {
+  refreshCands();
+  const selected = champById(heroSel);
+  if (selected && portraitHeroMode === 'roster') { drawPortraitHeroDetail(x, y, w, h, selected); return; }
+  const tabW = Math.floor((w - 22) / 2);
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, tabW, 38, `麾下 ${S.champs.length}/${CHAMP_CAP}`, () => { portraitHeroMode = 'roster'; heroSel = null; render(); },
+    { size: 14, fill: portraitHeroMode === 'roster' ? C.wallLit : C.wall, border: portraitHeroMode === 'roster' ? C.gold : C.stoneLit, color: C.white });
+  button(portraitGfx, portraitLayer, portraitHits, x + 14 + tabW, y + 2, tabW, 38, '征召英雄', () => { portraitHeroMode = 'recruit'; heroSel = null; render(); },
+    { size: 14, fill: portraitHeroMode === 'recruit' ? C.wallLit : C.wall, border: portraitHeroMode === 'recruit' ? C.gold : C.stoneLit, color: C.white });
+  const items = portraitHeroMode === 'roster' ? S.champs : S.cands;
+  const pg = portraitPage(items, `portrait-hero-${portraitHeroMode}`, Math.max(3, Math.min(6, Math.floor((h - 90) / 70))));
+  if (!items.length) labelC(portraitLayer, portraitHeroMode === 'roster' ? '尚无英雄，前往征召' : '暂无候选英雄', x + w / 2, y + 100, 15, C.stoneLit);
+  pg.view.forEach((unit, i) => {
+    const cy = y + 50 + i * 70, recruitMode = portraitHeroMode === 'recruit';
+    const k = recruitMode ? monKind(unit.race) : champKind(unit), cost = recruitMode ? candCostOf(unit) : 0;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 64, 4).fill(C.wall).stroke({ width: 1, color: C.goldDark, alignment: 0 });
+    portraitLayer.addChild(portraitEffect(sprite(k.tex, x + 40, cy + 59, 46), !recruitMode && unit.lv >= CHAMP_LV_CAP, false, unit.uid ?? unit.id));
+    label(portraitLayer, recruitMode ? unit.name : `${unit.name}　Lv${unit.lv}`, x + 76, cy + 8, 15, C.gold);
+    label(portraitLayer, recruitMode ? `${k.name}・资质${POT_NAME[unit.potential]}` : `${roomOfChamp(unit.uid) >= 0 ? `${roomOfChamp(unit.uid) + 1}层统领` : '待命'}・${fatigueTier(unit.fatigue).text}`,
+      x + 76, cy + 34, 12, C.stoneLit);
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 94, cy + 13, 78, 38, recruitMode ? `${cost}骨` : '详情', () => {
+      if (recruitMode) recruitChamp(unit); else { heroSel = unit.uid; portraitHeroSection = 'status'; render(); }
+    }, { size: 13, enabled: !recruitMode || S.bone >= cost, fill: recruitMode ? C.greenDark : C.wallLit, border: recruitMode ? C.green : C.gold, color: C.white });
+  });
+  portraitPager(`portrait-hero-${portraitHeroMode}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
+}
+
+function drawPortraitReport(x, y, w, h) {
+  if (!S.reports.length) { labelC(portraitLayer, '还没有战报，先打一场袭击', x + w / 2, y + 80, 16, C.stoneLit); return; }
+  reportIdx = Math.min(reportIdx, S.reports.length - 1);
+  const tabs = portraitPage(S.reports.map((_, i) => i), 'portrait-report-tabs', Math.min(5, S.reports.length));
+  const tw = Math.floor((w - 16 - (tabs.view.length - 1) * 5) / Math.max(1, tabs.view.length));
+  tabs.view.forEach((idx, i) => {
+    const report = S.reports[idx];
+    button(portraitGfx, portraitLayer, portraitHits, x + 8 + i * (tw + 5), y + 2, tw, 36, `#${report.raidNo}`, () => { reportIdx = idx; render(); },
+      { size: 13, fill: idx === reportIdx ? C.wallLit : C.wall, border: report.win ? C.green : C.red, color: report.win ? C.green : C.red });
+  });
+  const r = S.reports[reportIdx];
+  panelF(portraitGfx, portraitLayer, 'stone', x + 8, y + 46, w - 16, 82, C.wall);
+  label(portraitLayer, `${r.title}・${r.win ? '守住' : '失守'}`, x + 20, y + 58, 17, r.win ? C.green : C.red);
+  label(portraitLayer, `封印 ${r.seal}　耗时 ${r.time.toFixed(1)}秒　评价 ${'★'.repeat(r.skulls) || '无'}`, x + 20, y + 84, 13, C.bone);
+  label(portraitLayer, `资源 ${r.bone >= 0 ? '+' : ''}${r.bone}骨　${r.mana >= 0 ? '+' : ''}${r.mana}魔`, x + 20, y + 106, 13, C.gold);
+  const rows = [
+    ...(r.rooms ?? []).map((room) => `${room.i + 1}层：${room.broken ? `失守・${room.reason}` : '守住'}`),
+    ...(r.review ?? []).map((line) => `复盘：${line}`),
+    ...(r.logs ?? []).slice(-8).map((line) => `战况：${line}`),
+  ];
+  const pg = portraitPage(rows, `portrait-report-${reportIdx}`, Math.max(3, Math.min(8, Math.floor((h - 190) / 42))));
+  pg.view.forEach((line, i) => {
+    const cy = y + 140 + i * 42;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 36, 3).fill(C.ink).stroke({ width: 1, color: C.wallLit, alignment: 0 });
+    boundedText(portraitLayer, line, x + 16, cy + 7, w - 32, 24, 11, C.bone);
+  });
+  portraitPager(`portrait-report-${reportIdx}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
+}
+
+function drawPortraitStoryRun(x, y, w, h) {
+  const run = storyRun;
+  button(portraitGfx, portraitLayer, portraitHits, x + w - 84, y + 2, 76, 36, '离开', closeStory, { size: 14, border: C.red, color: C.red });
+  label(portraitLayer, run.scene?.title ?? '地牢秘闻', x + 8, y + 10, 17, C.gold);
+  const latest = run.log.slice(-5);
+  let cy = y + 50;
+  latest.forEach((entry) => {
+    const text = `${entry.who ? `【${entry.who}】` : ''}${entry.text}`;
+    const block = boundedText(portraitLayer, text, x + 14, cy + 8, w - 28, 54, 12, entry.tone === 'gain' ? C.green : entry.tone === 'reply' ? C.purple : C.bone);
+    const bh = Math.max(48, Math.min(64, block.height + 16));
+    portraitGfx.roundRect(x + 8, cy, w - 16, bh, 4).fill(C.ink).stroke({ width: 1, color: C.wallLit, alignment: 0 });
+    cy += bh + 6;
+  });
+  const sc = run.scene;
+  if (sc?.choices?.length) {
+    const choices = sc.choices.filter((choice) => testConds(storyBridge, choice.when));
+    const by = Math.max(cy + 4, y + h - choices.length * 50 - 4);
+    choices.forEach((choice, i) => button(portraitGfx, portraitLayer, portraitHits, x + 8, by + i * 50, w - 16, 44, choice.label,
+      () => resolveExit(choice.reply, choice.effects, choice.next, choice.followup ?? sc.followup),
+      { size: 14, fill: C.wallLit, border: C.bone, color: C.white }));
+  } else if (sc?.input) {
+    label(portraitLayer, sc.input.prompt, x + 10, y + h - 104, 13, C.purple);
+    portraitStoryInputRect = { x: x + 8, y: y + h - 78, w: w - 122, h: 42 };
+    portraitGfx.roundRect(portraitStoryInputRect.x, portraitStoryInputRect.y, portraitStoryInputRect.w, portraitStoryInputRect.h, 4)
+      .fill(C.ink).stroke({ width: 1, color: C.purple, alignment: 0 });
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 106, y + h - 78, 98, 42, '提交', submitStoryInput,
+      { size: 14, fill: C.purpleDark, border: C.purple, color: C.white });
+  } else {
+    button(portraitGfx, portraitLayer, portraitHits, x + 8, y + h - 48, w - 16, 42, S.story.credits > 0 ? '再听一个秘闻' : '返回经营',
+      () => S.story.credits > 0 ? void drawStoryScene() : closeStory(), { size: 14, border: C.purple, color: C.purple });
+  }
+}
+
+function drawPortraitStory(x, y, w, h) {
+  if (storyRun) { drawPortraitStoryRun(x, y, w, h); return; }
+  const leads = availableStoryLeads(), archive = S.story.archive;
+  const tabW = Math.floor((w - 22) / 2);
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, tabW, 38, `待处理 ${leads.length}`, () => { portraitStoryView = 'leads'; render(); },
+    { size: 14, fill: portraitStoryView === 'leads' ? C.wallLit : C.wall, border: portraitStoryView === 'leads' ? C.gold : C.stoneLit, color: C.white });
+  button(portraitGfx, portraitLayer, portraitHits, x + 14 + tabW, y + 2, tabW, 38, `档案 ${archive.length}`, () => { portraitStoryView = 'archive'; render(); },
+    { size: 14, fill: portraitStoryView === 'archive' ? C.wallLit : C.wall, border: portraitStoryView === 'archive' ? C.gold : C.stoneLit, color: C.white });
+  const items = portraitStoryView === 'leads' ? leads : archive;
+  const pg = portraitPage(items, `portrait-story-${portraitStoryView}`, Math.max(3, Math.min(7, Math.floor((h - 100) / 58))));
+  pg.view.forEach((item, i) => {
+    const cy = y + 50 + i * 58;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 52, 4).fill(C.wall).stroke({ width: 1, color: portraitStoryView === 'leads' ? C.purple : C.stoneLit, alignment: 0 });
+    label(portraitLayer, `${item.source}・${cut(item.title, 18)}`, x + 18, cy + 8, 14, portraitStoryView === 'leads' ? C.purple : C.bone);
+    label(portraitLayer, portraitStoryView === 'leads' ? `产生于第${item.raidNo}轮` : cut(item.effects || item.outcome || '已归档', 24), x + 18, cy + 30, 11, C.stoneLit);
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 88, cy + 9, 72, 34, portraitStoryView === 'leads' ? '处理' : '查看', () => {
+      if (portraitStoryView === 'leads') openStoryLead(item.id);
+      else openDetailPopup(item.title, `${item.outcome}${item.effects ? `\n\n结果：${item.effects}` : ''}`, C.purple);
+    }, { size: 13, border: C.purple, color: C.purple });
+  });
+  portraitPager(`portrait-story-${portraitStoryView}`, pg.page, pg.pages, x + 8, y + h - 40, w - 16);
+  if (portraitStoryView === 'leads') button(portraitGfx, portraitLayer, portraitHits, x + 96, y + h - 40, w - 192, 36,
+    S.story.credits > 0 ? `追查无主传闻 ${S.story.credits}` : '暂无无主传闻', () => { if (S.story.credits > 0) void drawStoryScene(); },
+    { size: 13, enabled: S.story.credits > 0 && !storyBusy, border: C.gold, color: C.gold });
+}
+
+function drawPortraitNativeDetail(x, y, w, h) {
+  const d = detailPopup;
+  label(portraitLayer, d.title, x + 14, y + 10, 18, d.color);
+  const pages = paginateText(d.body, w - 36, h - 92, 14);
+  const pg = portraitPage(pages, 'portrait-detail', 1);
+  panelF(portraitGfx, portraitLayer, 'scroll', x + 8, y + 44, w - 16, h - 96, 0xE7D7A1);
+  boundedText(portraitLayer, pg.view[0] ?? '', x + 20, y + 58, w - 40, h - 124, 14, C.ink);
+  portraitPager('portrait-detail', pg.page, pg.pages, x + 8, y + h - 42, w - 16);
 }
 
 function drawPortraitNativeManage() {
@@ -3165,7 +3496,9 @@ function drawPortraitNativeManage() {
   portraitGfx.roundRect(contentX, contentY, contentW, contentH, 5).fill(C.bg).stroke({ width: 2, color: C.wallLit, alignment: 0 });
   let pageY = contentY + 8;
   let menuNewY = null;
-  if (portraitMobileMenu) {
+  if (detailPopup) {
+    drawPortraitNativeDetail(contentX, pageY, contentW, contentY + contentH - pageY - 6);
+  } else if (portraitMobileMenu) {
     label(portraitLayer, '系统菜单', contentX + 18, pageY + 4, 18, C.gold);
     const menuItems = [
       ['导出存档', exportSave, C.bone], ['导入存档', importSave, C.bone],
@@ -3183,16 +3516,20 @@ function drawPortraitNativeManage() {
     const pageH = contentY + contentH - pageY - 6;
     if (tab === 'throne') drawPortraitThrone(contentX, pageY, contentW, pageH);
     else if (tab === 'dungeon') drawPortraitDungeon(contentX, pageY, contentW, pageH);
-    else drawPortraitMob(contentX, pageY, contentW, pageH);
+    else if (tab === 'hero') drawPortraitHero(contentX, pageY, contentW, pageH);
+    else if (tab === 'mob') drawPortraitMob(contentX, pageY, contentW, pageH);
+    else if (tab === 'shop') drawPortraitShop(contentX, pageY, contentW, pageH);
+    else if (tab === 'report') drawPortraitReport(contentX, pageY, contentW, pageH);
+    else drawPortraitStory(contentX, pageY, contentW, pageH);
   }
 
   const ack = guide?.[2];
   const battleReady = tab === 'throne' && (!guide || guide[0] === 'battle');
-  const primaryLabel = portraitMobileMenu ? '关闭菜单' : ack ? '明白，继续' : battleReady ? '迎战' : guide ? '按引导完成当前步骤' : tab === 'throne' ? '迎战' : '返回王座';
-  const primaryAction = portraitMobileMenu ? () => { portraitMobileMenu = false; confirmNew = false; render(); }
+  const primaryLabel = detailPopup ? '关闭详情' : portraitMobileMenu ? '关闭菜单' : ack ? '明白，继续' : battleReady ? '迎战' : guide ? '按引导完成当前步骤' : tab === 'throne' ? '迎战' : '返回王座';
+  const primaryAction = detailPopup ? closeDetailPopup : portraitMobileMenu ? () => { portraitMobileMenu = false; confirmNew = false; render(); }
     : ack ? acknowledgeRoundGuide : battleReady || tab === 'throne' ? startBattle : guide ? () => {} : () => setTab('throne');
   button(portraitGfx, portraitLayer, portraitHits, 8, primaryY, w - 16, 46, primaryLabel, primaryAction,
-    { size: 17, enabled: portraitMobileMenu || ack || battleReady || tab === 'throne' || !guide, fill: ack ? C.goldDark : C.greenDark, border: ack ? C.gold : C.green, color: C.white });
+    { size: 17, enabled: !!detailPopup || portraitMobileMenu || ack || battleReady || tab === 'throne' || !guide, fill: ack ? C.goldDark : C.greenDark, border: ack ? C.gold : C.green, color: C.white });
   portraitActionMap.primary = { x: 8, y: primaryY, w: w - 16, h: 46 };
 
   const gap = 5, bw = Math.floor((w - 16 - gap * (cols - 1)) / cols);
@@ -3208,6 +3545,7 @@ function drawPortraitNativeManage() {
   portraitLayoutInfo = { native: true, contentTop: contentY, contentBottom: contentY + contentH, primaryY, navTop, bottom: h, tabTop: navTop,
     margin: 8, gap, buttonWidth: bw, menuButton: { x: w - 66, y: 12, w: 52, h: 34 }, menuOpen: portraitMobileMenu,
     menuNew: menuNewY == null ? null : { x: contentX + 18, y: menuNewY, w: contentW - 36, h: 46 } };
+  syncStoryInput();
 }
 
 function ensurePortraitChrome() {
@@ -3217,6 +3555,7 @@ function ensurePortraitChrome() {
   portraitChromeKey = key;
   portraitHits.clear();
   portraitActionMap = {};
+  portraitStoryInputRect = null;
   const kids = portraitLayer.removeChildren();
   for (const kid of kids) if (kid !== portraitGfx) kid.destroy({ children: true });
   portraitLayer.addChild(portraitGfx);
@@ -3307,8 +3646,8 @@ function ensurePortraitChrome() {
   portraitLayoutInfo = { top, bottom: top + consoleHeight, tabTop, primaryY, actionY, newY, newX, utilityWidth, margin, gap, buttonWidth: bw,
     paneY: screen === 'manage' ? primaryY - 43 : null, paneWidth: Math.floor((w - margin * 2 - gap * 2) / 3), pane: portraitPane,
     contentTop: screen === 'manage' ? root.y + 36 * viewScale : root.y, contentBottom: portraitContentBottom,
-    logicalLeft: screen === 'manage' ? (portraitPane === 2 ? VIEW_W / 2 : 0) : 60,
-    logicalWidth: screen === 'manage' ? (portraitPane === 0 ? VIEW_W : VIEW_W / 2) : 360 };
+    logicalLeft: screen === 'manage' ? (portraitPane === 2 ? VIEW_W / 2 : 0) : 0,
+    logicalWidth: screen === 'manage' ? (portraitPane === 0 ? VIEW_W : VIEW_W / 2) : VIEW_W };
 }
 
 function drawTabs(g               ) {
@@ -4505,6 +4844,16 @@ function syncStoryInput() {
 
 function positionStoryInput() {
   if (!storyInput) return;
+  if (portraitNativeManage() && portraitStoryInputRect) {
+    const canvasRect = app.canvas.getBoundingClientRect();
+    const sx = canvasRect.width / app.screen.width, sy = canvasRect.height / app.screen.height;
+    storyInput.style.left = `${Math.round(canvasRect.left + portraitStoryInputRect.x * sx)}px`;
+    storyInput.style.top = `${Math.round(canvasRect.top + portraitStoryInputRect.y * sy)}px`;
+    storyInput.style.width = `${Math.round(portraitStoryInputRect.w * sx)}px`;
+    storyInput.style.height = `${Math.max(42, Math.round(portraitStoryInputRect.h * sy))}px`;
+    storyInput.style.fontSize = '16px';
+    return;
+  }
   positionDomInput(storyInput, STORY_INPUT);
 }
 
