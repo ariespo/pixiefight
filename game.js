@@ -6295,22 +6295,18 @@ function buildBattleScene() {
       trapSp = sprite(TRAPS[trapId].tex , rx + 250, FLOOR_Y + 2, 22);
       bgLayer.addChild(trapSp);
     }
-    let utilityGfx = null, utilityLabel = null, utilitySprite = null;
+    let utilitySprite = null;
     const utility = b.rooms[i].utility;
     if (utility && utility.kind !== 'none' && utility.condition > 0) {
-      utilityGfx = new PIXI.Graphics();
-      utilityGfx.rect(rx + 307, FLOOR_Y - 57, 72, 55).fill({ color: C.wall, alpha: 0.76 })
-        .stroke({ width: 2, color: C.goldDark, alignment: 0 });
-      bgLayer.addChild(utilityGfx);
       const facility = UTILITY_KINDS[utility.kind];
-      utilitySprite = sprite(facility?.tex, rx + 343, FLOOR_Y - 3, 48);
+      // Facility art already has a clean transparent background. Place the
+      // full silhouette directly on the room floor instead of shrinking it
+      // into a second UI card inside the battlefield.
+      utilitySprite = sprite(facility?.tex, rx + 338, FLOOR_Y + 1, 92);
       utilitySprite.alpha = Math.max(0.42, utility.condition / 100);
       bgLayer.addChild(utilitySprite);
-      utilityLabel = txt(UTILITY_KINDS[utility.kind]?.name ?? '后勤房', 10, C.gold);
-      utilityLabel.x = rx + 314; utilityLabel.y = FLOOR_Y - 51;
-      bgLayer.addChild(utilityLabel);
     }
-    roomVis.push({ door: g, trap: trapSp, broken: false, utilityGfx, utilityLabel, utilitySprite });
+    roomVis.push({ door: g, trap: trapSp, broken: false, utilitySprite });
   }
   // 王座
   const tx = b.rooms.length * ROOM_W;
@@ -6439,14 +6435,11 @@ function consumeEvents() {
       if (loss) spawnFloat(e.room * ROOM_W + e.x, FLOOR_Y - 62, loss, C.red);
       spawnParticles(e.room * ROOM_W + e.x, FLOOR_Y - 22, 4, C.leather, 55);
       const rv = roomVis[e.room];
-      if (rv?.utilityGfx) rv.utilityGfx.alpha = 0.55 + (1 - e.progress) * 0.45;
       if (rv?.utilitySprite) rv.utilitySprite.alpha = 0.45 + (1 - e.progress) * 0.55;
       playSfx('heavy', 0.45);
     } else if (e.k === 'utility-break') {
       const rv = roomVis[e.room];
-      if (rv?.utilityGfx) { rv.utilityGfx.tint = e.complete ? 0x7a3d46 : 0xb18468; rv.utilityGfx.alpha = 0.72; }
       if (rv?.utilitySprite) { rv.utilitySprite.tint = e.complete ? 0x74505a : 0xc69b7a; rv.utilitySprite.alpha = e.complete ? 0.38 : 0.68; }
-      if (rv?.utilityLabel) rv.utilityLabel.text = e.complete ? '设施被毁' : '设施受损';
       spawnParticles(e.room * ROOM_W + 342, FLOOR_Y - 22, e.complete ? 12 : 7, C.redDark, 85);
       spawnFloat(e.room * ROOM_W + 342, FLOOR_Y - 82, e.complete ? '设施被砸毁' : '劫掠中断', e.complete ? C.red : C.green);
       playSfx('break', 1.2);
@@ -7229,6 +7222,11 @@ window.__debug = {
         kind: battle.rooms[battle.roomIndex].utility.kind,
         workerState: battle.rooms[battle.roomIndex].utility.workerState,
         realtime: battle.rooms[battle.roomIndex].utility.row.realtime ?? null,
+      } : null,
+      utilityVisual: roomVis[battle.roomIndex]?.utilitySprite ? {
+        width: Math.round(roomVis[battle.roomIndex].utilitySprite.width),
+        height: Math.round(roomVis[battle.roomIndex].utilitySprite.height),
+        direct: !roomVis[battle.roomIndex].utilityGfx && !roomVis[battle.roomIndex].utilityLabel,
       } : null,
       logs: battle.log.length,
     };

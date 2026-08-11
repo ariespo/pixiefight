@@ -164,6 +164,7 @@ try {
     __debug.devAssign(0, 'back', guardB);
     __debug.devDev(8, 8);
     __debug.startBattle();
+    const facilityVisual = __debug.battle.utilityVisual;
     const battleRun = __debug.runBattleToEnd();
     const report = __debug.reports[0];
     const linkedArchive = __debug.story.archive.find((x) => x.id === archive?.id);
@@ -181,7 +182,7 @@ try {
     const facilityActionLock = built.level === 1 && blockedUpgrade.level === 1 && nextRoundUpgrade.level === 2;
     const audit = __debug.uiBounds();
     return { relationLead: !!relationLead, sameSubjectBlocked, facilityActionLock, facility, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
-      battleDone: battleRun?.screen === 'result', returnAdvanced, reportLinked: report?.storyRefs?.includes(archive?.id) && linkedArchive?.battleRefs?.includes(report.raidNo),
+      battleDone: battleRun?.screen === 'result', facilityVisual, returnAdvanced, reportLinked: report?.storyRefs?.includes(archive?.id) && linkedArchive?.battleRefs?.includes(report.raidNo),
       exileLead: !!exileLead, exiles: __debug.story.exiles.length, violations: audit.violations };
   });
   assert(result.relationLead, 'Multi-hero relationship lead was not generated.');
@@ -191,6 +192,8 @@ try {
   assert(result.archive && result.chronicle, 'Story archive or hero chronicle filtering failed.');
   assert(result.exactImpact, 'Resolved story choice did not display its exact numeric battle effect and duration.');
   assert(result.battleDone && result.reportLinked, 'Battle completion or report/story bidirectional linking failed.');
+  assert(result.facilityVisual?.direct && result.facilityVisual.width === 92 && result.facilityVisual.height === 69,
+    `Battle facility art is not a direct 92x69 transparent sprite: ${JSON.stringify(result.facilityVisual)}`);
   assert(result.returnAdvanced, 'Returning to management after a win did not advance exactly one raid.');
   assert(result.exileLead && result.exiles === 1, 'Dismissed hero encounter was not retained.');
   assert(result.violations.length === 0, `Bounded text overflow: ${JSON.stringify(result.violations)}`);
