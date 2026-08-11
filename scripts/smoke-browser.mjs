@@ -30,6 +30,9 @@ try {
   page.on('console', (msg) => { if (msg.type() === 'error' && !msg.text().includes('favicon')) errors.push(msg.text()); });
   await page.goto(url, { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__gpReady && window.__debug, null, { timeout: 20000 });
+  assert(await page.evaluate(() => __debug.screen === 'title' && __debug.title.mode === 'main'), 'Game did not open on the title screen.');
+  await page.evaluate(() => __debug.titleNew());
+  assert(await page.evaluate(() => __debug.screen === 'manage'), 'First new game did not leave the title screen.');
 
   const onboarding = await page.evaluate(() => {
     const initial = __debug.progression;
@@ -89,6 +92,8 @@ try {
   await page.evaluate(() => localStorage.setItem('yqh-save-v2', JSON.stringify({ bone: 321, mana: 17, raidNo: 4, story: { archive: [] } })));
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => window.__gpReady && window.__debug, null, { timeout: 20000 });
+  assert(await page.evaluate(() => __debug.screen === 'title' && __debug.title.saveExists), 'Existing save did not expose Continue on the title screen.');
+  await page.evaluate(() => __debug.titleContinue());
   const legacy = await page.evaluate(() => ({ bone: __debug.bone, mana: __debug.mana, floors: __debug.floors.length, story: __debug.story }));
   assert(legacy.bone === 321 && legacy.mana === 17, 'Legacy resources were not preserved.');
   assert(legacy.floors > 0 && legacy.story.relations && Array.isArray(legacy.story.exiles), 'Legacy save was not upgraded to the current schema.');
@@ -286,7 +291,7 @@ try {
   await page.evaluate(() => __debug.devEnding());
   await page.waitForTimeout(100);
   const endingLayout = await page.evaluate(() => __debug.endingLayout);
-  assert(endingLayout?.action && endingLayout.bounds.x >= 0 && endingLayout.bounds.y >= 0
+  assert(endingLayout?.action && endingLayout?.rebirth && endingLayout.bounds.x >= 0 && endingLayout.bounds.y >= 0
     && endingLayout.bounds.right <= 480 && endingLayout.bounds.bottom <= 270,
   `Overtime ending screen exceeds the 480x270 logical viewport: ${JSON.stringify(endingLayout)}`);
   const endingButton = await page.evaluate((action) => __debug.toScreen(action.x + action.w / 2, action.y + action.h / 2), endingLayout.action);
@@ -298,13 +303,15 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => localStorage.removeItem('yqh-save-v2'));
   await page.reload();
-  await page.waitForFunction(() => window.__gpReady && window.__debug?.viewport()?.nativePortrait);
+  await page.waitForFunction(() => window.__gpReady && window.__debug?.viewport()?.portrait);
   const clickPortraitAction = async (name) => {
     const rect = await page.evaluate((key) => __debug.viewport().portraitActions[key] ?? null, name);
     assert(rect, `Missing native portrait action: ${name}`);
     await page.mouse.click(rect.x + rect.w / 2, rect.y + rect.h / 2);
     await page.waitForTimeout(80);
   };
+  await clickPortraitAction('titleNew');
+  assert(await page.evaluate(() => __debug.viewport().nativePortrait), 'Portrait new game did not enter the native management layout.');
   await clickPortraitAction('nav-mob');
   await clickPortraitAction('recruit-slime');
   await clickPortraitAction('recruit-archer');
@@ -322,6 +329,22 @@ try {
   const portraitBattle = await page.evaluate(() => __debug.viewport());
   assert(portraitBattle.portraitLayout?.logicalLeft === 0 && portraitBattle.portraitLayout?.logicalWidth === 480,
     'Portrait battle still crops the sides of the combat viewport.');
+
+  // The permanent clear marker must unlock exactly four doctrines on future new games.
+  await page.evaluate(() => {
+    localStorage.setItem('yqh-meta-v1', JSON.stringify({ clears: 1 }));
+    localStorage.removeItem('yqh-save-v2');
+  });
+  await page.reload();
+  await page.waitForFunction(() => window.__gpReady && window.__debug?.screen === 'title');
+  await page.evaluate(() => __debug.titleNew());
+  const doctrineTitle = await page.evaluate(() => ({ title: __debug.title, actions: __debug.viewport().portraitActions }));
+  assert(doctrineTitle.title.mode === 'doctrine'
+    && ['default', 'swarm', 'elite', 'economy'].every((id) => doctrineTitle.actions[`doctrine-${id}`]),
+  'A permanent clear did not unlock all four starting doctrines.');
+  await page.evaluate(() => { __debug.titlePick('economy'); __debug.titleConfirm(); });
+  assert(await page.evaluate(() => __debug.screen === 'manage' && __debug.save.doctrine === 'economy'),
+    'The selected starting doctrine was not persisted into the new run.');
 
   assert(errors.length === 0, `Browser errors:\n${errors.join('\n')}`);
   console.log('Browser smoke passed: boot, legacy save, story/facility flows, battle/report links, constrained text, landscape touch targets and portrait controls.');

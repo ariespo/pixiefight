@@ -1,5 +1,5 @@
 import * as PIXI from 'pixi.js';
-import { C, VIEW_W, VIEW_H, MONSTERS, HERO_CLASSES, THEMES, TRAPS, RAIDS, AFFIXES, AURAS, LEVEL_MULT, UPGRADE_COST, XP_PER_LEVEL, TEXTURES, HERO_LV_MULT, SYNERGY, synergyOf, kindById, registerKinds, unregisterKind, isCustomKind, isEliteKind } from './data.js';
+import { C, VIEW_W, VIEW_H, MONSTERS, HERO_CLASSES, THEMES, TRAPS, RAIDS, NORMAL_RAID_COUNT, AFFIXES, AURAS, LEVEL_MULT, UPGRADE_COST, XP_PER_LEVEL, TEXTURES, HERO_LV_MULT, SYNERGY, synergyOf, kindById, registerKinds, unregisterKind, isCustomKind, isEliteKind } from './data.js';
 import { GEARS, GEAR_SLOTS, GEAR_CAP, MELT_MANA, REFORGE_MANA, FRAMES, RUNES, TEMPERS, FORGED_CAP, craftCost, craftKind, craftName, frameById, runeById, runesFor, temperById, planValid, registerForged, gearById, gearEff, gearSet,                                                               } from './gear.js';
                                                                                         
 import { createBattle, stepBattle, ROOM_W, affixText, actionProgress, deployUtilityWorker, evacuateUtilityWorker } from './battle.js';
@@ -51,6 +51,37 @@ import { initAudio, unlockAudio, playSfx, playHit, playMusic, setMuted, audioSna
   
 
 const SAVE_KEY = 'yqh-save-v2';
+const META_KEY = 'yqh-meta-v1';
+
+const DOCTRINES = {
+  default: { id: 'default', name: '旧日法则', tag: '标准', desc: '没有额外修正。以完整的标准经济与战斗规则经营地牢。' },
+  swarm: { id: 'swarm', name: '群巢敕令', tag: '扩军', desc: '怪群扩编费用-30%，但怪物升级骨币费用+15%。适合多房消耗与频繁轮换。' },
+  elite: { id: 'elite', name: '精兵誓约', tag: '精锐', desc: '怪物与英雄战后经验+25%，但怪群编制上限少2。适合少数高等级核心。' },
+  economy: { id: 'economy', name: '深层经营', tag: '设施', desc: '设施产出+30%，但战斗直接获得的骨币与魔质-15%。适合长期建设。' },
+};
+const MONSTER_CAP_TIERS = [4, 6, 8, 10, 12, 14];
+const MONSTER_CAP_UNLOCK = [1, 4, 7, 10, 14, 18];
+const MONSTER_CAP_COST = [null, { bone: 80, mana: 0 }, { bone: 180, mana: 0 }, { bone: 340, mana: 0 },
+  { bone: 520, mana: 20 }, { bone: 760, mana: 50 }];
+
+function loadMeta() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(META_KEY) || 'null');
+    return { clears: Math.max(0, Math.round(raw?.clears || 0)) };
+  } catch { return { clears: 0 }; }
+}
+function persistMeta() { localStorage.setItem(META_KEY, JSON.stringify(meta)); }
+function doctrine() { return DOCTRINES[S.doctrine] ?? DOCTRINES.default; }
+function monsterCap() { return Math.max(2, Math.round(S.monsterCap || MONSTER_CAP_TIERS[0]) - (S.doctrine === 'elite' ? 2 : 0)); }
+function nextMonsterCapTier() {
+  const baseCap = Math.round(S.monsterCap || MONSTER_CAP_TIERS[0]);
+  const index = MONSTER_CAP_TIERS.findIndex((n) => n > baseCap);
+  if (index < 0) return null;
+  const raw = MONSTER_CAP_COST[index];
+  const discount = S.doctrine === 'swarm' ? 0.7 : 1;
+  return { index, cap: MONSTER_CAP_TIERS[index] - (S.doctrine === 'elite' ? 2 : 0), unlock: MONSTER_CAP_UNLOCK[index],
+    bone: Math.round(raw.bone * discount), mana: raw.mana };
+}
 
 const MAX_FLOORS = 6;
 const BASE_NEW_FLOORS = 2;
@@ -82,10 +113,11 @@ function syncRoomAlias() {
   S.dungeon.unlockedFloors = S.floors.length;
 }
 
-function freshSave()       {
+function freshSave(selectedDoctrine = 'default')       {
   const floors = Array.from({ length: BASE_NEW_FLOORS }, (_, i) => freshFloor(i + 1));
   return {
-    bone: 95, mana: 18, relic: 0, raidNo: 1, uidNext: 1,
+    bone: 95, mana: 18, relic: 0, raidNo: 1, uidNext: 1, campaignVersion: 2,
+    doctrine: selectedDoctrine in DOCTRINES ? selectedDoctrine : 'default', monsterCap: MONSTER_CAP_TIERS[0],
     monsters: [],
     floors, rooms: floors.map((f) => f.battle),
     dungeon: {
@@ -97,7 +129,7 @@ function freshSave()       {
     themes: ['stone'], traps: ['none'],
     sealLv: 0, trapLv: 0,
     best: {}, reports: [],
-    overtime: false, otRaid: 13,
+    overtime: false, otRaid: NORMAL_RAID_COUNT + 1, clearRecorded: false,
     customs: [], cstNext: 1,
     diy: [], diyNext: 1,
     diyAf: [], diyAfNext: 1,
@@ -110,6 +142,8 @@ function freshSave()       {
 }
 
 let S       = freshSave();
+let meta = loadMeta();
+let saveExists = !!localStorage.getItem(SAVE_KEY);
 
 function loadSave() {
   try {
@@ -175,6 +209,17 @@ function syncForged() {
 // 旧版本/损坏存档可能带未知陷阱或悬空引用，清洗后再渲染，否则查表会 undefined 白屏
 function sanitizeSave() {
   syncForged();
+  if (Math.round(S.campaignVersion || 0) < 2 && S.overtime) S.otRaid = Math.max(NORMAL_RAID_COUNT + 1, Math.round(S.otRaid || 13) + 8);
+  S.campaignVersion = 2;
+  S.doctrine = S.doctrine in DOCTRINES ? S.doctrine : 'default';
+  const legacyCap = MONSTER_CAP_TIERS.find((n) => n >= Math.max(MONSTER_CAP_TIERS[0], S.monsters?.length || 0))
+    ?? MONSTER_CAP_TIERS.at(-1);
+  S.monsterCap = MONSTER_CAP_TIERS.includes(Math.round(S.monsterCap)) ? Math.round(S.monsterCap) : legacyCap;
+  if (S.overtime) {
+    meta.clears = Math.max(1, meta.clears);
+    S.clearRecorded = true;
+    persistMeta();
+  }
   const legacyTutorial = typeof S.tutorial === 'number' ? S.tutorial : 0;
   if (!S.tutorial || typeof S.tutorial !== 'object') S.tutorial = { step: legacyTutorial, visited: {} };
   S.tutorial.step = Math.max(0, Math.min(8, Math.round(S.tutorial.step || 0)));
@@ -377,7 +422,7 @@ function syncCustoms() {
 }
 let saveFlash = 0;
 function persist() {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); saveFlash = 1.2; } catch { /* 忽略写入失败 */ }
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); saveExists = true; saveFlash = 1.2; } catch { /* 忽略写入失败 */ }
 }
 
 function exportSave() {
@@ -509,13 +554,14 @@ function utilityOutput(floorIndex) {
   const condition = u.persona === 'steadfast' && u.condition <= 50 ? Math.min(1, rawCondition + 0.15) : rawCondition;
   const staffed = workerEff(u);
   const personaYield = u.persona === 'ambitious' ? 1.1 : 1;
-  const mult = depth * condition * staffed * personaYield;
+  const doctrineYield = S.doctrine === 'economy' ? 1.3 : 1;
+  const mult = depth * condition * staffed * personaYield * doctrineYield;
   const targets = u.trainTargets.map((x) => ({ ...x }));
   return {
     bone: d.yields && u.kind === 'bone-yard' ? Math.max(0, Math.round(d.yields[lv] * mult)) : 0,
     mana: d.yields && u.kind === 'mana-well' ? Math.max(0, Math.round(d.yields[lv] * mult)) : 0,
-    xp: u.kind === 'training' && targets.length ? Math.max(0, Math.round(d.xp[lv] * condition * personaYield)) : 0,
-    repair: u.kind === 'workshop' ? Math.max(0, Math.round(d.repair[lv] * condition * staffed * personaYield)) : 0,
+    xp: u.kind === 'training' && targets.length ? Math.max(0, Math.round(d.xp[lv] * condition * personaYield * doctrineYield)) : 0,
+    repair: u.kind === 'workshop' ? Math.max(0, Math.round(d.repair[lv] * condition * staffed * personaYield * doctrineYield)) : 0,
     healingCharges: u.kind === 'healing' ? Math.max(1, Math.round(d.charges[lv] * condition * staffed * personaYield)) : 0,
     forgeCharges: u.kind === 'workshop' ? 1 : 0,
     forgeDiscount: u.kind === 'workshop' ? d.discount[lv] * Math.min(1, condition * staffed) : 0,
@@ -943,24 +989,54 @@ function champStatMap() {
 const seatedChampUids = () => S.rooms.map((r) => r.leader).filter((u)              => u != null);
 const roomOfChamp = (uid        ) => S.rooms.findIndex((r) => r.leader === uid);
 function currentRaid()          {
-  if (!S.overtime && S.raidNo <= 12) return RAIDS[S.raidNo - 1];
+  if (!S.overtime && S.raidNo <= NORMAL_RAID_COUNT) return RAIDS[S.raidNo - 1];
   return makeOvertimeRaid(S.otRaid);
 }
 function makeOvertimeRaid(no        )          {
-  const lv = 8 + (no - 12) * 2;
+  const batch = Math.max(1, no - NORMAL_RAID_COUNT);
+  const lv = 18 + batch * 2;
   const pool = ['knight', 'archer', 'cleric', 'mage', 'rogue', 'paladin', 'berserker', 'ranger', 'bard', 'alchemist', 'monk', 'lancer', 'warlock'];
   const bosses = ['captain', 'inquisitor', 'swordmaster'];
-  const members = [{ cls: bosses[(no - 13) % bosses.length], lv: lv + 1 }];
+  const members = [{ cls: bosses[(batch - 1) % bosses.length], lv: lv + 1 }];
   for (let i = 0; i < 4; i++) members.push({ cls: pool[(no * 3 + i * 2) % pool.length], lv });
   const affPool              = [['haste'], ['brave'], ['shield'], ['holywater', 'brave'], ['haste', 'shield']];
   return {
-    no, title: `加班勇者 第${no - 12}批`, members,
-    affixes: affPool[(no - 13) % affPool.length],
-    reward: { bone: 200 + (no - 12) * 20, mana: 40 + (no - 12) * 4 },
+    no, title: `加班勇者 第${batch}批`, members,
+    affixes: affPool[(batch - 1) % affPool.length],
+    reward: { bone: 280 + batch * 24, mana: 180 + batch * 12 },
   };
 }
+const MONSTER_UPGRADE_MANA = [0, 0, 12, 28];
+function monsterUpgradeQuote(inst) {
+  const index = Math.max(0, Math.min(UPGRADE_COST.length - 1, inst.lv - 1));
+  return {
+    bone: Math.round(UPGRADE_COST[index] * (S.doctrine === 'swarm' ? 1.15 : 1)),
+    mana: MONSTER_UPGRADE_MANA[index],
+  };
+}
+function upgradeMonster(inst) {
+  if (!inst || inst.lv >= 5) return false;
+  const need = XP_PER_LEVEL[inst.lv - 1], q = monsterUpgradeQuote(inst);
+  if (inst.xp < need || S.bone < q.bone || S.mana < q.mana) return false;
+  inst.xp -= need; S.bone -= q.bone; S.mana -= q.mana; inst.lv++;
+  playSfx('buy'); persist(); say(`${instKind(inst).name} 升到 Lv${inst.lv}`); render();
+  return true;
+}
+function heroUpgradeMana(c) { return c.lv < 5 ? 0 : [10, 15, 20, 30, 45][Math.min(4, c.lv - 5)]; }
+function expandMonsterCap() {
+  const next = nextMonsterCapTier();
+  if (!next) { say('怪群编制已经扩至上限'); return; }
+  if (!S.overtime && S.raidNo < next.unlock) { say(`第${next.unlock}回合开放下一次扩编`); return; }
+  if (S.bone < next.bone || S.mana < next.mana) { say('扩编资源不足'); return; }
+  S.bone -= next.bone; S.mana -= next.mana;
+  S.monsterCap = MONSTER_CAP_TIERS[next.index];
+  playSfx('buy'); persist(); say(`怪群编制扩充至 ${monsterCap()}`); render();
+}
 function canUpgradeAny() {
-  return S.monsters.some((m) => m.lv < 5 && m.xp >= XP_PER_LEVEL[m.lv - 1] && S.bone >= UPGRADE_COST[m.lv - 1]);
+  return S.monsters.some((m) => {
+    const q = monsterUpgradeQuote(m);
+    return m.lv < 5 && m.xp >= XP_PER_LEVEL[m.lv - 1] && S.bone >= q.bone && S.mana >= q.mana;
+  });
 }
 function shopHasAffordable() {
   const items = shopItems();
@@ -1145,7 +1221,11 @@ function roundGuide() {
 }
 let tab      = 'throne';
                                                         
-let screen         = 'manage';
+let screen         = 'title';
+let titleMode = 'main';
+let titleDoctrinePick = 'default';
+let titleNewConfirm = false;
+let titleActionRects = {};
 
 let sel                                                                                                                                                                            = null;
 let heroSel                = null;          // 当前查看的英雄 uid
@@ -1483,7 +1563,15 @@ function bindInput() {
   canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   window.addEventListener('keydown', (e) => {
     unlockAndPlay();
-    if (screen === 'manage') {
+    if (screen === 'title') {
+      if (e.key === 'Escape' && titleMode === 'doctrine') { titleMode = 'main'; titleNewConfirm = false; render(); return; }
+      if (e.key === 'Enter') {
+        if (titleMode === 'doctrine') beginNewRun(titleDoctrinePick);
+        else if (saveExists) continueGame();
+        else startFromTitle();
+      }
+      return;
+    } else if (screen === 'manage') {
       if (smith) {
         if (e.key === 'Escape') { closeSmith(); return; }
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
@@ -1631,7 +1719,14 @@ function render() {
     scheduleLayout();
   }
   modalLayer.visible = modalOpen || !!detailPopup;
-  if (screen !== 'manage') { uiLayer.visible = false; guideLayer.visible = false; if (storyInput) storyInput.style.display = 'none'; ensurePortraitChrome(); return; }
+  if (screen !== 'manage') {
+    uiLayer.visible = false;
+    guideLayer.visible = false;
+    if (storyInput) storyInput.style.display = 'none';
+    if (screen === 'title') buildTitle();
+    ensurePortraitChrome();
+    return;
+  }
   if (!featureOpen(tab)) tab = 'throne';
   uiLayer.visible = true;
   clearUi();
@@ -2589,13 +2684,13 @@ function drawStitch() {
   const oldCost = st.editUid != null ? boneCost(editBaseParts ?? st.parts) : 0;
   const payBone = st.editUid != null ? Math.max(0, cost - oldCost) : cost;
   const capFull = st.editUid == null && S.customs.length >= CUSTOM_CAP;
-  const slotFull = st.editUid == null && S.monsters.length >= 10;
+  const slotFull = st.editUid == null && S.monsters.length >= monsterCap();
   const relicCost = st.editUid != null ? Math.max(0, legendaryPartCount(st.parts) - legendaryPartCount(editBaseParts ?? st.parts)) : legendaryPartCount(st.parts);
   const can = S.bone >= payBone && S.mana >= manaCost && S.relic >= relicCost && !capFull && !slotFull;
   label(modalLayer, `${st.editUid != null ? `重组 ${payBone}` : `造价 ${cost}`}骨+${manaCost}魔${relicCost ? `+${relicCost}遗物` : ''}`, 200, 168, 12, can ? C.gold : C.red);
   let note = '';
   if (capFull) note = `图纸已满（${CUSTOM_CAP}）`;
-  else if (slotFull) note = '怪物栅已满（10）';
+  else if (slotFull) note = `怪物栅已满（${monsterCap()}）`;
   else if (S.bone < payBone) note = '骨币不足';
   else if (S.mana < manaCost) note = '魔质不足';
   else if (S.relic < relicCost) note = '英雄遗物不足';
@@ -2915,7 +3010,7 @@ function confirmStitch() {
     return;
   }
   if (S.customs.length >= CUSTOM_CAP) { say('图纸已满'); return; }
-  if (S.monsters.length >= 10) { say('怪物栅已满（10）'); return; }
+  if (S.monsters.length >= monsterCap()) { say(`怪物栅已满（${monsterCap()}）`); return; }
   S.bone -= cost;
   S.mana -= manaCost;
   S.relic -= relicCost;
@@ -2966,13 +3061,105 @@ function toggleMute() {
   S.muted = !S.muted; setMuted(S.muted); persist(); render();
 }
 
+function clearTransientUi() {
+  sel = null; heroSel = null; detailPopup = null; stitch = null; forge = null; graft = null; smith = null;
+  battle = null; battleLayer.visible = false; confirmNew = false; titleNewConfirm = false;
+  for (const c of overlay.removeChildren()) c.destroy({ children: true });
+  hits.clear(); endingBuilt = false; endingActionRect = null; endingRebirthRect = null;
+}
+
+function beginNewRun(doctrineId = 'default') {
+  S = freshSave(doctrineId);
+  syncDiyAffixes(); syncDiy(); syncCustoms();
+  clearTransientUi();
+  tab = 'throne'; screen = 'manage'; portraitPane = 0;
+  persist();
+  playMusic('bgm-manage');
+  scheduleLayout(); render();
+  say(meta.clears > 0 ? `新轮回：${doctrine().name}` : '新的地牢已经苏醒');
+}
+
+function continueGame() {
+  if (!saveExists) { titleMode = meta.clears > 0 ? 'doctrine' : 'main'; render(); return; }
+  clearTransientUi();
+  screen = 'manage'; tab = featureOpen(tab) ? tab : 'throne'; portraitPane = 0;
+  playMusic('bgm-manage'); scheduleLayout(); render();
+}
+
+function startFromTitle() {
+  if (saveExists && !titleNewConfirm) {
+    titleNewConfirm = true;
+    say('再次点击开始新游戏，将覆盖当前进度');
+    render();
+    return;
+  }
+  titleNewConfirm = false;
+  if (meta.clears > 0) { titleMode = 'doctrine'; titleDoctrinePick = 'default'; render(); }
+  else beginNewRun('default');
+}
+
+function openNewCycle() {
+  clearTransientUi();
+  screen = 'title'; titleMode = 'doctrine'; titleDoctrinePick = 'default';
+  scheduleLayout(); render();
+}
+
+function buildTitle() {
+  for (const c of overlay.removeChildren()) c.destroy({ children: true });
+  hits.clear(); titleActionRects = {};
+  const g = new PIXI.Graphics(); overlay.addChild(g);
+  g.rect(0, 0, VIEW_W, VIEW_H).fill(C.bg);
+  if (TEX['tile-wall']) {
+    const wall = new PIXI.TilingSprite({ texture: TEX['tile-wall'], width: VIEW_W, height: VIEW_H });
+    wall.tileScale.set(0.72); wall.tint = 0x31273f; wall.alpha = 0.72; overlay.addChild(wall);
+  }
+  const shade = new PIXI.Graphics(); overlay.addChild(shade);
+  shade.rect(0, 0, VIEW_W, VIEW_H).fill({ color: 0x08070d, alpha: 0.36 });
+  const throne = sprite('icon-throne', 240, titleMode === 'main' ? 156 : 60, titleMode === 'main' ? 92 : 52);
+  throne.alpha = 0.72; overlay.addChild(throne);
+  labelC(overlay, '夜 曲 地 牢', 240, 20, 25, C.gold);
+  labelC(overlay, '经营黑暗 · 守住王座', 240, 50, 11, C.bone);
+  const bg = new PIXI.Graphics(); overlay.addChild(bg);
+  if (titleMode === 'main') {
+    panelF(bg, overlay, 'scroll', 132, 80, 216, 160, C.wall);
+    boundedText(overlay, saveExists ? `存档进度：第 ${S.overtime ? `加班 ${S.otRaid - NORMAL_RAID_COUNT}` : `${S.raidNo}/${NORMAL_RAID_COUNT}`} 轮` : '王座空悬，等待新的地下城主。', 154, 94, 172, 32, 10, C.stoneLit, { align: 'center' });
+    if (saveExists) {
+      titleActionRects.continue = { x: 164, y: 137, w: 152, h: 34 };
+      button(bg, overlay, hits, 164, 137, 152, 34, '继续游戏', continueGame, { size: 15, fill: C.greenDark, border: C.green, color: C.white });
+    }
+    titleActionRects.new = { x: 164, y: saveExists ? 181 : 153, w: 152, h: 34 };
+    button(bg, overlay, hits, titleActionRects.new.x, titleActionRects.new.y, 152, 34,
+      titleNewConfirm ? '确认覆盖并开始' : '开始新游戏', startFromTitle,
+      { size: 15, fill: titleNewConfirm ? C.redDark : C.wallLit, border: titleNewConfirm ? C.red : C.gold, color: C.white });
+    if (meta.clears > 0) labelC(overlay, `轮回方针已解锁 · 通关 ${meta.clears} 次`, 240, 224, 9, C.purple);
+    return;
+  }
+  labelC(overlay, '选择本轮开局方针', 240, 69, 13, C.white);
+  Object.values(DOCTRINES).forEach((d, i) => {
+    const x = 12 + i * 116, y = 88, selected = titleDoctrinePick === d.id;
+    titleActionRects[`doctrine-${d.id}`] = { x, y, w: 108, h: 65 };
+    panelF(bg, overlay, 'stone', x, y, 108, 65, selected ? C.gold : C.wall);
+    labelC(overlay, d.name, x + 54, y + 11, 11, selected ? C.ink : C.bone);
+    labelC(overlay, `【${d.tag}】`, x + 54, y + 31, 9, selected ? C.white : C.stoneLit);
+    hits.add(x, y, 108, 65, () => { titleDoctrinePick = d.id; playSfx('tab'); render(); });
+  });
+  const picked = DOCTRINES[titleDoctrinePick] ?? DOCTRINES.default;
+  panelF(bg, overlay, 'scroll', 42, 160, 396, 54, C.wall);
+  boundedText(overlay, picked.desc, 58, 173, 364, 30, 10, C.bone, { align: 'center' });
+  titleActionRects.back = { x: 82, y: 224, w: 120, h: 30 };
+  titleActionRects.confirm = { x: 278, y: 224, w: 120, h: 30 };
+  button(bg, overlay, hits, 82, 224, 120, 30, '返回', () => { titleMode = 'main'; titleNewConfirm = false; render(); }, { size: 12 });
+  button(bg, overlay, hits, 278, 224, 120, 30, '以此方针开局', () => beginNewRun(titleDoctrinePick),
+    { size: 12, fill: C.purpleDark, border: C.gold, color: C.white });
+}
+
 function requestNewGame() {
   if (confirmNew) {
-    S = freshSave(); syncCustoms(); persist(); confirmNew = false; sel = null; tab = 'throne'; screen = 'manage';
-    detailPopup = null; stitch = null; forge = null; graft = null; smith = null;
-    say('已开启新档'); render();
+    confirmNew = false;
+    screen = 'title'; titleMode = meta.clears > 0 ? 'doctrine' : 'main'; titleNewConfirm = false;
+    clearTransientUi(); scheduleLayout(); render();
   } else {
-    confirmNew = true; say('再点一次“新档”确认清空存档'); render();
+    confirmNew = true; say('再点一次“新档”返回标题并选择新开局'); render();
   }
 }
 
@@ -2988,7 +3175,7 @@ function drawTopBar(g               ) {
   ico('icon-mana', 78);
   label(uiLayer, `${S.mana}`, 96, 12, 12, C.purple);
   const raid = currentRaid();
-  label(uiLayer, S.overtime ? `加班勇者 第${raid.no - 12}批` : `袭击 ${S.raidNo}/12`, 150, 12, 12, C.bone);
+  label(uiLayer, S.overtime ? `加班勇者 第${raid.no - NORMAL_RAID_COUNT}批` : `袭击 ${S.raidNo}/${NORMAL_RAID_COUNT}`, 150, 12, 12, C.bone);
   label(uiLayer, '勇者请回', 240, 12, 12, C.stoneLit);
   if (saveFlash > 0) label(uiLayer, '已保存', 266, 12, 10, C.green);
   // 测试按钮：一键补资源，方便试各种阵容
@@ -3068,11 +3255,10 @@ function drawPortraitMob(x, y, w, h) {
     label(portraitLayer, `技能・${k.skill}`, x + 20, y + 112, 15, C.purple);
     boundedText(portraitLayer, k.skillDesc, x + 20, y + 138, w - 40, 60, 12, C.bone);
     if (selectedInst.lv < 5) {
-      const need = XP_PER_LEVEL[selectedInst.lv - 1], cost = UPGRADE_COST[selectedInst.lv - 1];
-      button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 224, w - 16, 42, `升级 ${cost}骨・经验${selectedInst.xp}/${need}`, () => {
-        if (selectedInst.xp < need || S.bone < cost) return;
-        selectedInst.xp -= need; selectedInst.lv++; S.bone -= cost; persist(); playSfx('buy'); render();
-      }, { size: 14, enabled: selectedInst.xp >= need && S.bone >= cost, fill: C.greenDark, border: C.green, color: C.white });
+      const need = XP_PER_LEVEL[selectedInst.lv - 1], cost = monsterUpgradeQuote(selectedInst);
+      button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 224, w - 16, 42,
+        `升级 ${cost.bone}骨${cost.mana ? ` ${cost.mana}魔` : ''}・经验${selectedInst.xp}/${need}`, () => upgradeMonster(selectedInst),
+      { size: 14, enabled: selectedInst.xp >= need && S.bone >= cost.bone && S.mana >= cost.mana, fill: C.greenDark, border: C.green, color: C.white });
     }
     if (featureOpen('monsterCreation')) {
       button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 274, Math.floor((w - 22) / 2), 42, '全身改造', () => openGraft(selectedInst.uid),
@@ -3085,7 +3271,7 @@ function drawPortraitMob(x, y, w, h) {
   const tabW = Math.floor((w - 22) / 2);
   button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, tabW, 38, '招募兵种', () => { portraitMobView = 'recruit'; render(); },
     { size: 15, fill: portraitMobView === 'recruit' ? C.wallLit : C.wall, border: portraitMobView === 'recruit' ? C.gold : C.stoneLit, color: C.white });
-  button(portraitGfx, portraitLayer, portraitHits, x + 14 + tabW, y + 2, tabW, 38, `已拥有 ${S.monsters.length}/10`, () => { portraitMobView = 'owned'; render(); },
+  button(portraitGfx, portraitLayer, portraitHits, x + 14 + tabW, y + 2, tabW, 38, `编制 ${S.monsters.length}/${monsterCap()}`, () => { portraitMobView = 'owned'; render(); },
     { size: 15, fill: portraitMobView === 'owned' ? C.wallLit : C.wall, border: portraitMobView === 'owned' ? C.gold : C.stoneLit, color: C.white });
   const listY = y + 48;
   if (portraitMobView === 'recruit') {
@@ -3102,7 +3288,7 @@ function drawPortraitMob(x, y, w, h) {
       label(portraitLayer, `${k.row === 'front' ? '前排' : k.row === 'back' ? '后排' : '任意排'}・${cut(k.skill, 10)}`, x + 70, cy + 31, 12, C.stoneLit);
       button(portraitGfx, portraitLayer, portraitHits, x + w - 112, cy + 11, 96, 38,
         eliteLocked ? `第${k.eliteMin}轮` : `招募 ${rq.cost}骨`, () => recruit(k.id),
-        { size: 13, enabled: !eliteLocked && S.bone >= rq.cost && S.monsters.length < 10, fill: C.greenDark, border: C.green, color: C.white });
+        { size: 13, enabled: !eliteLocked && S.bone >= rq.cost && S.monsters.length < monsterCap(), fill: C.greenDark, border: C.green, color: C.white });
       portraitActionMap[`recruit-${k.id}`] = { x: x + w - 112, y: cy + 11, w: 96, h: 38 };
     });
     portraitPager('portrait-mob-recruit', pg.page, pg.pages, x + 8, y + h - 38, w - 16);
@@ -3119,7 +3305,15 @@ function drawPortraitMob(x, y, w, h) {
       button(portraitGfx, portraitLayer, portraitHits, x + w - 88, cy + 13, 72, 34, '详情', () => { sel = { kind: 'inst', uid: inst.uid }; render(); },
         { size: 13, border: C.purple, color: C.purple });
     });
-    portraitPager('portrait-mob-owned', pg.page, pg.pages, x + 8, y + h - 38, w - 16);
+    const next = nextMonsterCapTier();
+    portraitPager('portrait-mob-owned', pg.page, pg.pages, x + 8, y + h - 38, next ? Math.max(120, w - 164) : w - 16);
+    if (next) {
+      const open = S.overtime || S.raidNo >= next.unlock;
+      button(portraitGfx, portraitLayer, portraitHits, x + w - 146, y + h - 40, 138, 36,
+        open ? `扩编至${next.cap}・${next.bone}骨${next.mana ? ` ${next.mana}魔` : ''}` : `第${next.unlock}轮开放扩编`, expandMonsterCap,
+        { size: 11, enabled: open && S.bone >= next.bone && S.mana >= next.mana, fill: C.goldDark, border: C.gold, color: C.white });
+      portraitActionMap.expandRoster = { x: x + w - 146, y: y + h - 40, w: 138, h: 36 };
+    }
   }
   if (portraitMobView === 'recruit' && featureOpen('monsterCreation')) button(portraitGfx, portraitLayer, portraitHits, x + w - 118, y + h - 40, 110, 36,
     '创造怪物', () => openStitch(), { size: 13, fill: C.purpleDark, border: C.purple, color: C.white });
@@ -3288,9 +3482,9 @@ function drawPortraitHeroStatus(x, y, w, h, c) {
     `出战 ${c.battles}　击倒 ${c.kills}`, c.restTurns ? `强制休息还需 ${c.restTurns} 回合` : `出战计数 ${c.sortiesSinceRest || 0}/${HERO_SORTIE_LIMIT}`];
   lines.forEach((line, i) => label(portraitLayer, line, x + 14, y + 12 + i * 25, 14, i === 3 && c.restTurns ? C.red : C.bone));
   if (c.lv < CHAMP_LV_CAP) {
-    label(portraitLayer, `经验 ${c.xp}/${xpNeed(c.lv)}　升级 ${upCostOf(c)}骨`, x + 14, y + 118, 13, C.gold);
+    label(portraitLayer, `经验 ${c.xp}/${xpNeed(c.lv)}　升级 ${upCostOf(c)}骨${heroUpgradeMana(c) ? ` ${heroUpgradeMana(c)}魔` : ''}`, x + 14, y + 118, 13, C.gold);
     button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 146, w - 16, 40, '升级英雄', () => levelChamp(c),
-      { size: 15, enabled: canLevel(c) && S.bone >= upCostOf(c), fill: C.greenDark, border: C.green, color: C.white });
+      { size: 15, enabled: canLevel(c) && S.bone >= upCostOf(c) && S.mana >= heroUpgradeMana(c), fill: C.greenDark, border: C.green, color: C.white });
   }
   if (c.restTurns) button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 194, w - 16, 40, `疗愈 ${REST_MANA}魔・休息-1`, () => restChamp(c),
     { size: 14, enabled: healingCapacity() > 0 && S.dungeon.healingCharges > 0 && S.mana >= REST_MANA, border: C.green, color: C.green });
@@ -3528,7 +3722,7 @@ function drawPortraitNativeManage() {
   panelF(portraitGfx, portraitLayer, 'stone', 8, 8, w - 16, 44, C.wall);
   label(portraitLayer, `骨 ${S.bone}　魔 ${S.mana}`, 20, 20, 15, C.gold);
   labelC(portraitLayer, TABS.find((item) => item.id === tab)?.name ?? '', w / 2, 20, 16, C.white);
-  label(portraitLayer, S.overtime ? `加班${currentRaid().no - 12}` : `${S.raidNo}/12`, w - 112, 21, 13, C.bone);
+  label(portraitLayer, S.overtime ? `加班${currentRaid().no - NORMAL_RAID_COUNT}` : `${S.raidNo}/${NORMAL_RAID_COUNT}`, w - 112, 21, 13, C.bone);
   button(portraitGfx, portraitLayer, portraitHits, w - 66, 12, 52, 34, '菜单', () => { portraitMobileMenu = !portraitMobileMenu; render(); },
     { size: 13, fill: portraitMobileMenu ? C.wallLit : C.wall, border: portraitMobileMenu ? C.gold : C.stoneLit, color: C.white });
 
@@ -3605,6 +3799,58 @@ function drawPortraitModalChrome() {
   portraitLayoutInfo = { nativeModal: true, contentTop: root.y, contentBottom: portraitContentBottom, primaryY: top + 8, bottom: Math.min(h, top + 64) };
 }
 
+function drawPortraitTitle() {
+  const w = app.screen.width, h = app.screen.height;
+  portraitGfx.rect(0, 0, w, h).fill(C.bg);
+  for (let y = 0; y < h; y += 48) portraitGfx.rect(0, y, w, 1).fill({ color: C.wall, alpha: 0.42 });
+  const artTop = Math.max(18, Math.round(h * 0.055));
+  const throne = sprite('icon-throne', w / 2, artTop + Math.min(150, h * 0.18), Math.min(128, w * 0.32));
+  throne.alpha = 0.65; portraitLayer.addChild(throne);
+  labelC(portraitLayer, '夜 曲 地 牢', w / 2, artTop, Math.max(25, Math.min(36, w * 0.085)), C.gold);
+  labelC(portraitLayer, '经营黑暗 · 守住王座', w / 2, artTop + 45, 14, C.bone);
+  const margin = 18;
+  if (titleMode === 'main') {
+    const panelY = Math.max(255, Math.round(h * 0.36));
+    const panelH = Math.min(330, h - panelY - 42);
+    panelF(portraitGfx, portraitLayer, 'scroll', margin, panelY, w - margin * 2, panelH, C.wall);
+    const status = saveExists ? `存档进度：第 ${S.overtime ? `加班 ${S.otRaid - NORMAL_RAID_COUNT}` : `${S.raidNo}/${NORMAL_RAID_COUNT}`} 轮` : '王座空悬，等待新的地下城主。';
+    boundedText(portraitLayer, status, margin + 24, panelY + 28, w - margin * 2 - 48, 54, 15, C.stoneLit);
+    let by = panelY + 102;
+    if (saveExists) {
+      portraitActionMap.titleContinue = { x: margin + 24, y: by, w: w - margin * 2 - 48, h: 54 };
+      button(portraitGfx, portraitLayer, portraitHits, margin + 24, by, w - margin * 2 - 48, 54, '继续游戏', continueGame,
+        { size: 20, fill: C.greenDark, border: C.green, color: C.white });
+      by += 70;
+    }
+    portraitActionMap.titleNew = { x: margin + 24, y: by, w: w - margin * 2 - 48, h: 54 };
+    button(portraitGfx, portraitLayer, portraitHits, margin + 24, by, w - margin * 2 - 48, 54,
+      titleNewConfirm ? '确认覆盖并开始' : '开始新游戏', startFromTitle,
+      { size: 20, fill: titleNewConfirm ? C.redDark : C.wallLit, border: titleNewConfirm ? C.red : C.gold, color: C.white });
+    if (meta.clears > 0) labelC(portraitLayer, `轮回方针已解锁 · 通关 ${meta.clears} 次`, w / 2, panelY + panelH - 35, 13, C.purple);
+    return;
+  }
+  const listY = Math.max(215, Math.round(h * 0.27));
+  labelC(portraitLayer, '选择本轮开局方针', w / 2, listY - 34, 18, C.white);
+  const cardH = Math.max(68, Math.min(86, (h - listY - 210) / 4));
+  Object.values(DOCTRINES).forEach((d, i) => {
+    const x = margin, y = listY + i * (cardH + 8), selected = titleDoctrinePick === d.id;
+    panelF(portraitGfx, portraitLayer, 'stone', x, y, w - margin * 2, cardH, selected ? C.gold : C.wall);
+    label(portraitLayer, d.name, x + 18, y + 14, 17, selected ? C.ink : C.bone);
+    label(portraitLayer, `【${d.tag}】`, w - margin - 78, y + 15, 13, selected ? C.white : C.stoneLit);
+    portraitHits.add(x, y, w - margin * 2, cardH, () => { titleDoctrinePick = d.id; playSfx('tab'); render(); });
+    portraitActionMap[`doctrine-${d.id}`] = { x, y, w: w - margin * 2, h: cardH };
+  });
+  const detailY = listY + 4 * (cardH + 8) + 4;
+  panelF(portraitGfx, portraitLayer, 'scroll', margin, detailY, w - margin * 2, 86, C.wall);
+  boundedText(portraitLayer, (DOCTRINES[titleDoctrinePick] ?? DOCTRINES.default).desc, margin + 18, detailY + 15, w - margin * 2 - 36, 58, 14, C.bone);
+  const bottomY = Math.min(h - 70, detailY + 98), bw = Math.floor((w - margin * 2 - 10) / 2);
+  button(portraitGfx, portraitLayer, portraitHits, margin, bottomY, bw, 52, '返回', () => { titleMode = 'main'; titleNewConfirm = false; render(); }, { size: 17 });
+  button(portraitGfx, portraitLayer, portraitHits, margin + bw + 10, bottomY, bw, 52, '以此方针开局', () => beginNewRun(titleDoctrinePick),
+    { size: 16, fill: C.purpleDark, border: C.gold, color: C.white });
+  portraitActionMap.doctrineBack = { x: margin, y: bottomY, w: bw, h: 52 };
+  portraitActionMap.doctrineConfirm = { x: margin + bw + 10, y: bottomY, w: bw, h: 52 };
+}
+
 function ensurePortraitChrome() {
   const key = [portrait, screen, tab, paused, speed, confirmNew, S.bone, S.mana, S.raidNo, S.overtime,
     tutorialData().step, Object.keys(tutorialData().visited).length, app.screen.width, app.screen.height].join('|');
@@ -3619,8 +3865,9 @@ function ensurePortraitChrome() {
   portraitGfx.clear();
   portraitLayer.visible = portrait;
   portraitLayoutInfo = null;
-  root.visible = !portraitNativeManage();
+  root.visible = screen !== 'title' && !portraitNativeManage();
   if (!portrait) { root.visible = true; return; }
+  if (screen === 'title') { drawPortraitTitle(); return; }
   if (portraitNativeManage()) { drawPortraitNativeManage(); return; }
   if (portraitModalOpen()) { drawPortraitModalChrome(); return; }
 
@@ -3638,7 +3885,7 @@ function ensurePortraitChrome() {
     panelF(portraitGfx, portraitLayer, 'stone', 6, cursorY, w - 12, 36, C.wall);
     const raid = currentRaid();
     label(portraitLayer, `骨 ${S.bone}　魔 ${S.mana}`, 16, cursorY + 10, 14, C.gold);
-    label(portraitLayer, S.overtime ? `加班 ${raid.no - 12}` : `袭击 ${S.raidNo}/12`, w - 94, cursorY + 10, 14, C.bone);
+    label(portraitLayer, S.overtime ? `加班 ${raid.no - NORMAL_RAID_COUNT}` : `袭击 ${S.raidNo}/${NORMAL_RAID_COUNT}`, w - 94, cursorY + 10, 14, C.bone);
     cursorY += 42;
     tabTop = cursorY;
     tabs.forEach((item, i) => {
@@ -3676,6 +3923,17 @@ function ensurePortraitChrome() {
   }
 
   const primaryY = cursorY;
+  if (screen === 'ending') {
+    const bw2 = Math.floor((w - margin * 2 - gap) / 2);
+    button(portraitGfx, portraitLayer, portraitHits, margin, primaryY, bw2, 46, '进入加班勇者', enterOvertime,
+      { size: 15, fill: C.purpleDark, border: C.purple, color: C.white });
+    button(portraitGfx, portraitLayer, portraitHits, margin + bw2 + gap, primaryY, bw2, 46, '开启新轮回', openNewCycle,
+      { size: 15, fill: C.goldDark, border: C.gold, color: C.white });
+    portraitActionMap.endingOvertime = { x: margin, y: primaryY, w: bw2, h: 46 };
+    portraitActionMap.endingRebirth = { x: margin + bw2 + gap, y: primaryY, w: bw2, h: 46 };
+    portraitLayoutInfo = { top, bottom: top + consoleHeight, primaryY, margin, gap };
+    return;
+  }
   const guideAck = screen === 'manage' && currentGuide?.[2];
   const primaryLabel = screen === 'manage' ? (guideAck ? '明白，继续教学' : '迎　战') : screen === 'battle' ? (paused ? '继续战斗' : '暂停战斗') : screen === 'result' ? '继续结算' : '进入加班勇者';
   const primaryAction = screen === 'manage' ? (guideAck ? acknowledgeRoundGuide : startBattle) : screen === 'battle'
@@ -4229,11 +4487,10 @@ function drawSidePanel(g               ) {
       const need = XP_PER_LEVEL[inst.lv - 1];
       bar(uiGfx, 340, 164, 130, 6, inst.xp / need, C.green);
       label(uiLayer, `经验 ${inst.xp}/${need}`, 340, 170, 12, C.bone);
-      const cost = UPGRADE_COST[inst.lv - 1];
-      const can = inst.xp >= need && S.bone >= cost;
-      button(g, uiLayer, hits, 340, 182, 130, 15, `升级 ${cost}骨币`, () => {
-        inst.xp -= need; inst.lv++; S.bone -= cost; playSfx('buy'); persist(); say(`${k.name} 升到 Lv${inst.lv}`); render();
-      }, { size: 12, enabled: can, fill: C.greenDark, border: C.green, color: C.white });
+      const cost = monsterUpgradeQuote(inst);
+      const can = inst.xp >= need && S.bone >= cost.bone && S.mana >= cost.mana;
+      button(g, uiLayer, hits, 340, 182, 130, 15, `升级 ${cost.bone}骨${cost.mana ? ` ${cost.mana}魔` : ''}`, () => upgradeMonster(inst),
+        { size: 11, enabled: can, fill: C.greenDark, border: C.green, color: C.white });
     } else {
       label(uiLayer, '已达满级', 340, 170, 12, C.gold);
     }
@@ -4617,7 +4874,7 @@ const storyBridge              = {
       S.champs.push(c); S.champPot[c.uid] = 1;
       return { ok: true, text: `${c.name}（${lk.name}）加入麾下（Lv${c.lv}）` };
     }
-    if (S.monsters.length >= 10) return { ok: false, text: '怪物栏已满，它只能在走廊里晃' };
+    if (S.monsters.length >= monsterCap()) return { ok: false, text: '怪物栏已满，它只能在走廊里晃' };
     const k = lk ?? MONSTERS[0];
     S.monsters.push({ uid: S.uidNext++, kind: k.id, lv, xp: 0 });
     return { ok: true, text: `${k.name} 加入编制（Lv${lv}）` };
@@ -5215,7 +5472,7 @@ function recruit(kindId        ) {
   const k = monKind(kindId);
   const quote = recruitQuote(k);
   if (S.bone < quote.cost) { say('骨币不足'); return; }
-  if (S.monsters.length >= 10) { say('怪物栏已满（10）'); return; }
+  if (S.monsters.length >= monsterCap()) { say(`怪物栏已满（${monsterCap()}）`); return; }
   S.bone -= quote.cost;
   consumeHatcheryCharge(quote);
   const inst              = { uid: S.uidNext++, kind: k.id, lv: 1, xp: 0 };
@@ -5236,7 +5493,7 @@ const countPlaced = () => S.rooms.reduce((n, r) =>
 let mobPage = 0;
 
 // ---------- 英雄（麾下统领的具体个体：征召、培养、专精、疲劳轮换） ----------
-const heroHasNew = () => S.champs.some((c) => canLevel(c) && S.bone >= upCostOf(c)) || S.champs.some((c) => pendingTier(c) > 0);
+const heroHasNew = () => S.champs.some((c) => canLevel(c) && S.bone >= upCostOf(c) && S.mana >= heroUpgradeMana(c)) || S.champs.some((c) => pendingTier(c) > 0);
 
 function refreshCands(force = false) {
   // 候选池每轮袭击刷新一次；玩家也能花魔质手动重掷
@@ -5270,9 +5527,9 @@ const candCostOf = (c      ) => Math.round((monKind(c.race).cost) * (1 + c.poten
 
 function levelChamp(c       ) {
   if (!canLevel(c)) return;
-  const cost = upCostOf(c);
-  if (S.bone < cost) { say('骨币不足'); return; }
-  S.bone -= cost;
+  const cost = upCostOf(c), mana = heroUpgradeMana(c);
+  if (S.bone < cost || S.mana < mana) { say('英雄升级资源不足'); return; }
+  S.bone -= cost; S.mana -= mana;
   c.xp -= xpNeed(c.lv);
   c.lv++;
   playSfx('buy');
@@ -5406,7 +5663,7 @@ function drawRoster(g               ) {
     label(uiLayer, `${c.lv}`, 86, y + 6, 12, C.bone);
     label(uiLayer, at >= 0 ? `${at + 1}房` : training >= 0 ? `${training + 1}训` : '待', 102, y + 6, 12, at >= 0 ? C.gold : training >= 0 ? C.purple : C.green);
     label(uiLayer, c.restTurns ? `休${c.restTurns}` : ft.text.slice(0, 2), 128, y + 6, 12, c.restTurns || ft.bad ? C.red : C.steel);
-    if (canLevel(c) && S.bone >= upCostOf(c)) g.circle(151, y + 6, 3).fill(C.red);
+    if (canLevel(c) && S.bone >= upCostOf(c) && S.mana >= heroUpgradeMana(c)) g.circle(151, y + 6, 3).fill(C.red);
     else if (pendingTier(c)) g.circle(151, y + 6, 3).fill(C.purple);
     for (let w = 0; w < (c.wounds || 0); w++) g.rect(140 + w * 5, y + 18, 4, 3).fill(C.red);
     hits.add(8, y, 150, 26, () => { heroSel = c.uid; playSfx('tab'); render(); });
@@ -5526,9 +5783,9 @@ function drawChampStat(g, c) {
     const need = xpNeed(c.lv);
     label(uiLayer, `经验 ${c.xp}/${need}`, 174, 176, 12, C.bone);
     bar(uiGfx, 262, 180, 88, 5, Math.min(1, c.xp / need), C.green);
-    const cost = upCostOf(c);
-    button(g, uiLayer, hits, 362, 176, 106, 15, `升级 ${cost}骨`, () => levelChamp(c),
-      { size: 12, enabled: canLevel(c) && S.bone >= cost, fill: C.greenDark, border: C.green, color: C.white });
+    const cost = upCostOf(c), mana = heroUpgradeMana(c);
+    button(g, uiLayer, hits, 362, 176, 106, 15, `升级 ${cost}骨${mana ? ` ${mana}魔` : ''}`, () => levelChamp(c),
+      { size: 10, enabled: canLevel(c) && S.bone >= cost && S.mana >= mana, fill: C.greenDark, border: C.green, color: C.white });
   } else {
     label(uiLayer, '已达顶级 专精已满', 174, 176, 12, C.gold);
   }
@@ -5944,7 +6201,13 @@ function pageMob(g               ) {
     size: 12, fill: C.purpleDark, border: C.purple, color: C.white,
   });
   const pm = paged('mob-owned', S.monsters, 7);
-  label(uiLayer, `已拥有 ${S.monsters.length}/10`, 172, 40, 12, C.white);
+  label(uiLayer, `怪群编制 ${S.monsters.length}/${monsterCap()}`, 172, 40, 12, C.white);
+  const nextCap = nextMonsterCapTier();
+  if (nextCap) {
+    const open = S.overtime || S.raidNo >= nextCap.unlock;
+    button(g, uiLayer, hits, 252, 38, 76, 15, open ? `扩编 ${nextCap.bone}骨${nextCap.mana ? `+${nextCap.mana}魔` : ''}` : `${nextCap.unlock}轮扩编`, expandMonsterCap,
+      { size: 9, enabled: open && S.bone >= nextCap.bone && S.mana >= nextCap.mana, border: C.gold, color: C.gold });
+  }
   if (!S.monsters.length) label(uiLayer, '（还没有怪物）', 172, 58, 12, C.stoneLit);
   let y2 = 54;
   for (const inst of pm.view) {
@@ -6750,14 +7013,15 @@ function finishBattle() {
   scheduleLayout();
   resultLayerBuilt = false;
   const rewardMult = dungeonRaidScale().reward;
-  r.bone = Math.round(r.bone * rewardMult);
-  r.mana = Math.round(r.mana * rewardMult);
+  const directReward = S.doctrine === 'economy' ? 0.85 : 1;
+  r.bone = Math.round(r.bone * rewardMult * directReward);
+  r.mana = Math.round(r.mana * rewardMult * directReward);
   S.bone += r.bone;
   S.mana += r.mana;
   S.relic += r.relicLoot ?? 0;
   for (const x of r.xp) {
     const inst = instById(x.uid);
-    if (inst && inst.lv < 5) inst.xp += x.xp;
+    if (inst && inst.lv < 5) inst.xp += Math.round(x.xp * (S.doctrine === 'elite' ? 1.25 : 1));
   }
   // 英雄结算：经验/战功归到具体个体，疲劳按"上没上场"分别涨落
   const deployedChampUids = seatedChampUids();
@@ -6767,7 +7031,7 @@ function finishBattle() {
     if (!c) continue;
     if (c.lv < CHAMP_LV_CAP) {
       const st = statOf(c, chemBefore);
-      c.xp += Math.round(x.xp * chemOf(chemBefore, c.uid).xp * (st.xpMult ?? 1));
+      c.xp += Math.round(x.xp * chemOf(chemBefore, c.uid).xp * (st.xpMult ?? 1) * (S.doctrine === 'elite' ? 1.25 : 1));
     }
     c.kills += x.kills;
     // 被打倒不会永久死亡，但会留一道伤：压属性、更容易累，得花魔质疗
@@ -6919,7 +7183,7 @@ function buildResultOverlay() {
   const loot = (r.loot ?? []).map((id) => gearById(id)?.name ?? '').filter(Boolean);
   const lootLine = `${loot.length ? `缴获：${cut(loot.join('、'), 16)}` : '无装备缴获'}${r.relicLoot ? '・英雄遗物×1' : ''}`;
   labelC(overlay, lootLine, 240, y, 12, loot.length || r.relicLoot ? C.purple : C.stoneLit);
-  const isFinal = r.win && !S.overtime && b.raid.no === 12;
+  const isFinal = r.win && !S.overtime && b.raid.no === NORMAL_RAID_COUNT;
   button(g, overlay, hits, 100, 196, 130, 28, r.win ? (isFinal ? '观看结局' : '继续') : '重试本轮', () => afterResult(), { fill: C.greenDark, border: C.green, color: C.white });
   button(g, overlay, hits, 250, 196, 130, 28, isFinal ? '观看结局' : '返回经营', returnFromResult, { fill: C.wallLit, border: C.bone });
   labelC(overlay, 'Enter 继续', 240, 228, 12, C.stoneLit);
@@ -6945,7 +7209,7 @@ function advanceWonResult() {
 function returnFromResult() {
   const b = battle;
   if (!b?.result) return;
-  if (b.result.win && !S.overtime && b.raid.no === 12) { afterResult(); return; }
+  if (b.result.win && !S.overtime && b.raid.no === NORMAL_RAID_COUNT) { afterResult(); return; }
   if (b.result.win) advanceWonResult();
   backToManage();
 }
@@ -6954,7 +7218,12 @@ function afterResult() {
   const b = battle ;
   const r = b.result ;
   if (r.win) {
-    if (!S.overtime && b.raid.no === 12) {
+    if (!S.overtime && b.raid.no === NORMAL_RAID_COUNT) {
+      if (!S.clearRecorded) {
+        S.clearRecorded = true;
+        meta.clears += 1;
+        persistMeta();
+      }
       screen = 'ending';
       scheduleLayout();
       endingT = 0;
@@ -7015,23 +7284,26 @@ function buildEnding() {
     const s = sprite(c2, 70 + i * 62, 212, 30);
     overlay.addChild(s);
   });
-  labelC(overlay, '勇者队长退场了。地牢开庆功宴。', 240, 40, 12, C.gold);
-  labelC(overlay, '解锁：加班勇者（循环词缀 · 等级持续增长）', 240, 60, 12, C.purple);
+  labelC(overlay, '二十轮入侵终结。王座仍在黑暗中燃烧。', 240, 35, 12, C.gold);
+  labelC(overlay, '此后可挑战加班勇者，或携方针开启新的轮回。', 240, 55, 11, C.purple);
   const g2 = new PIXI.Graphics();
   overlay.addChild(g2);
   // Keep the complete action cluster inside the 480x270 logical viewport.
   // The old hint started at y=262 and its measured font height was clipped
   // before large-screen scaling, so increasing the display size could never
   // reveal the missing bottom pixels.
-  labelC(overlay, 'Enter 进入', 240, 215, 11, C.stoneLit);
-  endingActionRect = { x: 150, y: 232, w: 180, h: 28 };
+  labelC(overlay, '选择下一段统治', 240, 215, 11, C.stoneLit);
+  endingActionRect = { x: 70, y: 232, w: 155, h: 28 };
+  endingRebirthRect = { x: 255, y: 232, w: 155, h: 28 };
   button(g2, overlay, hits, endingActionRect.x, endingActionRect.y, endingActionRect.w, endingActionRect.h,
     '进入加班勇者', () => enterOvertime(), { size: 13, fill: C.purpleDark, border: C.purple, color: C.white });
+  button(g2, overlay, hits, endingRebirthRect.x, endingRebirthRect.y, endingRebirthRect.w, endingRebirthRect.h,
+    '开启新轮回', () => openNewCycle(), { size: 13, fill: C.goldDark, border: C.gold, color: C.white });
 }
 
 function enterOvertime() {
   S.overtime = true;
-  S.otRaid = Math.max(13, S.otRaid);
+  S.otRaid = Math.max(NORMAL_RAID_COUNT + 1, S.otRaid);
   persist();
   screen = 'manage';
   scheduleLayout();
@@ -7041,6 +7313,7 @@ function enterOvertime() {
   hits.clear();
   endingBuilt = false;
   endingActionRect = null;
+  endingRebirthRect = null;
   tab = 'throne';
   playMusic('bgm-manage');
   render();
@@ -7049,6 +7322,7 @@ function enterOvertime() {
 // ---------- 主循环 ----------
 let endingBuilt = false;
 let endingActionRect = null;
+let endingRebirthRect = null;
 function tick(dt        ) {
   tickAudio();
   ensurePortraitChrome();
@@ -7146,6 +7420,12 @@ window.__debug = {
   setBattleSpeed: (v) => { if ([1, 2, 4].includes(v)) speed = v; return speed; },
   get tab() { return tab; },
   get save() { return S; },
+  get meta() { return { ...meta }; },
+  get title() { return { mode: titleMode, pick: titleDoctrinePick, saveExists, actions: { ...titleActionRects } }; },
+  titleNew: () => { startFromTitle(); return screen; },
+  titleContinue: () => { continueGame(); return screen; },
+  titlePick: (id) => { if (DOCTRINES[id]) { titleDoctrinePick = id; render(); } return titleDoctrinePick; },
+  titleConfirm: () => { beginNewRun(titleDoctrinePick); return screen; },
   get progression() { return { raid: S.raidNo, tutorialStep: tutorialData().step,
     visibleTabs: visibleTabs().map((item) => item.id), guide: roundGuide(), deploymentReady: tutorialDeploymentReady(),
     enemyClasses: currentRaid().members.map((member) => member.cls), teachingComplete: roundTeachingComplete(),
@@ -7268,6 +7548,7 @@ window.__debug = {
     return {
       bounds: { x: b.x, y: b.y, width: b.width, height: b.height, right: b.x + b.width, bottom: b.y + b.height },
       action: endingActionRect ? { ...endingActionRect } : null,
+      rebirth: endingRebirthRect ? { ...endingRebirthRect } : null,
     };
   },
   devEnding: () => {

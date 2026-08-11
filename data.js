@@ -340,19 +340,29 @@ export const AFFIXES                                                  = {
 const m = (cls        , lv        , n = 1) => Array.from({ length: n }, () => ({ cls, lv }));
 
 export const RAIDS            = [
-  { no: 1, title: '迷路的剑士', members: [...m('knight', 1)], affixes: [], reward: { bone: 100, mana: 15 } },
-  { no: 2, title: '谨慎的斥候', members: [...m('knight', 1), ...m('archer', 1)], affixes: [], reward: { bone: 150, mana: 20 } },
-  { no: 3, title: '临时救援队', members: [...m('knight', 1), ...m('cleric', 1), ...m('archer', 1)], affixes: [], reward: { bone: 170, mana: 25 } },
-  { no: 4, title: '杂牌探险队', members: [...m('rogue', 1), ...m('knight', 1), ...m('alchemist', 1)], affixes: [], reward: { bone: 190, mana: 30 } },
-  { no: 5, title: '初成编制', members: [...m('knight', 2, 2), ...m('archer', 2), ...m('cleric', 2)], affixes: [], reward: { bone: 210, mana: 35 } },
-  { no: 6, title: '苦修先行', members: [...m('monk', 2), ...m('berserker', 2), ...m('cleric', 2), ...m('mage', 2)], affixes: [], reward: { bone: 220, mana: 40 } },
-  { no: 7, title: '长枪猎队', members: [...m('lancer', 3), ...m('ranger', 3), ...m('rogue', 3), ...m('cleric', 3)], affixes: ['brave'], reward: { bone: 240, mana: 45 } },
-  { no: 8, title: '圣殿铁壁', members: [...m('paladin', 4), ...m('knight', 4), ...m('cleric', 3), ...m('mage', 3)], affixes: ['shield'], reward: { bone: 260, mana: 50 } },
-  { no: 9, title: '歌与咒火', members: [...m('bard', 4), ...m('berserker', 4), ...m('warlock', 5), ...m('lancer', 4)], affixes: ['haste'], reward: { bone: 280, mana: 55 } },
-  { no: 10, title: '审判官', members: [...m('inquisitor', 5), ...m('paladin', 5), ...m('cleric', 5), ...m('mage', 5), ...m('rogue', 4)], affixes: ['holywater'], reward: { bone: 320, mana: 65 } },
-  { no: 11, title: '剑圣', members: [...m('swordmaster', 6), ...m('bard', 7), ...m('ranger', 7), ...m('paladin', 6), ...m('cleric', 6)], affixes: ['haste', 'brave'], reward: { bone: 180, mana: 36 } },
-  { no: 12, title: '勇者队长', members: [...m('captain', 8), ...m('paladin', 8), ...m('bard', 8), ...m('berserker', 8), ...m('ranger', 8)], affixes: ['shield'], reward: { bone: 220, mana: 50 } },
+  { no: 1, title: '迷路的剑士', members: [...m('knight', 1)], affixes: [], reward: { bone: 45, mana: 8 } },
+  { no: 2, title: '谨慎的斥候', members: [...m('knight', 1), ...m('archer', 1)], affixes: [], reward: { bone: 55, mana: 10 } },
+  { no: 3, title: '临时救援队', members: [...m('knight', 1), ...m('cleric', 1), ...m('archer', 1)], affixes: [], reward: { bone: 65, mana: 12 } },
+  { no: 4, title: '杂牌探险队', members: [...m('rogue', 1), ...m('knight', 1), ...m('alchemist', 1)], affixes: [], reward: { bone: 75, mana: 14 } },
+  { no: 5, title: '初成编制', members: [...m('knight', 2, 2), ...m('archer', 2), ...m('cleric', 2)], affixes: [], reward: { bone: 90, mana: 16 } },
+  { no: 6, title: '苦修先行', members: [...m('monk', 2), ...m('berserker', 2), ...m('cleric', 2), ...m('mage', 2)], affixes: [], reward: { bone: 105, mana: 18 } },
+  { no: 7, title: '长枪猎队', members: [...m('lancer', 3), ...m('ranger', 3), ...m('rogue', 3), ...m('cleric', 3)], affixes: ['brave'], reward: { bone: 120, mana: 20 } },
+  { no: 8, title: '圣殿铁壁', members: [...m('paladin', 4), ...m('knight', 4), ...m('cleric', 3), ...m('mage', 3)], affixes: ['shield'], reward: { bone: 140, mana: 24 } },
+  { no: 9, title: '歌与咒火', members: [...m('bard', 4), ...m('berserker', 4), ...m('warlock', 5), ...m('lancer', 4)], affixes: ['haste'], reward: { bone: 160, mana: 28 } },
+  { no: 10, title: '审判官', members: [...m('inquisitor', 5), ...m('paladin', 5), ...m('cleric', 5), ...m('mage', 5), ...m('rogue', 4)], affixes: ['holywater'], reward: { bone: 180, mana: 35 } },
+  { no: 11, title: '剑圣试锋', members: [...m('swordmaster', 6), ...m('bard', 7), ...m('ranger', 7), ...m('paladin', 6), ...m('cleric', 6)], affixes: ['haste', 'brave'], reward: { bone: 160, mana: 45 } },
+  { no: 12, title: '队长督战', members: [...m('captain', 8), ...m('paladin', 8), ...m('bard', 8), ...m('berserker', 8), ...m('ranger', 8)], affixes: ['shield'], reward: { bone: 170, mana: 55 } },
+  { no: 13, title: '破城先锋', members: [...m('lancer', 9, 2), ...m('berserker', 9), ...m('ranger', 9), ...m('cleric', 9), ...m('rogue', 9)], affixes: ['brave'], reward: { bone: 180, mana: 65 } },
+  { no: 14, title: '净化远征', members: [...m('paladin', 10, 2), ...m('inquisitor', 10), ...m('cleric', 10), ...m('mage', 10), ...m('monk', 10)], affixes: ['shield', 'holywater'], reward: { bone: 190, mana: 75 } },
+  { no: 15, title: '双首战团', members: [...m('swordmaster', 11), ...m('captain', 11), ...m('bard', 11), ...m('warlock', 11), ...m('ranger', 11), ...m('cleric', 11)], affixes: ['haste', 'brave'], reward: { bone: 200, mana: 90 } },
+  { no: 16, title: '王国讨伐军', members: [...m('captain', 12), ...m('paladin', 12, 2), ...m('lancer', 12), ...m('cleric', 12), ...m('mage', 12)], affixes: ['shield', 'brave'], reward: { bone: 210, mana: 105 } },
+  { no: 17, title: '白银远征军', members: [...m('swordmaster', 13), ...m('monk', 13), ...m('paladin', 13), ...m('ranger', 13), ...m('bard', 13), ...m('warlock', 13), ...m('cleric', 13)], affixes: ['haste', 'holywater'], reward: { bone: 220, mana: 120 } },
+  { no: 18, title: '圣堂联军', members: [...m('inquisitor', 14), ...m('captain', 14), ...m('paladin', 14), ...m('lancer', 14), ...m('mage', 14), ...m('ranger', 14), ...m('cleric', 14)], affixes: ['shield', 'brave', 'holywater'], reward: { bone: 235, mana: 140 } },
+  { no: 19, title: '王冠近卫', members: [...m('swordmaster', 15), ...m('captain', 15), ...m('paladin', 15), ...m('berserker', 15), ...m('ranger', 15), ...m('bard', 15), ...m('warlock', 15), ...m('cleric', 15)], affixes: ['haste', 'shield', 'brave'], reward: { bone: 250, mana: 165 } },
+  { no: 20, title: '黎明总攻', members: [...m('captain', 18), ...m('swordmaster', 17), ...m('inquisitor', 17), ...m('paladin', 16), ...m('cleric', 16), ...m('bard', 16), ...m('ranger', 16), ...m('warlock', 16)], affixes: ['haste', 'shield', 'brave', 'holywater'], reward: { bone: 280, mana: 200 } },
 ];
+
+export const NORMAL_RAID_COUNT = RAIDS.length;
 
 export const HERO_LV_MULT = (lv        ) => 1 + (lv - 1) * 0.2;
 
