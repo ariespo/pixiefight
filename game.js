@@ -5,11 +5,11 @@ import { GEARS, GEAR_SLOTS, GEAR_CAP, MELT_MANA, REFORGE_MANA, FRAMES, RUNES, TE
 import { createBattle, stepBattle, ROOM_W, affixText, actionProgress, deployUtilityWorker, evacuateUtilityWorker,
   effectiveThorns, effectiveMitigationMultiplier } from './battle.js';
                                                                       
-import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, AFFIX_BUDGET, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, clampAffixDraft, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, legendaryPartCount, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
+import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, legendaryPartCount, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
                                                                                                                           
-import { AI_PRESETS, getBackend, hasBackend, llmStatus, loadCfg, loadMode, normalizeBaseUrl, presetById, refreshModels,
+import { AI_PRESETS, AI_PROMPT_TASKS, getBackend, hasBackend, llmStatus, loadCfg, loadMode, loadPromptOverrides, normalizeBaseUrl, presetById, refreshModels,
   requestAffix, requestBattleDialogue, requestContextStory, requestHeroLore, requestLiteraryReport, requestPart,
-  restoreBackend, saveCfg, saveMode, setBackend, requestScene as llmScene } from './llm.js';
+  restoreBackend, saveCfg, saveMode, savePromptOverrides, setBackend, requestScene as llmScene } from './llm.js';
                                         
                                            
 import { applyEffects, fillText, getProvider, requestScene, sceneById, setProvider, testConds, localProvider, SCENES } from './story.js';
@@ -365,6 +365,8 @@ function sanitizeSave() {
     c.fatigue = Math.max(0, Math.min(100, Math.round(c.fatigue || 0)));
     c.sorties = Math.max(0, Math.min(HERO_SORTIE_LIMIT - 1, Math.round(c.sorties || 0)));
     c.restTurns = Math.max(0, Math.min(HERO_REST_ROUNDS, Math.round(c.restTurns || 0)));
+    c.forcedRaid = Number.isFinite(Number(c.forcedRaid)) && Math.round(Number(c.forcedRaid)) === (S.overtime ? S.otRaid : S.raidNo)
+      ? Math.round(Number(c.forcedRaid)) : undefined;
     c.battles = Math.max(0, Math.round(c.battles || 0));
     c.kills = Math.max(0, Math.round(c.kills || 0));
     c.wounds = Math.max(0, Math.min(WOUND_CAP, Math.round(c.wounds || 0)));
@@ -1298,7 +1300,28 @@ let endingT = 0;
 let pendingResultRaid = 0;
 let battlePrepBusy = false;
 let heroLoreBusyUid = null;
+let heroForceConfirmUid = null;
 const battleDialogueCache = new Map();
+
+const FORCE_HERO_BONE = 300;
+const FORCE_HERO_MANA = 100;
+const currentRaidIdentity = () => S.overtime ? Math.max(NORMAL_RAID_COUNT + 1, S.otRaid || NORMAL_RAID_COUNT + 1) : S.raidNo;
+const heroForcedThisRaid = (c) => c?.forcedRaid === currentRaidIdentity();
+
+function forceRestingHero(c) {
+  if (!c || (c.restTurns || 0) <= 0 || heroForcedThisRaid(c)) return false;
+  if (heroForceConfirmUid !== c.uid) {
+    heroForceConfirmUid = c.uid;
+    say(`再次点击确认：支付 ${FORCE_HERO_BONE}骨+${FORCE_HERO_MANA}魔，强制${c.name}仅出战本场`);
+    render(); return false;
+  }
+  heroForceConfirmUid = null;
+  if (S.bone < FORCE_HERO_BONE || S.mana < FORCE_HERO_MANA) { say('强制驱使所需资源不足'); render(); return false; }
+  S.bone -= FORCE_HERO_BONE; S.mana -= FORCE_HERO_MANA;
+  c.forcedRaid = currentRaidIdentity();
+  persist(); playSfx('buy'); say(`${c.name}已被强制征召；本场结束后休息回合不会减少`); render();
+  return true;
+}
 
 function say(text        ) { toast = { text, t: 2.2 }; }
 
@@ -1424,6 +1447,28 @@ function closeDetailPopup() {
 function workshopResearchLevel() {
   return S.floors.reduce((best, floor) => floor.utility.kind === 'workshop' && floor.utility.condition > 0
     ? Math.max(best, floor.utility.level || 0) : best, 0);
+}
+
+function diyRules() {
+  const effects = researchEffects(S.workshopResearch);
+  return {
+    powerCap: Math.max(PART_BUDGET.power, Math.round(effects.diyPowerCap || PART_BUDGET.power)),
+    maxPowers: Math.max(2, Math.round(effects.diyPowerSlots || 2)),
+    statMult: Math.max(1, effects.diyPartStatMult || 1),
+    manaMult: Math.max(0.5, effects.diyManaCostMult || 1),
+    capacityBonus: Math.max(0, Math.round(effects.diyCapacityBonus || 0)),
+  };
+}
+
+const diyPartCap = () => DIY_CAP + diyRules().capacityBonus;
+const diyAffixCap = () => DIY_AFFIX_CAP + diyRules().capacityBonus;
+function currentDraftCost(cat, draft) {
+  const cost = draftCost(cat, draft), mult = diyRules().manaMult;
+  return { ...cost, mana: Math.max(1, Math.round(cost.mana * mult)) };
+}
+function currentAffixCost(draft) {
+  const cost = affixDraftCost(draft), mult = diyRules().manaMult;
+  return { ...cost, mana: Math.max(1, Math.round(cost.mana * mult)) };
 }
 
 function openWorkshopResearch() {
@@ -2056,9 +2101,9 @@ function drawWorkshopResearch() {
 
   panelF(g, modalLayer, 'inset', 18, 38, 124, 196, C.ink);
   WORKSHOP_RESEARCH.forEach((item, i) => {
-    const y = 46 + i * 36, active = item.id === group.id, chosen = S.workshopResearch[item.id];
+    const y = 44 + i * 30, active = item.id === group.id, chosen = S.workshopResearch[item.id];
     const gate = researchAvailability(item, S.overtime ? 999 : S.raidNo, level);
-    button(g, modalLayer, hits, 24, y, 112, 30,
+    button(g, modalLayer, hits, 24, y, 112, 26,
       `${chosen ? '◆' : gate.open ? '◇' : '×'} ${item.name.replace(/^第.组・/, '')}`,
       () => chooseResearchGroup(item.id), { size: 10, fill: active ? C.wallLit : C.wall,
         border: active ? C.gold : chosen ? C.green : gate.open ? C.purple : C.wallLit,
@@ -2729,20 +2774,30 @@ function openAISettings() {
       <div><div style="font-size:20px;color:#e2bd64">游戏设置・AI 接入</div><div style="margin-top:4px;font-size:12px;color:#918aa0">用于战报、秘闻、英雄档案与工坊创作</div></div>
       <button data-ai="close" style="width:42px;height:34px">关闭</button>
     </div>
-    <label>服务商预设<select data-ai="provider"></select></label>
-    <label data-ai="protocol-row">接口协议<select data-ai="protocol"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select></label>
-    <label>接口 Base URL<input data-ai="url" type="url" autocomplete="off" spellcheck="false"></label>
-    <label>API Key<div style="display:flex;gap:8px"><input data-ai="key" type="password" autocomplete="new-password" spellcheck="false" style="flex:1"><button data-ai="show-key" type="button" style="width:72px">显示</button></div></label>
-    <button data-ai="refresh" type="button" style="width:100%;height:40px;margin:4px 0 10px">刷新模型</button>
-    <label>可用模型<select data-ai="model" disabled><option value="">请先刷新模型</option></select></label>
-    <div data-ai="status" style="min-height:34px;padding:8px;border:1px solid #484054;background:#100d17;color:#918aa0;box-sizing:border-box">修改地址或 Key 后，需要重新刷新模型。</div>
-    <div style="margin-top:10px;font-size:12px;line-height:1.5;color:#918aa0">Key 只保存在这个浏览器中，不进入游戏存档或上传到部署文件。自定义服务需允许浏览器跨域访问。</div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
-      <button data-ai="echo" type="button">使用本地回声</button><button data-ai="off" type="button">关闭 AI</button>
-      <button data-ai="sound" type="button">${S.muted ? '开启声音' : '关闭声音'}</button><button data-ai="save" type="button" disabled>保存并启用</button>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px"><button data-ai="tab-connection" type="button">接口</button><button data-ai="tab-prompts" type="button">提示词</button></div>
+    <div data-ai="panel-connection">
+      <label>服务商预设<select data-ai="provider"></select></label>
+      <label data-ai="protocol-row">接口协议<select data-ai="protocol"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select></label>
+      <label>接口 Base URL<input data-ai="url" type="url" autocomplete="off" spellcheck="false"></label>
+      <label>API Key<div style="display:flex;gap:8px"><input data-ai="key" type="password" autocomplete="new-password" spellcheck="false" style="flex:1"><button data-ai="show-key" type="button" style="width:72px">显示</button></div></label>
+      <button data-ai="refresh" type="button" style="width:100%;height:40px;margin:4px 0 10px">刷新模型</button>
+      <label>可用模型<select data-ai="model" disabled><option value="">请先刷新模型</option></select></label>
+      <div data-ai="status" style="min-height:34px;padding:8px;border:1px solid #484054;background:#100d17;color:#918aa0;box-sizing:border-box">修改地址或 Key 后，需要重新刷新模型。</div>
+      <div style="margin-top:10px;font-size:12px;line-height:1.5;color:#918aa0">Key 只保存在这个浏览器中，不进入游戏存档或上传到部署文件。自定义服务需允许浏览器跨域访问。</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
+        <button data-ai="echo" type="button">使用本地回声</button><button data-ai="off" type="button">关闭 AI</button>
+        <button data-ai="sound" type="button">${S.muted ? '开启声音' : '关闭声音'}</button><button data-ai="save" type="button" disabled>保存并启用</button>
+      </div>
+    </div>
+    <div data-ai="panel-prompts" style="display:none">
+      <label>AI 任务<select data-ai="prompt-task"></select></label>
+      <label>任务提示词<textarea data-ai="prompt-text" maxlength="2000" rows="10" spellcheck="false"></textarea></label>
+      <div style="font-size:12px;line-height:1.55;color:#918aa0">这里控制文风、侧重点和创作偏好。JSON 格式、字段白名单、事实边界与数值上限由游戏锁定，不能通过提示词绕过。</div>
+      <div data-ai="prompt-status" style="min-height:34px;margin-top:10px;padding:8px;border:1px solid #484054;background:#100d17;color:#918aa0;box-sizing:border-box">每个任务分别保存，只影响本浏览器之后的新生成内容。</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:14px"><button data-ai="prompt-reset" type="button">恢复本项</button><button data-ai="prompt-reset-all" type="button">全部恢复</button><button data-ai="prompt-save" type="button">保存提示词</button></div>
     </div>`;
   const css = document.createElement('style');
-  css.textContent = '#ai-settings-overlay label{display:block;margin:10px 0 5px;font-size:13px;color:#cbbd91}#ai-settings-overlay input,#ai-settings-overlay select,#ai-settings-overlay button{box-sizing:border-box;border:1px solid #76698a;border-radius:0;background:#272033;color:#f1e5bd;font:14px monospace;min-height:36px;padding:7px 9px;outline:none}#ai-settings-overlay input,#ai-settings-overlay select{display:block;width:100%;margin-top:5px}#ai-settings-overlay button:not(:disabled){cursor:pointer}#ai-settings-overlay button:disabled{opacity:.42}#ai-settings-overlay input:focus,#ai-settings-overlay select:focus,#ai-settings-overlay button:focus{border-color:#e2bd64;box-shadow:0 0 0 1px #e2bd64}';
+  css.textContent = '#ai-settings-overlay label{display:block;margin:10px 0 5px;font-size:13px;color:#cbbd91}#ai-settings-overlay input,#ai-settings-overlay select,#ai-settings-overlay textarea,#ai-settings-overlay button{box-sizing:border-box;border:1px solid #76698a;border-radius:0;background:#272033;color:#f1e5bd;font:14px monospace;min-height:36px;padding:7px 9px;outline:none}#ai-settings-overlay input,#ai-settings-overlay select,#ai-settings-overlay textarea{display:block;width:100%;margin-top:5px}#ai-settings-overlay textarea{resize:vertical;line-height:1.5;min-height:190px}#ai-settings-overlay button:not(:disabled){cursor:pointer}#ai-settings-overlay button:disabled{opacity:.42}#ai-settings-overlay input:focus,#ai-settings-overlay select:focus,#ai-settings-overlay textarea:focus,#ai-settings-overlay button:focus{border-color:#e2bd64;box-shadow:0 0 0 1px #e2bd64}';
   root.append(css, card);
   document.body.appendChild(root);
   aiSettingsRoot = root;
@@ -2750,6 +2805,48 @@ function openAISettings() {
   const el = (name) => card.querySelector(`[data-ai="${name}"]`);
   const provider = el('provider'), protocol = el('protocol'), url = el('url'), key = el('key');
   const model = el('model'), refresh = el('refresh'), save = el('save'), status = el('status');
+  const connectionPanel = el('panel-connection'), promptsPanel = el('panel-prompts');
+  const promptTask = el('prompt-task'), promptText = el('prompt-text'), promptStatus = el('prompt-status');
+  const storedPrompts = loadPromptOverrides();
+  const promptValues = Object.fromEntries(AI_PROMPT_TASKS.map((task) => [task.id, storedPrompts[task.id] || task.defaultPrompt]));
+  for (const task of AI_PROMPT_TASKS) {
+    const option = document.createElement('option'); option.value = task.id; option.textContent = task.name; promptTask.appendChild(option);
+  }
+  promptTask.value = AI_PROMPT_TASKS[0].id;
+  promptText.value = promptValues[promptTask.value];
+  const stashPrompt = () => { promptValues[promptTask.value] = promptText.value.slice(0, 2000); };
+  const showSettingsTab = (tabName) => {
+    const prompts = tabName === 'prompts';
+    connectionPanel.style.display = prompts ? 'none' : 'block'; promptsPanel.style.display = prompts ? 'block' : 'none';
+    el('tab-connection').style.borderColor = prompts ? '#76698a' : '#e2bd64';
+    el('tab-prompts').style.borderColor = prompts ? '#e2bd64' : '#76698a';
+    (prompts ? promptText : url).focus();
+  };
+  el('tab-connection').addEventListener('click', () => { stashPrompt(); showSettingsTab('connection'); });
+  el('tab-prompts').addEventListener('click', () => showSettingsTab('prompts'));
+  promptTask.addEventListener('change', (event) => {
+    const prior = event.target.dataset.prior;
+    if (prior) promptValues[prior] = promptText.value.slice(0, 2000);
+    promptText.value = promptValues[promptTask.value];
+    event.target.dataset.prior = promptTask.value;
+  });
+  promptTask.dataset.prior = promptTask.value;
+  el('prompt-reset').addEventListener('click', () => {
+    const task = AI_PROMPT_TASKS.find((item) => item.id === promptTask.value);
+    promptText.value = task?.defaultPrompt ?? ''; promptValues[promptTask.value] = promptText.value;
+    promptStatus.textContent = '当前任务已恢复默认，点击“保存提示词”后生效。';
+  });
+  el('prompt-reset-all').addEventListener('click', () => {
+    for (const task of AI_PROMPT_TASKS) promptValues[task.id] = task.defaultPrompt;
+    promptText.value = promptValues[promptTask.value];
+    promptStatus.textContent = '全部任务已恢复默认，点击“保存提示词”后生效。';
+  });
+  el('prompt-save').addEventListener('click', () => {
+    stashPrompt();
+    const ok = savePromptOverrides(promptValues);
+    promptStatus.textContent = ok ? '提示词已保存；下一次对应 AI 任务立即使用。' : '保存失败，请检查浏览器存储权限。';
+    promptStatus.style.color = ok ? '#67d391' : '#ed6b6b';
+  });
   for (const item of AI_PRESETS) {
     const option = document.createElement('option'); option.value = item.id; option.textContent = item.name; provider.appendChild(option);
   }
@@ -2835,7 +2932,9 @@ function setLlmMode(mode         ) {
 
 function openForge(tab                            = 'part') {
   smith = null; stitch = null; graft = null;
-  forge = { tab, cat: 'core', brief: '', draft: null, af: null, via: '', busy: false, err: '', pick: 'none' };
+  forge = { tab, cat: 'core', brief: '', draft: null, af: null, via: '', busy: false, err: '', pick: 'none', lastCraftTab: tab === 'affix' ? 'affix' : 'part',
+    views: { part: { cat: 'core', brief: '', draft: null, af: null, via: '', err: '', pick: 'none' },
+      affix: { cat: 'core', brief: '', draft: null, af: null, via: '', err: '', pick: 'none' } } };
   pageState['forge-look'] = 0;
   pageState['forge-power'] = 0;
   ensureForgeInput();
@@ -2887,6 +2986,26 @@ function positionForgeInput() {
   positionDomInput(forgeInput, FORGE_INPUT);
 }
 
+function switchForgeTab(next) {
+  const f = forge;
+  if (!f || f.busy || !['part', 'affix', 'book'].includes(next)) return;
+  if (f.tab === 'part' || f.tab === 'affix') {
+    f.views[f.tab] = { cat: f.cat, brief: forgeInput?.value ?? f.brief, draft: f.draft, af: f.af,
+      via: f.via, err: f.err, pick: f.pick };
+    f.lastCraftTab = f.tab;
+  }
+  f.tab = next;
+  if (next === 'part' || next === 'affix') {
+    const view = f.views[next];
+    Object.assign(f, view);
+    f.tab = next; f.lastCraftTab = next;
+    if (forgeInput) forgeInput.value = f.brief;
+  }
+  f.pick = next === 'book' ? 'none' : f.pick;
+  pageState['book'] = 0;
+  syncForgePlaceholder(); playSfx('tab'); render();
+}
+
 async function askForge() {
   const f = forge;
   if (!f || f.busy) return;
@@ -2900,11 +3019,11 @@ async function askForge() {
   render();
   try {
     if (f.tab === 'part') {
-      const r = await requestPart(f.cat, brief, storySnapshot());
+      const r = await requestPart(f.cat, brief, storySnapshot(), diyRules());
       if (!r) { f.err = llmStatus().note || '这次没造出来，换个说法再试'; f.draft = null; }
       else { f.draft = r.draft; f.via = r.via; playSfx('buy'); }
     } else {
-      const r = await requestAffix(f.cat, brief, storySnapshot());
+      const r = await requestAffix(f.cat, brief, storySnapshot(), diyRules());
       if (!r) { f.err = llmStatus().note || '这次没刻出来，换个说法再试'; f.af = null; }
       else { f.af = r.draft; f.via = r.via; playSfx('buy'); }
     }
@@ -2928,14 +3047,15 @@ function forgeSetLook(id        ) {
 function forgeTogglePower(id        ) {
   const f = forge;
   if (!f) return;
+  const rules = diyRules();
   if (f.tab === 'part' && f.draft) {
     const cur = f.draft.powers;
     const p = powerById(id);
     if (!p) return;
     if (cur.includes(id)) { f.draft = { ...f.draft, powers: cur.filter((x) => x !== id) }; playSfx('tab'); render(); return; }
     const spent = cur.map(powerById).reduce((n, x) => n + (x?.cost ?? 0), 0);
-    if (cur.length >= 2) { say('最多两项能力'); return; }
-    if (spent + p.cost > PART_BUDGET.power) { say(`能力分超了（上限 ${PART_BUDGET.power}）`); return; }
+    if (cur.length >= rules.maxPowers) { say(`最多${rules.maxPowers}项能力`); return; }
+    if (spent + p.cost > rules.powerCap) { say(`能力分超了（上限 ${rules.powerCap}）`); return; }
     f.draft = { ...f.draft, powers: [...cur, id] };
     playSfx('place');
     render();
@@ -2949,8 +3069,8 @@ function forgeTogglePower(id        ) {
       playSfx('tab'); render(); return;
     }
     const spent = cur.map(affixPowerById).reduce((n, x) => n + (x?.cost ?? 0), 0);
-    if (cur.length >= 2) { say('最多两项效果'); return; }
-    if (spent + p.cost > AFFIX_BUDGET.power) { say(`效果分超了（上限 ${AFFIX_BUDGET.power}）`); return; }
+    if (cur.length >= rules.maxPowers) { say(`最多${rules.maxPowers}项效果`); return; }
+    if (spent + p.cost > rules.powerCap) { say(`效果分超了（上限 ${rules.powerCap}）`); return; }
     f.af = { ...f.af, powers: [...cur, id] };
     playSfx('place');
     render();
@@ -2960,8 +3080,8 @@ function forgeTogglePower(id        ) {
 function confirmAffix() {
   const f = forge;
   if (!f?.af) return;
-  if (S.diyAf.length >= DIY_AFFIX_CAP) { say(`自定义词缀已满（${DIY_AFFIX_CAP}），先拆掉一个`); return; }
-  const cost = affixDraftCost(f.af);
+  if (S.diyAf.length >= diyAffixCap()) { say(`自定义词缀已满（${diyAffixCap()}），先拆掉一个`); return; }
+  const cost = currentAffixCost(f.af);
   if (S.mana < cost.mana) { say('魔质不足'); return; }
   S.mana -= cost.mana;
   const id = `dfx${S.diyAfNext++}`;
@@ -2978,7 +3098,7 @@ function dropDiyAffix(id        ) {
   if (!d) return;
   if (S.customs.some((c) => c.affixes && Object.values(c.affixes).includes(id))) { say('有缝合图纸正在用它'); return; }
   S.diyAf = S.diyAf.filter((x) => x.id !== id);
-  S.mana += Math.round(affixDraftCost(d.draft).mana * 0.5);
+  S.mana += Math.round(currentAffixCost(d.draft).mana * 0.5);
   syncDiyAffixes();
   persist();
   playSfx('tab');
@@ -2989,8 +3109,8 @@ function dropDiyAffix(id        ) {
 function confirmForge() {
   const f = forge;
   if (!f || !f.draft) return;
-  if (S.diy.length >= DIY_CAP) { say(`造件已满（${DIY_CAP}），先拆掉一个`); return; }
-  const cost = draftCost(f.cat, f.draft);
+  if (S.diy.length >= diyPartCap()) { say(`造件已满（${diyPartCap()}），先拆掉一个`); return; }
+  const cost = currentDraftCost(f.cat, f.draft);
   if (S.mana < cost.mana) { say('魔质不足'); return; }
   S.mana -= cost.mana;
   const id = `diy${S.diyNext++}`;
@@ -3009,7 +3129,7 @@ function dropDiy(id        ) {
   if (S.customs.some((c) => Object.values(c.parts).includes(id))) { say('有缝合图纸正在用它'); return; }
   if (S.monsters.some((m) => (m.graft ?? []).includes(id)) || S.champs.some((c) => (c.graft ?? []).includes(id))) { say('有单位身上改造着它'); return; }
   S.diy = S.diy.filter((x) => x.id !== id);
-  S.mana += Math.round(draftCost(d.cat, d.draft).mana * 0.5);
+  S.mana += Math.round(currentDraftCost(d.cat, d.draft).mana * 0.5);
   syncDiy();
   persist();
   playSfx('tab');
@@ -3190,11 +3310,7 @@ function drawForge() {
     const x = 20 + i2 * 50;
     g.rect(x, 16, 48, 17).fill(on ? C.purpleDark : C.ink).stroke({ width: 1, color: on ? C.purple : C.stoneLit, alignment: 0 });
     labelC(modalLayer, name, x + 24, 18, 12, on ? C.white : C.bone);
-    hits.add(x, 16, 48, 17, () => {
-      f.tab = id; f.pick = 'none'; f.err = '';
-      pageState['book'] = 0;
-      syncForgePlaceholder(); playSfx('tab'); render();
-    });
+    hits.add(x, 16, 48, 17, () => switchForgeTab(id));
   });
   if (f.tab === 'book') { drawForgeBook(g); return; }
   label(modalLayer, hasBackend() ? cut(`叙事者 ${getBackend() .name}`, 12) : '未接入叙事者', 176, 18, 12, hasBackend() ? C.green : C.red);
@@ -3206,7 +3322,8 @@ function drawForge() {
     const x = 56 + i2 * 44;
     g.rect(x, 34, 42, 18).fill(on ? C.purpleDark : C.ink).stroke({ width: 1, color: on ? C.purple : C.stoneLit, alignment: 0 });
     labelC(modalLayer, c.name, x + 21, 37, 12, on ? C.white : C.bone);
-    hits.add(x, 34, 42, 18, () => { f.cat = c.cat; f.draft = null; f.af = null; f.pick = 'none'; playSfx('tab'); render(); });
+    hits.add(x, 34, 42, 18, () => { f.cat = c.cat; if (isPart) f.draft = null; else f.af = null;
+      f.brief = ''; if (forgeInput) forgeInput.value = ''; f.pick = 'none'; playSfx('tab'); render(); });
   });
   label(modalLayer, isPart ? '决定数值与机制' : '刻在该部位上', 240, 38, 12, C.wall);
 
@@ -3275,7 +3392,7 @@ function drawForgeBook(g               ) {
       };
     }),
   ];
-  label(modalLayer, `自制部件 ${S.diy.length}/${DIY_CAP}・自制词缀 ${S.diyAf.length}/${DIY_AFFIX_CAP}`, 22, 38, 12, C.purple);
+  label(modalLayer, `自制部件 ${S.diy.length}/${diyPartCap()}・自制词缀 ${S.diyAf.length}/${diyAffixCap()}`, 22, 38, 12, C.purple);
   label(modalLayer, '入册后永久保存，可反复用在任意图纸上', 22, 56, 12, C.stoneLit);
   panelF(g, modalLayer, 'inset', 20, 72, 440, 138, C.ink);
   if (!rows.length) {
@@ -3304,15 +3421,15 @@ function drawForgeHelp(g               , isPart         ) {
     ? ['口述一个部件，叙事者翻成真部件：',
        cut('· 数值与能力都夹进设计区间，不会破坏平衡', w),
        cut('· 草案可手改造型（56 张贴图任选）与能力', w),
-       `· 上限 ${DIY_CAP} 个，现有 ${S.diy.length} 个`]
+       `· 上限 ${diyPartCap()} 个，现有 ${S.diy.length} 个`]
     : ['口述一个词缀，刻到所选部位上：',
        cut('· 只改数值与机制，不新增贴图', w),
        cut('· 草案可手改效果（预算内勾两项）', w),
-       `· 上限 ${DIY_AFFIX_CAP} 个，现有 ${S.diyAf.length} 个`];
+       `· 上限 ${diyAffixCap()} 个，现有 ${S.diyAf.length} 个`];
   rows.forEach((t, i2) => label(modalLayer, cut(t, listed ? 18 : 32), 30, 90 + i2 * 16, 12, i2 === 0 ? C.stoneLit : C.wall));
   const list                                                    = isPart
     ? S.diy.slice(0, 4).map((d) => ({ name: d.draft.name, sub: `${CATS.find((c) => c.cat === d.cat) .name}・${partById(d.id)?.bone ?? 0}骨`, drop: () => dropDiy(d.id) }))
-    : S.diyAf.slice(0, 4).map((d) => ({ name: d.draft.name, sub: `${CATS.find((c) => c.cat === d.cat) .name}・${affixDraftCost(d.draft).mana}魔`, drop: () => dropDiyAffix(d.id) }));
+    : S.diyAf.slice(0, 4).map((d) => ({ name: d.draft.name, sub: `${CATS.find((c) => c.cat === d.cat) .name}・${currentAffixCost(d.draft).mana}魔`, drop: () => dropDiyAffix(d.id) }));
   if (!list.length) return;
   label(modalLayer, '已入册', 306, 90, 12, C.purple);
   let dy = 106;
@@ -3336,7 +3453,7 @@ function drawPartDraft(d              ) {
   label(modalLayer, `攻速 ${d.stats.spd >= 0 ? '+' : ''}${d.stats.spd}`, 350, 104, 12, C.gold);
   const ps = d.powers.map(powerById).filter(Boolean)                                                  ;
   const pts = ps.reduce((n, x) => n + x.cost, 0);
-  label(modalLayer, ps.length ? cut(`能力 ${ps.map((x) => x.name).join('・')}（${pts}/${PART_BUDGET.power}分）`, 20) : '无特殊能力', 256, 120, 12, C.purple);
+  label(modalLayer, ps.length ? cut(`能力 ${ps.map((x) => x.name).join('・')}（${pts}/${diyRules().powerCap}分）`, 20) : '无特殊能力', 256, 120, 12, C.purple);
   boundedText(modalLayer, ps.map((x) => x.desc).join('；') || '只是块料子。', 256, 140, 196, 44, 12, C.stoneLit);
 }
 
@@ -3346,7 +3463,7 @@ function drawAffixDraft(d               ) {
   boundedText(modalLayer, d.desc, 30, 124, 196, 58, 12, C.bone);
   const ps = d.powers.map(affixPowerById).filter(Boolean)                                                  ;
   const pts = ps.reduce((n, x) => n + x.cost, 0);
-  label(modalLayer, cut(`效果 ${ps.map((x) => x.name).join('・')}（${pts}/${AFFIX_BUDGET.power}分）`, 22), 240, 88, 12, C.purple);
+  label(modalLayer, cut(`效果 ${ps.map((x) => x.name).join('・')}（${pts}/${diyRules().powerCap}分）`, 22), 240, 88, 12, C.purple);
   let y = 106;
   for (const x of ps) { boundedText(modalLayer, `· ${x.desc}`, 240, y, 210, 26, 12, C.stoneLit); y += 30; }
 }
@@ -3375,7 +3492,7 @@ function drawPowerPicker(g               , isPart         ) {
   const f = forge ;
   const pool = isPart ? POWER_MENU.filter((p) => p.cats.includes(f.cat)) : AFFIX_POWER.filter((p) => p.cats.includes(f.cat));
   const picked = isPart ? (f.draft?.powers ?? []) : (f.af?.powers ?? []);
-  const cap = isPart ? PART_BUDGET.power : AFFIX_BUDGET.power;
+  const rules = diyRules(), cap = rules.powerCap;
   const pp = paged('forge-power', pool, 12);
   panelF(g, modalLayer, 'inset', 20, 200, 440, 40, C.ink);
   pp.view.forEach((p, i2) => {
@@ -3388,25 +3505,25 @@ function drawPowerPicker(g               , isPart         ) {
   });
   pager(g, 'forge-power', pp.pages, 372, 240, 88, '', modalLayer);
   const spent = picked.map((id) => (isPart ? powerById(id)?.cost : affixPowerById(id)?.cost) ?? 0).reduce((a        , b        ) => a + b, 0);
-  label(modalLayer, `已用 ${spent}/${cap} 分・最多两项・点已选可取消`, 22, 240, 12, spent > cap ? C.red : C.wall);
+  label(modalLayer, `已用 ${spent}/${cap} 分・最多${rules.maxPowers}项・点已选可取消`, 22, 240, 12, spent > cap ? C.red : C.wall);
 }
 
 function drawForgeFooter(g               , isPart         ) {
   const f = forge ;
   if (isPart) {
-    const cost = draftCost(f.cat, f.draft );
-    const can = S.mana >= cost.mana && S.diy.length < DIY_CAP;
+    const cost = currentDraftCost(f.cat, f.draft );
+    const can = S.mana >= cost.mana && S.diy.length < diyPartCap();
     label(modalLayer, `入册 ${cost.mana} 魔・部件造价 ${cost.bone} 骨`, 22, 204, 12, can ? C.gold : C.red);
-    label(modalLayer, S.diy.length >= DIY_CAP ? `造件已满（${DIY_CAP}）` : S.mana < cost.mana ? '魔质不足' : cut(`由 ${f.via} 缝制`, 16), 22, 220, 12,
+    label(modalLayer, S.diy.length >= diyPartCap() ? `造件已满（${diyPartCap()}）` : S.mana < cost.mana ? '魔质不足' : cut(`由 ${f.via} 缝制`, 16), 22, 220, 12,
       can ? C.wall : C.red);
     button(g, modalLayer, hits, 246, 204, 96, 20, '重新口述', () => { f.draft = null; f.err = ''; f.pick = 'none'; render(); }, { size: 12 });
     button(g, modalLayer, hits, 350, 204, 108, 20, '入册', () => confirmForge(),
       { size: 12, enabled: can, fill: C.purpleDark, border: C.purple, color: C.white });
   } else {
-    const cost = affixDraftCost(f.af );
-    const can = S.mana >= cost.mana && S.diyAf.length < DIY_AFFIX_CAP;
+    const cost = currentAffixCost(f.af );
+    const can = S.mana >= cost.mana && S.diyAf.length < diyAffixCap();
     label(modalLayer, `入册 ${cost.mana} 魔・之后每次挂上也收 ${cost.mana} 魔`, 22, 204, 12, can ? C.gold : C.red);
-    label(modalLayer, S.diyAf.length >= DIY_AFFIX_CAP ? `词缀已满（${DIY_AFFIX_CAP}）` : S.mana < cost.mana ? '魔质不足' : cut(`由 ${f.via} 刻成`, 16), 22, 220, 12,
+    label(modalLayer, S.diyAf.length >= diyAffixCap() ? `词缀已满（${diyAffixCap()}）` : S.mana < cost.mana ? '魔质不足' : cut(`由 ${f.via} 刻成`, 16), 22, 220, 12,
       can ? C.wall : C.red);
     button(g, modalLayer, hits, 246, 204, 96, 20, '重新口述', () => { f.af = null; f.err = ''; f.pick = 'none'; render(); }, { size: 12 });
     button(g, modalLayer, hits, 350, 204, 108, 20, '入册', () => confirmAffix(),
@@ -3996,7 +4113,10 @@ function drawPortraitHeroStatus(x, y, w, h, c) {
   }
   if (c.restTurns) button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 194, w - 16, 40, `疗愈 ${REST_MANA}魔・休息-1`, () => restChamp(c),
     { size: 14, enabled: healingCapacity() > 0 && S.dungeon.healingCharges > 0 && S.mana >= REST_MANA, border: C.green, color: C.green });
-  if (c.wounds) button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 242, w - 16, 40, `疗伤 ${HEAL_MANA}魔・伤势-1`, () => healChamp(c),
+  if (c.restTurns) button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 242, w - 16, 40,
+    heroForcedThisRaid(c) ? '本场已强制征召' : heroForceConfirmUid === c.uid ? `确认支付 ${FORCE_HERO_BONE}骨+${FORCE_HERO_MANA}魔` : '强制驱使参加本场', () => forceRestingHero(c),
+    { size: 13, enabled: !heroForcedThisRaid(c) && S.bone >= FORCE_HERO_BONE && S.mana >= FORCE_HERO_MANA, border: C.red, color: C.red });
+  if (c.wounds) button(portraitGfx, portraitLayer, portraitHits, x + 8, y + (c.restTurns ? 290 : 242), w - 16, 40, `疗伤 ${HEAL_MANA}魔・伤势-1`, () => healChamp(c),
     { size: 14, enabled: S.mana >= HEAL_MANA, border: C.red, color: C.red });
   void h;
 }
@@ -6050,7 +6170,7 @@ function pageStory(g               ) {
 function seatChamp(room        , uid        ) {
   const c = champById(uid);
   if (!c) return;
-  if ((c.restTurns || 0) > 0) { say(`${c.name} 仍需休息 ${c.restTurns} 回合`); return; }
+  if ((c.restTurns || 0) > 0 && !heroForcedThisRaid(c)) { say(`${c.name}仍需休息；先在英雄档案支付强制驱使费用`); return; }
   const trainingFloor = trainingOf('hero', uid);
   if (trainingFloor >= 0) { say(`${c.name}正在${trainingFloor + 1}层训练，先取消训练`); return; }
   for (let i = 0; i < S.rooms.length; i++) if (S.rooms[i].leader === uid) { S.rooms[i].leader = null; S.rooms[i].flank = null; }
@@ -6434,7 +6554,10 @@ function drawChampStat(g, c) {
   button(g, uiLayer, hits, 174, 214, 70, 15, '同僚关系', () => sayChem(chem.lines), { size: 10, border: C.purple, color: C.purple });
   if (featureOpen('heroGraft')) button(g, uiLayer, hits, 246, 214, 100, 15, (c.graft ?? []).length ? `全身改造 ${(c.graft ?? []).length}/4` : '全身改造', () => openGraft(c.uid, 'hero'),
     { size: 10, border: (c.graft ?? []).length ? C.gold : C.purple, color: (c.graft ?? []).length ? C.gold : C.white });
-  button(g, uiLayer, hits, 348, 214, 112, 15, '遣退英雄', () => dismissChamp(c), { size: 10, border: C.red, color: C.red });
+  button(g, uiLayer, hits, 348, 214, 112, 15,
+    c.restTurns ? heroForcedThisRaid(c) ? '本场已强制征召' : heroForceConfirmUid === c.uid ? '确认强制驱使' : `强驱${FORCE_HERO_BONE}骨${FORCE_HERO_MANA}魔` : '遣退英雄',
+    () => c.restTurns ? forceRestingHero(c) : dismissChamp(c),
+    { size: 9, enabled: !c.restTurns || (!heroForcedThisRaid(c) && S.bone >= FORCE_HERO_BONE && S.mana >= FORCE_HERO_MANA), border: C.red, color: C.red });
 }
 
 function drawChampTitles(g, c) {
@@ -6906,7 +7029,7 @@ function pageShop(g               ) {
   });
   const st = llmStatus();
   const line = st.state === 'error' ? st.note
-    : hasBackend() ? `${getBackend() .name}・造件 ${S.diy.length}/${DIY_CAP}・词缀 ${S.diyAf.length}/${DIY_AFFIX_CAP}`
+    : hasBackend() ? `${getBackend() .name}・造件 ${S.diy.length}/${diyPartCap()}・词缀 ${S.diyAf.length}/${diyAffixCap()}`
     : '未接入：自定义部件与词缀不可用';
   label(uiLayer, cut(line, 25), 12, 210, 12, st.state === 'error' ? C.red : hasBackend() ? C.green : C.stoneLit);
   button(g, uiLayer, hits, 216, 189, 36, 19, '造部件', () => openForge('part'),
@@ -7123,7 +7246,7 @@ async function startBattle() {
     return;
   }
   if (stitch) closeStitch();
-  const unavailable = seatedChampUids().map(champById).filter((c) => c && (c.restTurns || 0) > 0);
+  const unavailable = seatedChampUids().map(champById).filter((c) => c && (c.restTurns || 0) > 0 && !heroForcedThisRaid(c));
   if (unavailable.length) {
     say(`${unavailable.map((c) => c.name).join('、')}仍在强制休息，请先更换统领`);
     return;
@@ -7743,7 +7866,9 @@ function finishBattle() {
     }
     S.vault.push(id);
   }
-  const newlyResting = tickFatigue(S.champs, deployedChampUids);
+  const forcedHeroes = new Set(deployedChampUids.filter((uid) => heroForcedThisRaid(champById(uid))));
+  const newlyResting = tickFatigue(S.champs, deployedChampUids, forcedHeroes);
+  for (const c of S.champs) if (c.forcedRaid === currentRaidIdentity()) delete c.forcedRaid;
   recordHeroRelations(deployedChampUids);
   if (newlyResting.length) {
     const ids = new Set(newlyResting);
@@ -8305,10 +8430,12 @@ window.__debug = {
   // 造件/造词缀自测钩子
   get forge() {
     return forge ? { tab: forge.tab, cat: forge.cat, busy: forge.busy, err: forge.err, pick: forge.pick,
-      draft: forge.draft, af: forge.af, via: forge.via } : null;
+      draft: forge.draft, af: forge.af, via: forge.via, brief: forge.brief, rules: diyRules() } : null;
   },
   forgeOpen: (tab                           ) => { openForge(tab); return forge != null; },
-  forgeCat: (c         ) => { if (forge) { forge.cat = c; forge.draft = null; forge.af = null; render(); } },
+  forgeTab: (tab) => { switchForgeTab(tab); return forge?.tab ?? null; },
+  forgeCat: (c         ) => { if (forge) { forge.cat = c; if (forge.tab === 'part') forge.draft = null; else forge.af = null;
+    forge.brief = ''; if (forgeInput) forgeInput.value = ''; render(); } },
   forgeAsk: async (brief        ) => {
     if (!forge) return null;
     forge.brief = brief;
@@ -8395,6 +8522,7 @@ window.__debug = {
     persist(); render();
     return { sorties: c.sorties, restTurns: c.restTurns };
   },
+  forceHero: (uid) => { const c = champById(uid); return c ? forceRestingHero(c) : false; },
   heroLoreOptimize: async (uid) => {
     const c = champById(uid);
     if (!c) return null;
@@ -8464,6 +8592,7 @@ window.__debug = {
   get llm() { return { mode: loadMode(), backend: getBackend()?.name ?? null, status: llmStatus(), cfg: loadCfg() }; },
   aiSettingsOpen: () => { openAISettings(); return !!aiSettingsRoot; },
   aiSettingsClose: () => { closeAISettings(); return !aiSettingsRoot; },
+  get aiPrompts() { return { tasks: AI_PROMPT_TASKS.map((task) => ({ ...task })), overrides: loadPromptOverrides() }; },
   llmSetBackend: (b                   ) => { setBackend(b); render(); return getBackend()?.name ?? null; },
   llmEcho: () => { saveMode('echo'); restoreBackend(); render(); return getBackend()?.name ?? null; },
   llmOff: () => { saveMode('off'); restoreBackend(); render(); return getBackend()?.name ?? null; },

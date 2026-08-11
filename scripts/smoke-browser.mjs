@@ -36,6 +36,7 @@ try {
 
   // AI 设置必须走“地址/Key → 刷新模型 → 选择模型 → 保存”的完整链路。
   let requestedModel = '';
+  let requestedPrompt = '';
   await page.route('https://api.example.test/v1/models', async (route) => {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: [{ id: 'test-model-a' }, { id: 'test-model-b' }] }) });
   });
@@ -43,6 +44,7 @@ try {
     const body = route.request().postDataJSON() ?? {};
     requestedModel = body.model ?? '';
     const prompt = body.messages?.at(-1)?.content ?? '';
+    requestedPrompt = prompt;
     let content;
     if (prompt.includes('战前台词包')) content = { opening: [{ key: 'hero:剑士', text: '这次差旅没有返程票。' }], units: [
       { key: 'hero:剑士', attack: ['报销单先斩了。'], skill: ['为了最低工资！'], reaction: ['这不在保险范围。'], heal: [], special: [] },
@@ -55,6 +57,7 @@ try {
     else if (prompt.includes('重构一名英雄档案')) content = { personalityName: '账簿式冷静',
       personalityDesc: '越危险越先核对伤亡与欠款，仿佛死亡只是一张填错栏目的表。',
       backgroundName: '欠薪墓园', backgroundStory: '他曾替一座墓园守夜，领到的薪水只有逝者留下的道歉。后来账本自行补上了地牢地址，他便带着旧钥匙来讨一份不会拖欠的差事。' };
+    else if (prompt.includes('怪物词缀')) content = { name: '试作毒纹', word: '毒', desc: '模型词缀链路测试。', powers: ['venom', 'healCut'] };
     else content = { name: '试作毒躯', word: '毒', desc: '模型选择链路测试。', look: 'rock', stats: { hp: 60, atk: 4, def: 1, spd: 0 }, powers: ['poisonSkill'] };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }) });
   });
@@ -69,9 +72,28 @@ try {
   const aiCfg = await page.evaluate(() => __debug.llm);
   assert(aiCfg.mode === 'http' && aiCfg.cfg?.provider === 'custom' && aiCfg.cfg?.baseUrl === 'https://api.example.test/v1'
     && aiCfg.cfg?.model === 'test-model-b' && aiCfg.cfg?.models.length === 2, 'AI settings did not persist the refreshed model selection.');
+  await page.evaluate(() => __debug.aiSettingsOpen());
+  await page.click('[data-ai="tab-prompts"]');
+  await page.selectOption('[data-ai="prompt-task"]', 'part');
+  await page.fill('[data-ai="prompt-text"]', '测试定制提示：优先写成账房风格。');
+  await page.click('[data-ai="prompt-save"]');
+  await page.click('[data-ai="close"]');
   await page.evaluate(() => __debug.forgeOpen('part'));
   const aiDraft = await page.evaluate(async () => await __debug.forgeAsk('测试毒物'));
-  assert(aiDraft?.draft?.name === '试作毒躯' && requestedModel === 'test-model-b', 'AI generation did not use the selected refreshed model.');
+  assert(aiDraft?.draft?.name === '试作毒躯' && requestedModel === 'test-model-b' && requestedPrompt.includes('测试定制提示'),
+    'AI generation did not use the selected model and editable task prompt.');
+  const preservedForge = await page.evaluate(async () => {
+    __debug.forgeTab('affix');
+    __debug.forgeCat('head');
+    const affix = await __debug.forgeAsk('测试毒纹');
+    __debug.forgeTab('part');
+    const part = __debug.forge;
+    __debug.forgeTab('affix');
+    return { affix, part, restoredAffix: __debug.forge };
+  });
+  assert(preservedForge.part.draft?.name === '试作毒躯' && preservedForge.part.brief === '测试毒物'
+    && preservedForge.restoredAffix.af?.name === '试作毒纹' && preservedForge.restoredAffix.brief === '测试毒纹',
+  `DIY part/affix tabs did not preserve their independent drafts and input: ${JSON.stringify(preservedForge)}`);
   await page.evaluate(() => __debug.closeForge());
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => __debug.aiSettingsOpen());
@@ -157,8 +179,15 @@ try {
     __debug.devTrap(0, 'slime', 0);
     __debug.devTrap(0, 'net', 1);
     const after = { research: __debug.workshopResearch, room: __debug.rooms[0], modalText: __debug.layerText().modal };
+    __debug.forceRaid(16);
+    __debug.researchGroup('artisan');
+    __debug.researchPreview('elite-craft');
+    const eliteCraft = __debug.researchConfirm();
     __debug.researchClose();
-    return { before, confirmed, overwrite, after };
+    __debug.forgeOpen('part');
+    const diyRules = __debug.forge.rules;
+    __debug.closeForge();
+    return { before, confirmed, overwrite, after, eliteCraft, diyRules };
   });
   assert(!workshopResearch.before.research.picks.traps && workshopResearch.before.research.modal.previewId === 'double-rail',
     'Workshop research preview wrote the permanent pick before confirmation.');
@@ -167,6 +196,8 @@ try {
   assert(!workshopResearch.overwrite.ok, 'A locked workshop research group could be overwritten.');
   assert(workshopResearch.after.room.trap === 'slime' && workshopResearch.after.room.trap2 === 'net'
     && workshopResearch.after.modalText.some((text) => text.includes('其余封锁')), 'Dual-trap route did not expose two persistent trap slots or its locked state.');
+  assert(workshopResearch.eliteCraft.ok && workshopResearch.diyRules.powerCap === 10 && workshopResearch.diyRules.maxPowers === 3,
+    'Elite-craft research did not expand the live DIY budget to 10 points and three abilities.');
 
   const lawAudit = await page.evaluate(() => {
     const uid = __debug.monsters[0].uid;
@@ -278,8 +309,15 @@ try {
     __debug.forceRaid(31);
     const nextRoundUpgrade = __debug.devUpgradeUtility(1);
     const facilityActionLock = built.level === 1 && blockedUpgrade.level === 1 && nextRoundUpgrade.level === 2;
+    __debug.devRotation(heroA, 0, 3);
+    const forceBefore = { bone: __debug.bone, mana: __debug.mana };
+    const firstForceClick = __debug.forceHero(heroA);
+    const secondForceClick = __debug.forceHero(heroA);
+    __debug.devAssign(0, 'leader', heroA);
+    const forcedHero = __debug.champs.find((hero) => hero.uid === heroA);
+    const forcePaid = __debug.bone === forceBefore.bone - 300 && __debug.mana === forceBefore.mana - 100;
     const audit = __debug.uiBounds();
-    return { relationLead: !!relationLead, sameSubjectBlocked, optimizedLore, facilityActionLock, facility, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
+    return { relationLead: !!relationLead, sameSubjectBlocked, optimizedLore, facilityActionLock, facility, forcePaid, firstForceClick, secondForceClick, forcedHero, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
       battleDone: battleRun?.screen === 'result', facilityVisual, returnAdvanced, reportLinked: report?.storyRefs?.includes(archive?.id) && linkedArchive?.battleRefs?.includes(report.raidNo),
       exileLead: !!exileLead, exiles: __debug.story.exiles.length, violations: audit.violations };
   });
@@ -288,6 +326,8 @@ try {
   assert(result.optimizedLore?.personalityName === '账簿式冷静' && result.optimizedLore?.backgroundName === '欠薪墓园',
     'AI hero archive reconstruction did not persist its sanitized result.');
   assert(result.facilityActionLock, 'Facility build/upgrade was not limited to one action per raid.');
+  assert(!result.firstForceClick && result.secondForceClick && result.forcePaid && result.forcedHero?.room === 0
+    && result.forcedHero?.restTurns === 3, 'Resting hero force-deployment did not require confirmation, charge 300 bone/100 mana, or preserve rest.');
   assert(result.facility.persona === 'scarred' && result.facility.nickname, 'Facility personality did not awaken after repeated damage.');
   assert(result.archive && result.chronicle, 'Story archive or hero chronicle filtering failed.');
   assert(result.exactImpact, 'Resolved story choice did not display its exact numeric battle effect and duration.');

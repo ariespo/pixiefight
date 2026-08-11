@@ -3,7 +3,8 @@ import { spawnSync } from 'node:child_process';
 import { SCENES } from '../story.js';
 import { TEXTURES, RAIDS, RAID_BRIEFINGS, NORMAL_RAID_COUNT } from '../data.js';
 import { createBattle, stepBattle, effectiveThorns, effectiveMitigationMultiplier, armorMultiplier } from '../battle.js';
-import { newChamp, champStats } from '../heroes.js';
+import { newChamp, champStats, tickFatigue } from '../heroes.js';
+import { AFFIX_POWER, POWER_MENU, clampAffixDraft, clampDraft } from '../modules.js';
 import { WORKSHOP_RESEARCH, researchDirectMultiplier, researchEffects, researchPoisonApplication, researchTrapThroughput } from '../research.js';
 
 const core = ['game.js', 'battle.js', 'story.js', 'vars.js', 'ui.js', 'heroes.js', 'modules.js', 'gear.js', 'data.js', 'llm.js', 'audio.js', 'research.js'];
@@ -37,6 +38,9 @@ if (!llmSource.includes("endpoint(clean.baseUrl, 'models')")) throw new Error('A
 for (const api of ['requestBattleDialogue', 'requestLiteraryReport', 'requestContextStory', 'requestHeroLore', 'requestPart', 'requestAffix']) {
   if (!llmSource.includes(`export async function ${api}`)) throw new Error(`Missing AI generation contract: ${api}`);
 }
+for (const task of ['part', 'affix', 'scene', 'dialogue', 'report', 'context', 'heroLore']) {
+  if (!llmSource.includes(`promptDirective('${task}')`)) throw new Error(`Editable AI task prompt is not wired: ${task}`);
+}
 const setBody = source.match(/const STORY_LEAD_SCENES = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? '';
 const leadIds = [...setBody.matchAll(/'([^']+)'/g)].map((m) => m[1]);
 for (const id of leadIds) if (!ids.has(id)) throw new Error(`Lead references missing scene: ${id}`);
@@ -53,8 +57,8 @@ if (!(effectiveMitigationMultiplier(0) > 0.14 && armorMultiplier(1000000) > 0.20
 if (RAIDS[0].reward.bone >= RAIDS[9].reward.bone || RAIDS[9].reward.mana >= RAIDS[19].reward.mana)
   throw new Error('The 20-round bone/mana economy curve is not progressive.');
 
-if (WORKSHOP_RESEARCH.length !== 5 || WORKSHOP_RESEARCH.some((group) => group.options.length !== 3))
-  throw new Error('Workshop research must provide five mutually-exclusive groups of three options.');
+if (WORKSHOP_RESEARCH.length !== 6 || WORKSHOP_RESEARCH.some((group) => group.options.length !== 3))
+  throw new Error('Workshop research must provide six mutually-exclusive groups of three options.');
 const optionIds = WORKSHOP_RESEARCH.flatMap((group) => group.options.map((option) => option.id));
 if (new Set(optionIds).size !== optionIds.length) throw new Error('Workshop research option ids must be globally unique.');
 const plague = researchEffects({ medium: 'plague-vat' });
@@ -70,6 +74,19 @@ if (researchDirectMultiplier(rear, 1, 'back', 1) !== 1.5 || researchDirectMultip
 const dual = researchEffects({ traps: 'double-rail' });
 if (Math.abs(researchTrapThroughput(dual, 2) - 1.44) > 1e-9 || researchTrapThroughput(dual, 3) > 1.44)
   throw new Error('Dual traps must cap at two 72% triggers (144% total throughput).');
+const eliteCraft = researchEffects({ artisan: 'elite-craft' });
+if (eliteCraft.diyPowerCap !== 10 || eliteCraft.diyPowerSlots !== 3 || eliteCraft.diyManaCostMult !== 1.5)
+  throw new Error('Elite-craft workshop route did not unlock the 10-point/3-power DIY envelope.');
+if (POWER_MENU.length < 50 || AFFIX_POWER.length < 36) throw new Error('Expanded DIY ability menus are unexpectedly sparse.');
+const highPart = clampDraft('core', { name: '三能躯', word: '强', look: 'rock', stats: { hp: 80 },
+  powers: ['secondLife', 'bloodFeast', 'vengeance'] }, 'test', { powerCap: 11, maxPowers: 3 });
+const highAffix = clampAffixDraft('core', { name: '三能纹', word: '强', desc: 'test',
+  powers: ['secondLife', 'bloodFeast', 'vengeance'] }, 'test', { powerCap: 11, maxPowers: 3 });
+if (highPart?.powers.length !== 3 || highAffix?.powers.length !== 3) throw new Error('Unlocked DIY limits still discard the third ability.');
+const restingHero = { uid: 777, traits: [], fatigue: 0, battles: 0, sorties: 0, restTurns: 3, wounds: 0, gear: {} };
+tickFatigue([restingHero], [777], new Set([777]));
+if (restingHero.restTurns !== 3 || restingHero.battles !== 1 || restingHero.sorties !== 0)
+  throw new Error(`Forced resting hero rotation drifted: ${JSON.stringify(restingHero)}`);
 
 const builds = [{}];
 for (const group of WORKSHOP_RESEARCH) {
@@ -184,4 +201,4 @@ const statBattle = createBattle({ no: 98, title: 'attribute speech', members: [{
 if (!statBattle.dialogue.some((x) => x.kind === 'stat-thorns') || !statBattle.dialogue.some((x) => x.kind === 'stat-max'))
   throw new Error('High-stat or max-level battle dialogue did not trigger for both sides.');
 
-console.log(`Static check passed: ${core.length} scripts, ${TEXTURES.length} textures, 20 raid stories, 243 workshop builds, sequential dual traps, diminishing defenses, attribute dialogue, calibrated final formation, 4 new enemy skills, ${SCENES.length} scenes, ${followups.length} follow-up links, ${leadIds.length} contextual leads.`);
+console.log(`Static check passed: ${core.length} scripts, ${TEXTURES.length} textures, 20 raid stories, 729 workshop builds, expanded DIY contracts, forced-rest rotation, sequential dual traps, diminishing defenses, attribute dialogue, calibrated final formation, 4 new enemy skills, ${SCENES.length} scenes, ${followups.length} follow-up links, ${leadIds.length} contextual leads.`);

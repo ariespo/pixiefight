@@ -71,6 +71,20 @@ export const WORKSHOP_RESEARCH = [
         effects: { poisonApplyMult: 1.50, burnApplyMult: 1.50, trapPowerMult: 1.50, monDirectDamageMult: 0.75 } },
     ],
   },
+  {
+    id: 'artisan', name: '第六组・兵员铸造', unlockRaid: 16, workshopLevel: 3, cost: 140,
+    options: [
+      { id: 'elite-craft', name: '精兵强将', tag: '高阶 DIY',
+        desc: 'DIY 部件与词缀的能力预算由 6 分提高到 10 分，并可同时选择 3 项能力；代价：入册魔质费用 +50%。',
+        effects: { diyPowerCap: 10, diyPowerSlots: 3, diyManaCostMult: 1.50 } },
+      { id: 'giant-pattern', name: '巨构标准件', tag: '纯数值件',
+        desc: 'DIY 部件可填写的生命、攻击、防御与攻速上限提高 35%；能力预算仍为 6 分且最多两项。',
+        effects: { diyPartStatMult: 1.35 } },
+      { id: 'mass-catalog', name: '流水目录', tag: '量产收藏',
+        desc: '自制部件与词缀容量各 +12，入册魔质费用 -35%；能力与数值上限不变。',
+        effects: { diyCapacityBonus: 12, diyManaCostMult: 0.65 } },
+    ],
+  },
 ];
 
 export const RESEARCH_EFFECT_DEFAULTS = Object.freeze({
@@ -79,6 +93,7 @@ export const RESEARCH_EFFECT_DEFAULTS = Object.freeze({
   frontRowDamageMult: 1, backRowDamageMult: 1, commandSlotDamageMult: 1, regularSlotDamageMult: 1,
   frontRowHpMult: 1, monHpMult: 1, monSpeedMult: 1,
   trapPowerMult: 1, dualTraps: false, trapDisarmImmune: false, directLifesteal: 0,
+  diyPowerCap: 6, diyPowerSlots: 2, diyPartStatMult: 1, diyManaCostMult: 1, diyCapacityBonus: 0,
 });
 
 export function researchOption(id) {
@@ -107,7 +122,7 @@ export function researchEffects(picks) {
     for (const [key, value] of Object.entries(effects)) {
       if (typeof value === 'boolean') out[key] = out[key] || value;
       else if (key === 'poisonStackCap') out[key] = Math.max(out[key], value);
-      else if (key === 'directLifesteal') out[key] = Math.max(out[key], value);
+      else if (key === 'directLifesteal' || key === 'diyPowerCap' || key === 'diyPowerSlots' || key === 'diyCapacityBonus') out[key] = Math.max(out[key], value);
       else out[key] *= value;
     }
   }

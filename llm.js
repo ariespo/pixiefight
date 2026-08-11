@@ -26,6 +26,43 @@ export const AI_PRESETS = [
   { id: 'custom', name: '自定义', protocol: 'openai', baseUrl: '' },
 ];
 
+export const AI_PROMPT_TASKS = [
+  { id: 'part', name: 'DIY 部件', defaultPrompt: '优先满足玩家描述的战斗定位，让名称、说明、造型与能力形成同一主题。' },
+  { id: 'affix', name: 'DIY 词缀', defaultPrompt: '把玩家愿望压缩成鲜明的强化纹路，说明保持简洁、冷幽默。' },
+  { id: 'scene', name: '无主秘闻', defaultPrompt: '事件应当带来艰难但可理解的选择，并与当前经营状态呼应。' },
+  { id: 'dialogue', name: '战前台词包', defaultPrompt: '台词要短、能区分角色身份，并体现地下城职场式黑色幽默。' },
+  { id: 'report', name: '文学化战报', defaultPrompt: '叙述克制、有画面感，以地牢书记的冷峻口吻串联真实战斗数据。' },
+  { id: 'context', name: '上下文秘闻', defaultPrompt: '优先回收人物、设施与旧档案细节，让新事件像长期历史的自然后果。' },
+  { id: 'heroLore', name: '英雄档案', defaultPrompt: '性格与背景应互相解释，并从战绩和既有经历中提炼独有矛盾。' },
+];
+
+const PROMPT_KEY = 'yqh-ai-task-prompts-v1';
+export function loadPromptOverrides() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PROMPT_KEY) || '{}');
+    const out = {};
+    for (const task of AI_PROMPT_TASKS) if (typeof raw?.[task.id] === 'string') out[task.id] = raw[task.id].slice(0, 2000);
+    return out;
+  } catch { return {}; }
+}
+export function savePromptOverrides(value) {
+  try {
+    const out = {};
+    for (const task of AI_PROMPT_TASKS) {
+      const valueText = String(value?.[task.id] ?? '').trim().slice(0, 2000);
+      if (valueText && valueText !== task.defaultPrompt) out[task.id] = valueText;
+    }
+    localStorage.setItem(PROMPT_KEY, JSON.stringify(out));
+    return true;
+  } catch { return false; }
+}
+export function taskPrompt(id) {
+  const task = AI_PROMPT_TASKS.find((item) => item.id === id);
+  if (!task) return '';
+  return loadPromptOverrides()[id] || task.defaultPrompt;
+}
+const promptDirective = (id) => `<玩家可编辑任务提示词>${taskPrompt(id)}</玩家可编辑任务提示词>`;
+
 export function presetById(id) {
   return AI_PRESETS.find((item) => item.id === id) ?? AI_PRESETS[AI_PRESETS.length - 1];
 }
@@ -213,7 +250,7 @@ function echoScene(prompt        )        {
 }
 
 // ---------- 提示词 ----------
-export function partPrompt(cat         , brief        , snap               )         {
+export function partPrompt(cat         , brief        , snap               , limits = {})         {
   const menu = POWER_MENU.filter((p) => p.cats.includes(cat))
     .map((p) => `- ${p.id}（${p.cost}分）：${p.desc}`).join('\n');
   const CATN                          = { core: '核心（决定血量与被动）', head: '头部（决定普攻附带效果）', arm: '肢臂（决定主动技能）', legs: '足部（决定站位与机动）' };
@@ -224,11 +261,12 @@ export function partPrompt(cat         , brief        , snap               )    
     `<部位>${cat}</部位>  含义：${CATN[cat]}`,
     `<玩家愿望>${brief}</玩家愿望>`,
     `当前进度：第 ${snap.reads.raidNo} 波袭击，怪物 ${snap.reads.monsters} 只，骨币 ${snap.reads.bone}，魔质 ${snap.reads.mana}。`,
+    promptDirective('part'),
     '',
-    '可选能力（powers 最多两项，能力分合计不得超过 ' + PART_BUDGET.power + '）：',
+    `可选能力（powers 最多 ${limits.maxPowers ?? 2} 项，能力分合计不得超过 ${limits.powerCap ?? PART_BUDGET.power}）：`,
     menu,
     '',
-    '数值上限：hp ≤ ' + PART_BUDGET.hp + '，atk ≤ ' + PART_BUDGET.atk + '，def ≤ ' + PART_BUDGET.def + '，spd 在 -0.3 ~ 0.35 之间。',
+    `基础数值上限按部位与工坊路线校验，当前数值倍率 ${Number(limits.statMult ?? 1).toFixed(2)}。`,
     '名字 2–4 个汉字，word 是一个汉字（用于自动命名），desc 一句中文（≤24 字，地牢守方视角，冷幽默）。',
     `look 从已有贴图里挑一个最像的（不新增美术）。同部位优选：${same}`,
     `也可以跨部位取用（长相自由，位置由部位决定）：${other}`,
@@ -238,7 +276,7 @@ export function partPrompt(cat         , brief        , snap               )    
   ].join('\n');
 }
 
-export function affixPrompt(cat         , brief        , snap               )         {
+export function affixPrompt(cat         , brief        , snap               , limits = {})         {
   const menu = AFFIX_POWER.filter((p) => p.cats.includes(cat))
     .map((p) => `- ${p.id}（${p.cost}分）：${p.desc}`).join('\n');
   const CATN                          = { core: '核心', head: '头部', arm: '肢臂', legs: '足部' };
@@ -247,8 +285,9 @@ export function affixPrompt(cat         , brief        , snap               )   
     `<部位>${cat}</部位>  这条词缀只能刻在${CATN[cat]}上`,
     `<玩家愿望>${brief}</玩家愿望>`,
     `当前进度：第 ${snap.reads.raidNo} 波袭击，魔质 ${snap.reads.mana}。`,
+    promptDirective('affix'),
     '',
-    `可选效果（powers 最多两项，效果分合计不得超过 ${AFFIX_BUDGET.power}）：`,
+    `可选效果（powers 最多 ${limits.maxPowers ?? 2} 项，效果分合计不得超过 ${limits.powerCap ?? AFFIX_BUDGET.power}）：`,
     menu,
     '',
     '名字 2–4 个汉字（像"猛毒""铁壁"这样的强化名），word 是一个汉字（会用于自动命名怪物），desc 一句中文（≤24 字，地牢守方视角，冷幽默，不要复述数值）。',
@@ -264,6 +303,7 @@ export function scenePrompt(snap               , brief = '')         {
   return [
     '你是一款 8-bit 地牢经营游戏的叙事者。玩家是地牢主人，勇者是入侵者。只输出 JSON，不要解释。',
     '写一个短事件：一段正文 + 2~3 个选项，每个选项有回应文字和效果。语气冷幽默、守方视角、避免热血。',
+    promptDirective('scene'),
     brief ? `<玩家愿望>${brief}</玩家愿望>` : '',
     `游戏状态：${reads}`,
     `剧情变量：${vars}`,
@@ -330,17 +370,17 @@ async function ask(prompt        , kind                            , timeoutMs  
 }
 
 // ---------- 部件草案 ----------
-export async function requestPart(cat         , brief        , snap               )                                                       {
-  const j = await ask(partPrompt(cat, brief, snap), 'part', 9000);
+export async function requestPart(cat         , brief        , snap               , limits = {})                                                       {
+  const j = await ask(partPrompt(cat, brief, snap, limits), 'part', 9000);
   if (!j || typeof j !== 'object') return null;
-  const draft = clampDraft(cat, j                         , brief);
+  const draft = clampDraft(cat, j                         , brief, limits);
   return draft ? { draft, via: backend?.name ?? 'llm' } : null;
 }
 
-export async function requestAffix(cat         , brief        , snap               )                                                        {
-  const j = await ask(affixPrompt(cat, brief, snap), 'affix', 9000);
+export async function requestAffix(cat         , brief        , snap               , limits = {})                                                        {
+  const j = await ask(affixPrompt(cat, brief, snap, limits), 'affix', 9000);
   if (!j || typeof j !== 'object') return null;
-  const draft = clampAffixDraft(cat, j                          , brief);
+  const draft = clampAffixDraft(cat, j                          , brief, limits);
   return draft ? { draft, via: backend?.name ?? 'llm' } : null;
 }
 
@@ -350,6 +390,7 @@ export function heroLorePrompt(snap) {
     '你为中文像素风地牢经营游戏《勇者去死！》重构一名英雄档案。只输出 JSON，不要解释。',
     '根据种族、姓名、特质、称号、战绩、旧性格和旧背景，写出彼此呼应且专属于该英雄的性格与背景。',
     '保持地牢守方视角与克制的黑色幽默；不得改变英雄数值、特质、称号、经历或其他事实。',
+    promptDirective('heroLore'),
     'personalityName 2至4个汉字，personalityDesc 30至70字；backgroundName 2至7个汉字，backgroundStory 80至180字。',
     `<英雄档案>${JSON.stringify(snap)}</英雄档案>`,
     '输出格式：{"personalityName":"性格名","personalityDesc":"性格说明","backgroundName":"背景名","backgroundStory":"背景故事"}',
@@ -489,6 +530,7 @@ export function battleDialoguePrompt(snap) {
     '你为中文像素风地牢经营游戏《勇者去死！》编写一场战前台词包。只输出 JSON，不要解释。',
     '语气是地牢守方视角的黑色幽默。台词必须短、能在人物头顶两行内读完，不要描述伤害数值。',
     '只使用输入中给出的 key；根据角色阵营、职业/种族、技能、性格、属性特征写出有辨识度的句子。',
+    promptDirective('dialogue'),
     '每个单位可写 attack、skill、reaction、heal、special，每类0至3句；opening写2至4句开场交锋。',
     `<战斗事实>${JSON.stringify(snap)}</战斗事实>`,
     '输出格式：{"opening":[{"key":"hero:王国剑士","text":"门后有动静。"}],"units":[{"key":"mon:骨头书记","attack":["留下加班费。"],"skill":[],"reaction":[],"heal":[],"special":[]}]}',
@@ -528,6 +570,7 @@ export function literaryReportPrompt(snap) {
   return [
     '你是《勇者去死！》地牢档案室的战地书记。只输出 JSON，不要解释。',
     '根据给定战斗事实写黑色幽默但准确的文学战报。不得创造未发生的击杀、技能、人物、资源或房间结果。',
+    promptDirective('report'),
     'summary是一段结论；chronicle是完整纪事，分2至4个短段落；highlights是2至4条短句。',
     '数字必须与输入一致。失败可以尖刻，但必须给出可理解的转折原因。',
     `<战报事实>${JSON.stringify(snap)}</战报事实>`,
@@ -558,6 +601,7 @@ export function contextStoryPrompt(snap) {
     '你是《勇者去死！》的地牢编年史作者。只输出 JSON，不要解释。',
     '根据人物、设施、既往档案与本地事件底稿，改写一则上下文秘闻。保持黑色幽默和守方视角。',
     '不得改变选项数量、顺序、事实或任何游戏效果；只润色正文、说话者、按钮短标签与选择后的回应。',
+    promptDirective('context'),
     'text不超过220字，who不超过8字，label不超过8字，reply不超过160字。',
     `<秘闻上下文>${JSON.stringify({ ...snap, base: { ...snap.base, choices: choiceShape } })}</秘闻上下文>`,
     '输出格式：{"who":"说话者","text":"事件正文","choices":[{"index":0,"label":"选项","reply":"结果叙述"}]}',

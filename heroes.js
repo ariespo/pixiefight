@@ -536,7 +536,7 @@ export const auraText = (id        , pow        ) => {
 };
 
 // 战后轮值与疲劳结算：出战次数跨留守累计；第四场结束后强制休息三轮。
-export function tickFatigue(champs         , seated          ) {
+export function tickFatigue(champs         , seated          , forced = new Set()) {
   const newlyResting = [];
   for (const c of champs) {
     if (seated.includes(c.uid)) {
@@ -545,6 +545,7 @@ export function tickFatigue(champs         , seated          ) {
       const g = (base + 8 * Math.min(WOUND_CAP, c.wounds || 0)) * gearEff(c.gear).fatigue;
       c.fatigue = Math.min(100, c.fatigue + g);
       c.battles++;
+      if (forced.has(c.uid) && (c.restTurns || 0) > 0) continue;
       c.sorties = Math.max(0, Math.round(c.sorties || 0)) + 1;
       if (c.sorties >= HERO_SORTIE_LIMIT) {
         c.sorties = 0;

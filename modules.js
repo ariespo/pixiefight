@@ -301,11 +301,17 @@ export const AFFIX_POWER                  = [
   { id: 'boneEcho', name: '上弦', cost: 2, cats: ['core', 'arm'], desc: '战后若存活额外产出8骨币', eff: { boneEcho: 8 } },
   { id: 'entryMire', name: '缠根', cost: 3, cats: ['legs'], desc: '入场使全体勇者攻速-25%（4秒）', eff: { entry: 'mire' } },
   { id: 'entryFlame', name: '焰迹', cost: 3, cats: ['legs'], desc: '入场点燃全体勇者（5点/秒，4秒）', eff: { entry: 'flameWake' } },
+  { id: 'bloodFeast', name: '饕血', cost: 3, cats: ['core', 'head'], desc: '击倒勇者时回复6%最大生命', eff: { bloodthirsty: 0.06 } },
+  { id: 'vengeance', name: '殉刺', cost: 3, cats: ['core', 'legs'], desc: '倒下时反击自身25%攻击伤害', eff: { vengeful: 0.25 } },
+  { id: 'secondLife', name: '伪生', cost: 5, cats: ['core'], desc: '首次倒下以35%生命复活', eff: { undyingTrait: 0.35 } },
+  { id: 'rearWard', name: '护后', cost: 3, cats: ['head', 'legs'], desc: '站在后排时受到伤害-20%', eff: { backGuard: 0.8 } },
+  { id: 'shatter', name: '碎盾', cost: 3, cats: ['head', 'arm'], desc: '普攻命中时击碎目标全部护盾', eff: { onHit: 'shatter' } },
+  { id: 'courtEntry', name: '列阵', cost: 4, cats: ['legs'], desc: '入场时为同房存活怪物提供20%生命护盾', eff: { entry: 'courtEntry' } },
 ];
 export const affixPowerById = (id        ) => AFFIX_POWER.find((p) => p.id === id);
 export const affixPowersOf = (cat         ) => AFFIX_POWER.filter((p) => p.cats.includes(cat));
 
-// 自定义词缀的硬预算：能力分 ≤6（最多两项），魔质在 8~18 之间随能力分走
+// 自定义词缀默认预算为6分/两项；高端工坊可提高上限，仍由此处统一夹紧。
 export const AFFIX_BUDGET = { power: 6, manaLo: 8, manaHi: 18 }         ;
                                                                                            
                                                                                                       
@@ -316,17 +322,19 @@ export function affixDraftCost(d               ) {
   return { mana: Math.min(AFFIX_BUDGET.manaHi, AFFIX_BUDGET.manaLo + pts * 2), pts };
 }
 
-export function clampAffixDraft(cat         , raw                        , brief        )                       {
+export function clampAffixDraft(cat         , raw                        , brief        , limits = {})                       {
   const name = cleanCn(raw.name, 4) || `${cleanCn(brief, 2) || '无名'}缀`;
   const word = cleanCn(raw.word, 1) || name[0] || '奇';
   const desc = cleanCn(raw.desc, 24) || '来历不明的刻纹。';
   const seen = new Set        ();
   const powers           = [];
+  const powerCap = Math.max(AFFIX_BUDGET.power, Math.round(limits.powerCap || AFFIX_BUDGET.power));
+  const maxPowers = Math.max(2, Math.min(4, Math.round(limits.maxPowers || 2)));
   let spent = 0;
   for (const id of Array.isArray(raw.powers) ? raw.powers : []) {
     const p = affixPowerById(String(id));
     if (!p || seen.has(p.id) || !p.cats.includes(cat)) continue;
-    if (powers.length >= 2 || spent + p.cost > AFFIX_BUDGET.power) continue;
+    if (powers.length >= maxPowers || spent + p.cost > powerCap) continue;
     seen.add(p.id); powers.push(p.id); spent += p.cost;
   }
   if (!powers.length) return null;     // 词缀没有效果就不是词缀
@@ -563,7 +571,7 @@ export function unlockedParts(cat         , maxRaid        ) {
 }
 
 // ================= 玩家 DIY 部件（LLM 造件） =================
-// 设计约束：LLM 只能从这张「能力菜单」里挑（最多两项、能力分有上限），数值也一律夹紧。
+// 设计约束：LLM 只能从这张能力菜单里挑；项目默认两项，高端工坊可解锁第三项，数值仍一律夹紧。
 // 这样玩家的自由发挥落在文本（名字/说明/愿望）和能力组合上，战斗数值不会被一句话打崩。
 ;                       
              
@@ -622,6 +630,14 @@ export const POWER_MENU             = [
   { id: 'entryMire', name: '缠根', cost: 3, cats: ['legs'], desc: '入场使全体勇者攻速-25%（4秒）', eff: { entry: 'mire' } },
   { id: 'entryCrush', name: '碾压', cost: 3, cats: ['legs'], desc: '入场碾压前排全体（16点）并眩晕0.6秒', eff: { entry: 'treadCrush' } },
   { id: 'entryFlame', name: '焰迹', cost: 3, cats: ['legs'], desc: '入场点燃全体勇者（5点/秒，4秒）', eff: { entry: 'flameWake' } },
+  { id: 'bloodFeast', name: '饕血', cost: 3, cats: ['core', 'head'], desc: '击倒勇者时回复6%最大生命', eff: { bloodthirsty: 0.06 } },
+  { id: 'vengeance', name: '殉刺', cost: 3, cats: ['core', 'legs'], desc: '倒下时反击自身25%攻击伤害', eff: { vengeful: 0.25 } },
+  { id: 'secondLife', name: '伪生', cost: 5, cats: ['core'], desc: '首次倒下以35%生命复活', eff: { undyingTrait: 0.35 } },
+  { id: 'rearWard', name: '护后', cost: 3, cats: ['head', 'legs'], desc: '站在后排时受到伤害-20%', eff: { backGuard: 0.8 } },
+  { id: 'shatter', name: '碎盾', cost: 3, cats: ['head', 'arm'], desc: '普攻击碎目标全部护盾', eff: { onHit: 'shatter' } },
+  { id: 'courtEntry', name: '列阵足', cost: 4, cats: ['legs'], desc: '入场时为同房存活怪物提供20%生命护盾', eff: { entry: 'courtEntry' } },
+  { id: 'pierceSkill', name: '贯穿技', cost: 4, cats: ['arm'], desc: '技能改为贯穿前后排的强力突刺', eff: { skill: 'pierce', skillName: '贯穿' } },
+  { id: 'drainSkill', name: '夺生技', cost: 4, cats: ['arm'], desc: '技能改为吸取全体勇者生命并自疗', eff: { skill: 'drain', skillName: '夺生' } },
 ];
 
 export const powerById = (id        ) => POWER_MENU.find((p) => p.id === id);
@@ -654,29 +670,32 @@ const cleanCn = (v         , max        ) =>
   String(v ?? '').replace(/[\s<>{}"'\\]/g, '').slice(0, max);
 
 // 把模型返回的草案夹紧成合法部件草案；返回 null 表示完全不可用
-export function clampDraft(cat         , raw                       , brief        )                      {
+export function clampDraft(cat         , raw                       , brief        , limits = {})                      {
   const name = cleanCn(raw.name, 4) || `${cleanCn(brief, 2) || '无名'}件`;
   const word = (cleanCn(raw.word, 1) || name[0] || '奇');
   const desc = cleanCn(raw.desc, 24) || '来历不明的缝合部件。';
   const seen = new Set        ();
   const powers           = [];
+  const powerCap = Math.max(PART_BUDGET.power, Math.round(limits.powerCap || PART_BUDGET.power));
+  const maxPowers = Math.max(2, Math.min(4, Math.round(limits.maxPowers || 2)));
   let spent = 0;
   for (const id of Array.isArray(raw.powers) ? raw.powers : []) {
     const p = powerById(String(id));
     if (!p || seen.has(p.id) || !p.cats.includes(cat)) continue;
-    if (powers.length >= 2 || spent + p.cost > PART_BUDGET.power) continue;
+    if (powers.length >= maxPowers || spent + p.cost > powerCap) continue;
     seen.add(p.id); powers.push(p.id); spent += p.cost;
   }
   // look 允许跨部位取用（玩家可在造件页手动改）；给不出合法值时回落到同部位第一张
   const look = allLooks().some((p) => p.id === raw.look) ? String(raw.look) : lookOptions(cat)[0].id;
   const st = raw.stats ?? ({}                         );
-  const hpCap = cat === 'core' ? PART_BUDGET.hp : 24;
-  const atkCap = cat === 'arm' || cat === 'head' ? PART_BUDGET.atk : 10;
+  const statMult = Math.max(1, Math.min(1.5, Number(limits.statMult) || 1));
+  const hpCap = (cat === 'core' ? PART_BUDGET.hp : 24) * statMult;
+  const atkCap = (cat === 'arm' || cat === 'head' ? PART_BUDGET.atk : 10) * statMult;
   const stats = {
     hp: Math.round(clamp(st.hp, 0, hpCap, cat === 'core' ? 70 : 8)),
     atk: Math.round(clamp(st.atk, 0, atkCap, cat === 'arm' ? 12 : 5)),
-    def: Math.round(clamp(st.def, 0, PART_BUDGET.def, 1)),
-    spd: Math.round(clamp(st.spd, -0.3, 0.35, 0) * 100) / 100,
+    def: Math.round(clamp(st.def, 0, PART_BUDGET.def * statMult, 1)),
+    spd: Math.round(clamp(st.spd, -0.3 * statMult, 0.35 * statMult, 0) * 100) / 100,
   };
   if (!powers.length && stats.hp === 0 && stats.atk === 0) return null;
   return { name, word, desc, look, stats, powers };
