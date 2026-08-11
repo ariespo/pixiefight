@@ -22,6 +22,7 @@ import { CHAMP_CAP, CHAMP_LV_CAP, CHEM_INFO, HEAL_MANA, HERO_REST_ROUNDS, HERO_S
 import { TEX, txt, label, labelC, panel, panelF, frame, bar, sprite, Hits, button, setTextRes, FONT,
   boundedText, paginateText, resetBoundedTextAudit, boundedTextAudit } from './ui.js';
 import { initAudio, unlockAudio, playSfx, playHit, playMusic, setMuted, audioSnapshot, tickAudio } from './audio.js';
+import { WORKSHOP_RESEARCH, normalizeResearchPicks, researchAvailability, researchEffects, researchOption } from './research.js';
 
 // ---------- 存档 ----------
                
@@ -112,7 +113,7 @@ const FLOOR_EXPAND = [null, null,
   { bone: 120, mana: 0 }, { bone: 220, mana: 15 },
   { bone: 400, mana: 35 }, { bone: 650, mana: 70 }];
 
-const freshBattleRoom = () => ({ theme: 'stone', trap: 'none', front: null, back: null, leader: null, flank: null });
+const freshBattleRoom = () => ({ theme: 'stone', trap: 'none', trap2: 'none', front: null, back: null, leader: null, flank: null });
 const freshUtilityRoom = (raw = {}) => ({
   kind: 'none', level: 0, condition: 100, workerUid: null, trainTargets: [],
   persona: '', nickname: '', history: [], damageCount: 0, repairCount: 0, upgradeCount: 0, workCycles: 0,
@@ -139,6 +140,7 @@ function freshSave(selectedDoctrine = 'default')       {
       vaultPriority: 'mana', lastEconomy: null, facilityActionRaid: 0,
     },
     themes: ['stone'], traps: ['none'],
+    workshopResearch: {},
     sealLv: 0, trapLv: 0,
     best: {}, reports: [],
     overtime: false, otRaid: NORMAL_RAID_COUNT + 1, clearRecorded: false,
@@ -225,6 +227,7 @@ function sanitizeSave() {
   if (Math.round(S.campaignVersion || 0) < 2 && S.overtime) S.otRaid = Math.max(NORMAL_RAID_COUNT + 1, Math.round(S.otRaid || 13) + 8);
   S.campaignVersion = 2;
   S.doctrine = S.doctrine in DOCTRINES ? S.doctrine : 'default';
+  S.workshopResearch = normalizeResearchPicks(S.workshopResearch);
   S.raidBriefingsSeen = Array.isArray(S.raidBriefingsSeen)
     ? [...new Set(S.raidBriefingsSeen.map((n) => Math.round(n)).filter((n) => n >= 1 && n <= NORMAL_RAID_COUNT))] : [];
   const legacyCap = MONSTER_CAP_TIERS.find((n) => n >= Math.max(MONSTER_CAP_TIERS[0], S.monsters?.length || 0))
@@ -281,6 +284,7 @@ function sanitizeSave() {
   const uids = new Set(S.monsters.map((m) => m.uid));
   for (const r of S.rooms) {
     if (!(r.trap in TRAPS)) r.trap = 'none';
+    if (!(r.trap2 in TRAPS)) r.trap2 = 'none';
     if (r.front != null && !uids.has(r.front)) r.front = null;
     if (r.back != null && !uids.has(r.back)) r.back = null;
     // 旧档没有统领/侧翼字段；同时保证统领席只坐传奇、侧翼没统领就清空
@@ -1258,6 +1262,7 @@ let champTitleExpand                     = '';         // 详情页当前展开�
 let gearSlotSel           = 'crown';                 // 装备页当前编辑的槽
 let talentPreview = null;                            // 专精页预览；确认前不写存档
 let detailPopup = null;                              // 统一长说明弹层
+let researchModal = null;                            // 高端工坊路线；确认前不写存档
 let raidBriefing = null;                             // 正式战役战前章回；确认后才真正开战
 let lawAudit = null;                                 // 属性触及法则极限时强制触发的永久处罚秘闻
 let relicForgeConfirm = false;                       // 英雄遗物熔铸二次确认
@@ -1283,6 +1288,52 @@ function closeDetailPopup() {
   detailPopup = null;
   playSfx('tab');
   render();
+}
+
+function workshopResearchLevel() {
+  return S.floors.reduce((best, floor) => floor.utility.kind === 'workshop' && floor.utility.condition > 0
+    ? Math.max(best, floor.utility.level || 0) : best, 0);
+}
+
+function openWorkshopResearch() {
+  const first = WORKSHOP_RESEARCH.find((group) => !S.workshopResearch[group.id]) ?? WORKSHOP_RESEARCH[0];
+  researchModal = { groupId: first.id, previewId: S.workshopResearch[first.id] ?? '' };
+  detailPopup = null; stitch = null; forge = null; graft = null; smith = null;
+  if (portrait) portraitNativeBypass = true;
+  playSfx('tab'); render(); if (portrait) scheduleLayout();
+}
+
+function closeWorkshopResearch() {
+  researchModal = null; portraitNativeBypass = false; playSfx('tab'); render(); if (portrait) scheduleLayout();
+}
+
+function chooseResearchGroup(groupId) {
+  const group = WORKSHOP_RESEARCH.find((item) => item.id === groupId);
+  if (!group || !researchModal) return;
+  researchModal.groupId = groupId;
+  researchModal.previewId = S.workshopResearch[groupId] ?? '';
+  playSfx('tab'); render();
+}
+
+function previewResearch(optionId) {
+  if (!researchModal) return;
+  const found = researchOption(optionId);
+  if (!found || found.group.id !== researchModal.groupId || S.workshopResearch[found.group.id]) return;
+  researchModal.previewId = optionId; playSfx('tab'); render();
+}
+
+function confirmResearch() {
+  if (!researchModal?.previewId) return false;
+  const found = researchOption(researchModal.previewId);
+  if (!found || found.group.id !== researchModal.groupId || S.workshopResearch[found.group.id]) return false;
+  const availability = researchAvailability(found.group, S.overtime ? 999 : S.raidNo, workshopResearchLevel());
+  if (!availability.open) { say(availability.reason); return false; }
+  if (S.mana < found.group.cost) { say(`需要 ${found.group.cost} 魔质才能定型`); return false; }
+  S.mana -= found.group.cost;
+  S.workshopResearch[found.group.id] = found.option.id;
+  researchModal.previewId = found.option.id;
+  persist(); playSfx('buy'); say(`${found.option.name} 已定型，同组路线永久封锁`); render();
+  return true;
 }
 
 const LAW_AUDIT_TEXT = {
@@ -1579,11 +1630,11 @@ let portraitHeroSection = 'status';
 let portraitHeroDetail = false;
 function portraitNativeManage() {
   return portrait && screen === 'manage' && PORTRAIT_NATIVE_TABS.has(tab)
-    && !portraitNativeBypass && !lawAudit && !raidBriefing && !stitch && !forge && !graft && !smith;
+    && !portraitNativeBypass && !lawAudit && !raidBriefing && !researchModal && !stitch && !forge && !graft && !smith;
 }
-function portraitModalOpen() { return portrait && screen === 'manage' && (!!lawAudit || !!raidBriefing || !!stitch || !!forge || !!graft || !!smith); }
+function portraitModalOpen() { return portrait && screen === 'manage' && (!!lawAudit || !!raidBriefing || !!researchModal || !!stitch || !!forge || !!graft || !!smith); }
 function closePortraitModal() {
-  if (stitch) closeStitch(); else if (forge) closeForge(); else if (graft) closeGraft(); else if (smith) closeSmith();
+  if (researchModal) closeWorkshopResearch(); else if (stitch) closeStitch(); else if (forge) closeForge(); else if (graft) closeGraft(); else if (smith) closeSmith();
   portraitNativeBypass = false;
   scheduleLayout();
 }
@@ -1650,6 +1701,11 @@ function bindInput() {
     } else if (screen === 'manage') {
       if (lawAudit || raidBriefing) {
         if (e.key === 'Enter') { if (lawAudit) acceptLawAudit(); else confirmRaidBriefing(); }
+        return;
+      }
+      if (researchModal) {
+        if (e.key === 'Escape') { closeWorkshopResearch(); return; }
+        if (e.key === 'Enter') { confirmResearch(); return; }
         return;
       }
       if (smith) {
@@ -1793,11 +1849,11 @@ function render() {
   portraitChromeKey = '';
   if (nameInput) nameInput.style.display = screen === 'manage' && (stitch || smith) && !detailPopup ? 'block' : 'none';
   if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !detailPopup ? 'block' : 'none';
-  if (screen === 'manage' && !lawAudit && !raidBriefing && !detailPopup && !stitch && !forge && !graft && !smith) {
+  if (screen === 'manage' && !lawAudit && !raidBriefing && !detailPopup && !researchModal && !stitch && !forge && !graft && !smith) {
     lawAudit = findLawAudit();
     if (lawAudit && portrait) scheduleLayout();
   }
-  const modalOpen = screen === 'manage' && (!!lawAudit || !!raidBriefing || !!stitch || !!forge || !!graft || !!smith);
+  const modalOpen = screen === 'manage' && (!!lawAudit || !!raidBriefing || !!researchModal || !!stitch || !!forge || !!graft || !!smith);
   if (portrait && screen === 'manage' && (modalOpen || detailPopup) && portraitPane !== 0) {
     portraitPane = 0;
     scheduleLayout();
@@ -1829,6 +1885,7 @@ function render() {
   if (modalOpen) {
     if (lawAudit) drawLawAudit();
     else if (raidBriefing) drawRaidBriefing();
+    else if (researchModal) drawWorkshopResearch();
     else if (stitch) drawStitch();
     else if (graft) drawGraft();
     else if (smith) drawSmith();
@@ -1850,6 +1907,60 @@ function render() {
   drawProgressGuide();
   syncStoryInput();
   ensurePortraitChrome();
+}
+
+function drawWorkshopResearch() {
+  if (!researchModal) return;
+  const g = modalGfx;
+  const group = WORKSHOP_RESEARCH.find((item) => item.id === researchModal.groupId) ?? WORKSHOP_RESEARCH[0];
+  const level = workshopResearchLevel();
+  const availability = researchAvailability(group, S.overtime ? 999 : S.raidNo, level);
+  const pickedId = S.workshopResearch[group.id] ?? '';
+  const preview = researchOption(researchModal.previewId)?.option ?? null;
+  g.rect(0, 0, VIEW_W, VIEW_H).fill(C.bg);
+  panelF(g, modalLayer, 'arcane', 8, 8, VIEW_W - 16, VIEW_H - 16, C.wall);
+  label(modalLayer, `高端工坊路线・工坊 Lv${level}・魔质 ${S.mana}`, 20, 16, 13, C.gold);
+  label(modalLayer, '每组永久三选一；确认后同组封锁', 246, 17, 10, C.red);
+  button(g, modalLayer, hits, 444, 12, 24, 17, '✕', closeWorkshopResearch, { size: 11, border: C.red, color: C.red });
+
+  panelF(g, modalLayer, 'inset', 18, 38, 124, 196, C.ink);
+  WORKSHOP_RESEARCH.forEach((item, i) => {
+    const y = 46 + i * 36, active = item.id === group.id, chosen = S.workshopResearch[item.id];
+    const gate = researchAvailability(item, S.overtime ? 999 : S.raidNo, level);
+    button(g, modalLayer, hits, 24, y, 112, 30,
+      `${chosen ? '◆' : gate.open ? '◇' : '×'} ${item.name.replace(/^第.组・/, '')}`,
+      () => chooseResearchGroup(item.id), { size: 10, fill: active ? C.wallLit : C.wall,
+        border: active ? C.gold : chosen ? C.green : gate.open ? C.purple : C.wallLit,
+        color: chosen ? C.green : gate.open ? C.bone : C.stoneLit });
+  });
+
+  panelF(g, modalLayer, 'inset', 150, 38, 142, 196, C.ink);
+  label(modalLayer, group.name, 158, 46, 11, availability.open ? C.white : C.stoneLit);
+  label(modalLayer, pickedId ? '已定型・其余封锁' : availability.open ? `定型费 ${group.cost} 魔` : availability.reason,
+    158, 62, 9, pickedId ? C.green : availability.open ? C.purple : C.red);
+  group.options.forEach((option, i) => {
+    const y = 82 + i * 45, selected = researchModal.previewId === option.id, owned = pickedId === option.id;
+    const locked = !!pickedId && !owned;
+    button(g, modalLayer, hits, 158, y, 126, 38, locked ? `× ${option.name}` : `${owned ? '◆' : selected ? '◇' : '·'} ${option.name}`,
+      () => previewResearch(option.id), { size: 10, enabled: !locked && !owned, fill: selected ? C.wallLit : C.wall,
+        border: owned ? C.green : selected ? C.gold : locked ? C.wallLit : C.purple,
+        color: owned ? C.green : selected ? C.gold : locked ? C.stoneLit : C.bone });
+  });
+
+  panelF(g, modalLayer, 'stone', 300, 38, 162, 196, C.wall);
+  if (preview) {
+    label(modalLayer, preview.name, 310, 48, 12, pickedId === preview.id ? C.green : C.gold);
+    label(modalLayer, `【${preview.tag}】`, 310, 66, 10, C.purple);
+    boundedText(modalLayer, preview.desc, 310, 86, 142, 88, 11, C.bone);
+    const can = !pickedId && availability.open && S.mana >= group.cost;
+    label(modalLayer, `已完成 ${Object.keys(S.workshopResearch).length}/${WORKSHOP_RESEARCH.length} 组`, 310, 177, 9, C.stoneLit);
+    button(g, modalLayer, hits, 310, 198, 142, 26, pickedId === preview.id ? '已永久定型' : '确认选择并封锁同组', confirmResearch,
+      { size: 10, enabled: can, fill: C.purpleDark, border: can ? C.gold : C.stoneLit, color: can ? C.white : C.stoneLit });
+  } else {
+    boundedText(modalLayer, availability.open ? '点击左侧具体路线名称，先查看完整收益与代价；只有点击确认才会扣除魔质。'
+      : `本组尚未开放：${availability.reason}。已选择的早期路线仍可随时回来查看。`, 310, 58, 142, 116, 11, C.stoneLit);
+  }
+  if (!preview) label(modalLayer, `已完成 ${Object.keys(S.workshopResearch).length}/${WORKSHOP_RESEARCH.length} 组`, 310, 204, 10, C.stoneLit);
 }
 
 function drawRaidBriefing() {
@@ -3185,7 +3296,7 @@ function toggleMute() {
 }
 
 function clearTransientUi() {
-  sel = null; heroSel = null; detailPopup = null; raidBriefing = null; lawAudit = null; stitch = null; forge = null; graft = null; smith = null;
+  sel = null; heroSel = null; detailPopup = null; researchModal = null; raidBriefing = null; lawAudit = null; stitch = null; forge = null; graft = null; smith = null;
   battle = null; battleLayer.visible = false; confirmNew = false; titleNewConfirm = false;
   for (const c of overlay.removeChildren()) c.destroy({ children: true });
   hits.clear(); endingBuilt = false; endingActionRect = null; endingRebirthRect = null;
@@ -3360,7 +3471,7 @@ function drawPortraitThrone(x, y, w, h) {
   const aff = raid.affixes.length ? affixText(raid.affixes) : '无特殊词缀';
   panelF(portraitGfx, portraitLayer, 'stone', x + 8, infoY, w - 16, 78, C.wall);
   label(portraitLayer, `词缀：${cut(aff, 24)}`, x + 18, infoY + 10, 13, raid.affixes.length ? C.red : C.stoneLit);
-  label(portraitLayer, `已布防 ${countPlaced()}　陷阱 ${S.rooms.filter((r) => r.trap !== 'none').length}`, x + 18, infoY + 31, 13, C.bone);
+  label(portraitLayer, `已布防 ${countPlaced()}　陷阱 ${S.rooms.reduce((n, r) => n + (r.trap !== 'none' ? 1 : 0) + (researchEffects(S.workshopResearch).dualTraps && r.trap2 !== 'none' ? 1 : 0), 0)}`, x + 18, infoY + 31, 13, C.bone);
   label(portraitLayer, `封印 ${Math.max(25, sealMax() + battleMods().sealAdd)}　待产＋${economy.bone}骨＋${economy.mana}魔`, x + 18, infoY + 52, 13, C.gold);
   void h;
 }
@@ -3478,6 +3589,26 @@ function drawPortraitDungeonAssign(x, y, w, h, room, which) {
   portraitPager(`portrait-slot-${which}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
 }
 
+function drawPortraitTrapAssign(x, y, w, h, room, slot = 0) {
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, 72, 36, '← 楼层', () => { sel = null; render(); }, { size: 14 });
+  label(portraitLayer, `${room + 1}层・陷阱位${slot + 1}`, x + 94, y + 10, 16, C.gold);
+  const list = ['none', 'spike', 'slime', 'rune', 'blade', 'net', 'mirror'];
+  const pg = portraitPage(list, `portrait-trap-${slot}`, Math.max(3, Math.min(6, Math.floor((h - 70) / 62))));
+  pg.view.forEach((id, i) => {
+    const trap = TRAPS[id], cy = y + 48 + i * 62, owned = S.traps.includes(id);
+    const field = slot === 0 ? 'trap' : 'trap2', active = S.rooms[room][field] === id;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 56, 4).fill(active ? C.wallLit : C.wall)
+      .stroke({ width: 1, color: active ? C.gold : owned ? C.stoneLit : C.wallLit, alignment: 0 });
+    label(portraitLayer, trap.name, x + 20, cy + 8, 15, owned ? C.white : C.stoneLit);
+    label(portraitLayer, cut(trap.desc, 25), x + 20, cy + 31, 11, C.stoneLit);
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 92, cy + 10, 76, 36, active ? '已安装' : owned ? '安装' : '未解锁', () => {
+      if (!owned) return;
+      S.rooms[room][field] = id; persist(); playSfx('place'); render();
+    }, { size: 12, enabled: owned && !active, border: active ? C.gold : C.green, color: active ? C.gold : owned ? C.green : C.stoneLit });
+  });
+  portraitPager(`portrait-trap-${slot}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
+}
+
 function drawPortraitFacilityPeople(x, y, w, h, floor, u, d) {
   button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, 72, 36, '← 设施', () => { sel = { kind: 'utility', floor }; render(); }, { size: 14 });
   label(portraitLayer, u.kind === 'training' ? '管理训练对象' : '指派工作人员', x + 94, y + 10, 16, d.color);
@@ -3548,6 +3679,7 @@ function drawPortraitFacility(x, y, w, h, floor) {
 
 function drawPortraitDungeon(x, y, w, h) {
   if (sel?.kind === 'utility') { drawPortraitFacility(x, y, w, h, sel.floor); return; }
+  if (sel?.kind === 'slot' && sel.which === 'trap') { drawPortraitTrapAssign(x, y, w, h, sel.room, sel.slot ?? 0); return; }
   if (sel?.kind === 'slot' && ['front', 'back', 'leader', 'flank'].includes(sel.which)) {
     drawPortraitDungeonAssign(x, y, w, h, sel.room, sel.which); return;
   }
@@ -3559,6 +3691,16 @@ function drawPortraitDungeon(x, y, w, h) {
     const cy = y + 34 + i * 116, room = S.rooms[floor], util = utilityAt(floor), ud = utilityDef(util);
     panelF(portraitGfx, portraitLayer, 'stone', x + 8, cy, w - 16, 108, C.wall);
     label(portraitLayer, `${floor + 1}层・战斗房`, x + 18, cy + 8, 15, C.white);
+    if (featureOpen('dungeonTools')) {
+      const dual = researchEffects(S.workshopResearch).dualTraps;
+      const trapW = dual ? 72 : 112;
+      button(portraitGfx, portraitLayer, portraitHits, x + w - (dual ? 158 : 128), cy + 5, trapW, 24,
+        room.trap === 'none' ? '陷阱1' : `1・${cut(TRAPS[room.trap].name, 5)}`,
+        () => { sel = { kind: 'slot', room: floor, which: 'trap', slot: 0 }; render(); }, { size: 10, border: C.goldDark, color: C.bone });
+      if (dual) button(portraitGfx, portraitLayer, portraitHits, x + w - 80, cy + 5, 72, 24,
+        room.trap2 === 'none' ? '陷阱2' : `2・${cut(TRAPS[room.trap2].name, 5)}`,
+        () => { sel = { kind: 'slot', room: floor, which: 'trap', slot: 1 }; render(); }, { size: 10, border: C.purple, color: C.bone });
+    }
     const slots = featureOpen('hero') ? ['back', 'leader', 'front', 'flank'] : ['back', 'front'];
     const sw = Math.floor((w - 28 - (slots.length - 1) * 6) / slots.length);
     slots.forEach((which, j) => {
@@ -3594,6 +3736,8 @@ function drawPortraitShop(x, y, w, h) {
   });
   const bottomY = y + h - 42;
   portraitPager('portrait-shop', pg.page, pg.pages, x + 8, bottomY, Math.min(150, w - 180));
+  button(portraitGfx, portraitLayer, portraitHits, x + w - 252, bottomY, 76, 36, '高端路线', () => { portraitNativeBypass = true; openWorkshopResearch(); scheduleLayout(); },
+    { size: 11, enabled: S.overtime || S.raidNo >= 10, border: C.gold, color: C.gold });
   button(portraitGfx, portraitLayer, portraitHits, x + w - 170, bottomY, 74, 36, '造部件', () => { portraitNativeBypass = true; openForge('part'); scheduleLayout(); },
     { size: 12, enabled: hasBackend(), border: C.purple, color: C.purple });
   button(portraitGfx, portraitLayer, portraitHits, x + w - 90, bottomY, 74, 36, '造词缀', () => { portraitNativeBypass = true; openForge('affix'); scheduleLayout(); },
@@ -3917,9 +4061,9 @@ function drawPortraitModalChrome() {
   const top = Math.max(0, Math.ceil(portraitContentBottom));
   portraitGfx.rect(0, top, w, Math.min(64, h - top)).fill(C.bg).stroke({ width: 2, color: C.wallLit, alignment: 0 });
   const forced = lawAudit || raidBriefing;
-  const name = lawAudit ? '法则审计' : raidBriefing ? `第${raidBriefing.no}轮战前剧情` : stitch ? '怪物创造' : graft ? '部件改造' : smith ? '装备锻造' : '叙事工坊';
+  const name = lawAudit ? '法则审计' : raidBriefing ? `第${raidBriefing.no}轮战前剧情` : researchModal ? '高端工坊路线' : stitch ? '怪物创造' : graft ? '部件改造' : smith ? '装备锻造' : '叙事工坊';
   label(portraitLayer, forced ? name : `${name}・完整工作台`, 14, top + 17, 15, forced && lawAudit ? C.red : C.gold);
-  const action = lawAudit ? acceptLawAudit : raidBriefing ? confirmRaidBriefing : closePortraitModal;
+  const action = lawAudit ? acceptLawAudit : raidBriefing ? confirmRaidBriefing : researchModal ? closeWorkshopResearch : closePortraitModal;
   const actionName = lawAudit ? '接受处罚' : raidBriefing ? '迎战吧' : '关闭工作台';
   button(portraitGfx, portraitLayer, portraitHits, w - 128, top + 8, 114, 44, actionName, action,
     { size: 15, border: forced ? C.gold : C.red, color: forced ? C.white : C.red, fill: forced ? C.redDark : C.wall });
@@ -4155,7 +4299,8 @@ function pageThrone(g               ) {
   label(uiLayer, `词缀：${aff}`, 10, 158, 12, raid.affixes.length ? C.red : C.stoneLit);
 
   const placed = countPlaced();
-  const traps = S.rooms.filter((r) => r.trap !== 'none').length;
+  const dualTraps = researchEffects(S.workshopResearch).dualTraps;
+  const traps = S.rooms.reduce((n, r) => n + (r.trap !== 'none' ? 1 : 0) + (dualTraps && r.trap2 !== 'none' ? 1 : 0), 0);
   const leads = S.rooms.filter((r) => r.leader != null).length;
   const resting = seatedChampUids().filter((u) => (champById(u)?.restTurns || 0) > 0).length;
   const tired = seatedChampUids().filter((u) => { const c = champById(u); return c && fatigueTier(c.fatigue).bad; }).length;
@@ -4240,12 +4385,16 @@ function pageDungeon(g               ) {
     label(uiLayer, `${i + 1}层战斗房`, b.x + 5, b.y + 3, 10, C.white);
     if (featureOpen('dungeonTools')) {
       const trapSelected = sel?.kind === 'slot' && sel.room === i && sel.which === 'trap';
+      const dual = researchEffects(S.workshopResearch).dualTraps;
       button(g, uiLayer, hits, b.x + 102, b.y + 2, 36, 12, cut(THEMES[cfg.theme].name, 3), () => {
         sel = { kind: 'slot', room: i, which: 'theme' }; playSfx('tab'); render();
       }, { size: 8, fill: C.ink, border: sel?.kind === 'slot' && sel.room === i && sel.which === 'theme' ? C.gold : C.wallLit, color: C.stoneLit });
-      button(g, uiLayer, hits, b.x + 140, b.y + 2, 38, 12, cfg.trap === 'none' ? '陷阱' : cut(TRAPS[cfg.trap].name, 3), () => {
-        sel = { kind: 'slot', room: i, which: 'trap' }; playSfx('tab'); render();
-      }, { size: 8, fill: C.ink, border: trapSelected ? C.gold : C.wallLit, color: cfg.trap === 'none' ? C.stoneLit : C.bone });
+      button(g, uiLayer, hits, b.x + 140, b.y + 2, dual ? 18 : 38, 12, cfg.trap === 'none' ? (dual ? '阱1' : '陷阱') : cut(TRAPS[cfg.trap].name, dual ? 1 : 3), () => {
+        sel = { kind: 'slot', room: i, which: 'trap', slot: 0 }; playSfx('tab'); render();
+      }, { size: 8, fill: C.ink, border: trapSelected && (sel.slot ?? 0) === 0 ? C.gold : C.wallLit, color: cfg.trap === 'none' ? C.stoneLit : C.bone });
+      if (dual) button(g, uiLayer, hits, b.x + 160, b.y + 2, 18, 12, cfg.trap2 === 'none' ? '阱2' : cut(TRAPS[cfg.trap2].name, 1), () => {
+        sel = { kind: 'slot', room: i, which: 'trap', slot: 1 }; playSfx('tab'); render();
+      }, { size: 8, fill: C.ink, border: trapSelected && sel.slot === 1 ? C.gold : C.wallLit, color: cfg.trap2 === 'none' ? C.stoneLit : C.bone });
     }
     dungeonSlotChip(g, b.x + 5, b.y + 17, 40, 23, cfg.back, i, 'back', '后');
     dungeonSlotChip(g, b.x + 93, b.y + 17, 40, 23, cfg.front, i, 'front', '前');
@@ -4537,15 +4686,15 @@ function drawSidePanel(g               ) {
     return;
   }
   if (sel.kind === 'slot' && sel.which === 'trap') {
-    const room = sel.room;
-    labelC(uiLayer, `${room + 1}房 陷阱位`, 405, 46, 12, C.white);
+    const room = sel.room, slot = sel.slot ?? 0, field = slot === 0 ? 'trap' : 'trap2';
+    labelC(uiLayer, `${room + 1}房 陷阱位${slot + 1}`, 405, 46, 12, C.white);
     const list = ['none', 'spike', 'slime', 'rune', 'blade', 'net', 'mirror']            ;
     const pt = paged('side-trap', list, 4);
     let y = 62;
     for (const id of pt.view) {
       const t = TRAPS[id];
       const owned = S.traps.includes(id);
-      const active = S.rooms[room].trap === id;
+      const active = S.rooms[room][field] === id;
       const syn = synergyOf(S.rooms[room].theme, id);
       g.rect(340, y, 130, 34).fill(active ? C.wallLit : C.ink)
         .stroke({ width: 1, color: active ? C.gold : syn && owned ? C.purple : owned ? C.stoneLit : C.wall, alignment: 0 });
@@ -4553,7 +4702,7 @@ function drawSidePanel(g               ) {
       if (syn) label(uiLayer, '共鸣', 440, y + 1, 12, C.purple);
       label(uiLayer, cut(syn ? syn.desc : t.desc, 15), 344, y + 18, 12, syn ? C.purple : C.stoneLit);
       if (owned) hits.add(340, y, 130, 34, () => {
-        S.rooms[room].trap = id; persist(); playSfx('place'); say(`${room + 1}房安装${t.name}`); render();
+        S.rooms[room][field] = id; persist(); playSfx('place'); say(`${room + 1}房陷阱位${slot + 1}安装${t.name}`); render();
       });
       y += 38;
     }
@@ -6439,6 +6588,9 @@ function pageShop(g               ) {
     hits.add(x, y, 158, 20, () => { relicForgeConfirm = false; sel = { kind: 'shop', id: it.id }; playSfx('tab'); render(); });
   });
   pager(g, 'shop', ps.pages, 6, 146, 158, '解锁 ');
+  button(g, uiLayer, hits, 6, 168, 158, 18,
+    `${S.overtime || S.raidNo >= 10 ? '高端路线' : '高端路线・第10轮'} ${Object.keys(S.workshopResearch).length}/${WORKSHOP_RESEARCH.length}`,
+    openWorkshopResearch, { size: 10, enabled: S.overtime || S.raidNo >= 10, fill: C.ink, border: C.gold, color: C.gold });
   const canForgeRelic = S.bone >= 5000 && S.mana >= 5000;
   if (!relicForgeConfirm) {
     button(g, uiLayer, hits, 170, 146, 158, 18, '熔铸遗物 5000骨+5000魔', () => beginRelicForge(),
@@ -6652,7 +6804,7 @@ function startBattle() {
   const dungeonEconomy = dungeonEconomyPreview();
   const doctrineSeal = S.doctrine === 'default' ? 1.25 : S.doctrine === 'economy' ? 0.8 : 1;
   battle = createBattle(raid, S.rooms, S.monsters,
-    { sealMax: Math.round(sealMax() * doctrineSeal), trapPower: trapPower(), mods: battleMods(), champs: champStatMap(), dungeonEconomy });
+    { sealMax: Math.round(sealMax() * doctrineSeal), trapPower: trapPower(), mods: battleMods(), research: researchEffects(S.workshopResearch), champs: champStatMap(), dungeonEconomy });
   pendingResultRaid = raid.no;
   screen = 'battle';
   scheduleLayout();
@@ -6709,11 +6861,12 @@ function buildBattleScene() {
     const roomLabel = txt(`${i + 1}房 ${THEMES[b.rooms[i].theme].name}`, 12, C.stoneLit);
     roomLabel.x = rx + 12; roomLabel.y = 46;
     bgLayer.addChild(roomLabel);
-    let trapSp                     = null;
-    const trapId = b.rooms[i].trap;
-    if (trapId !== 'none' && TRAPS[trapId].tex) {
-      trapSp = sprite(TRAPS[trapId].tex , rx + 250, FLOOR_Y + 2, 22);
+    const trapSprites = [];
+    for (const trapState of b.rooms[i].trapStates ?? []) {
+      if (!TRAPS[trapState.id]?.tex) continue;
+      const trapSp = sprite(TRAPS[trapState.id].tex, rx + 242 + trapState.slot * 28, FLOOR_Y + 2, 22);
       bgLayer.addChild(trapSp);
+      trapSprites.push({ slot: trapState.slot, sprite: trapSp });
     }
     let utilitySprite = null;
     const utility = b.rooms[i].utility;
@@ -6726,7 +6879,7 @@ function buildBattleScene() {
       utilitySprite.alpha = Math.max(0.42, utility.condition / 100);
       bgLayer.addChild(utilitySprite);
     }
-    roomVis.push({ door: g, trap: trapSp, broken: false, utilitySprite });
+    roomVis.push({ door: g, traps: trapSprites, trap: trapSprites[0]?.sprite ?? null, broken: false, utilitySprite });
   }
   // 王座
   const tx = b.rooms.length * ROOM_W;
@@ -6825,7 +6978,8 @@ function consumeEvents() {
       flashT = 0.08; flashCol = C.white;
     } else if (e.k === 'disarm') {
       const rv = roomVis[e.room];
-      if (rv?.trap) { rv.trap.tint = 0x555064; rv.trap.alpha = 0.6; }
+      const trapSprite = rv?.traps?.find((item) => item.slot === (e.slot ?? 0))?.sprite ?? rv?.trap;
+      if (trapSprite) { trapSprite.tint = 0x555064; trapSprite.alpha = 0.6; }
       spawnFloat(e.room * ROOM_W + e.x, FLOOR_Y - 46, '陷阱被拆除', C.red);
       playSfx('break', 0.8);
     } else if (e.k === 'die') {
@@ -7649,6 +7803,12 @@ window.__debug = {
   devTrain: (floor, type, uid) => { toggleTrainingTarget(floor, type, uid); return utilityAt(floor)?.trainTargets ?? []; },
   devRepairUtility: (floor) => { repairUtility(floor); return { utility: { ...utilityAt(floor) }, repairPoints: S.dungeon.repairPoints, bone: S.bone }; },
   economyQuotes: (bone = 100, mana = 20, kind = 'slime') => ({ workshop: workshopQuote(bone, mana), recruit: recruitQuote(monKind(kind)) }),
+  get workshopResearch() { return { picks: { ...S.workshopResearch }, level: workshopResearchLevel(), effects: researchEffects(S.workshopResearch), modal: researchModal ? { ...researchModal } : null }; },
+  researchOpen: () => { openWorkshopResearch(); return !!researchModal; },
+  researchGroup: (id) => { chooseResearchGroup(id); return researchModal ? { ...researchModal } : null; },
+  researchPreview: (id) => { previewResearch(id); return researchModal ? { ...researchModal } : null; },
+  researchConfirm: () => ({ ok: confirmResearch(), mana: S.mana, picks: { ...S.workshopResearch } }),
+  researchClose: () => { closeWorkshopResearch(); return !researchModal; },
   get relicConfirm() { return relicForgeConfirm; },
   previewRelicForge: () => { tab = 'shop'; render(); return { armed: beginRelicForge(), bone: S.bone, mana: S.mana, relic: S.relic }; },
   confirmRelicForge: () => ({ ok: confirmRelicForge(), bone: S.bone, mana: S.mana, relic: S.relic }),
@@ -7850,7 +8010,7 @@ window.__debug = {
   },
   devRest: (uid        ) => { const c = champById(uid); if (c) restChamp(c); return c ? c.restTurns : -1; },
   devRecruitChamp: (i = 0) => { const c = S.cands[i]; if (c) recruitChamp(c); return S.champs.length; },
-  devTrap: (room        , id        ) => { if (!(id in TRAPS)) return false; if (!S.traps.includes(id)) S.traps.push(id); S.rooms[room].trap = id; persist(); render(); return true; },
+  devTrap: (room        , id        , slot = 0) => { if (!(id in TRAPS)) return false; if (!S.traps.includes(id)) S.traps.push(id); S.rooms[room][slot === 1 ? 'trap2' : 'trap'] = id; persist(); render(); return true; },
   devTheme: (room        , id         ) => { if (!(id in THEMES)) return false; if (!S.themes.includes(id)) S.themes.push(id); S.rooms[room].theme = id; persist(); render(); return true; },
   devLevel: (uid        , lv        ) => { const m = S.monsters.find((x) => x.uid === uid); if (m) m.lv = lv; persist(); render(); },
   get overtime() { return { on: S.overtime, otRaid: S.otRaid }; },

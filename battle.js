@@ -2,6 +2,7 @@
 import { kindById, HERO_CLASSES, LEVEL_MULT, HERO_LV_MULT, TRAPS, AFFIXES, AURAS, synergyOf } from './data.js';
 import { graftKind } from './modules.js';
 import { rollLoot, gearById } from './gear.js';
+import { researchDirectMultiplier, researchPoisonApplication } from './research.js';
                                              
                                                                                    
 
@@ -247,15 +248,22 @@ export const NO_MODS             = {
 export function createBattle(raid         , rooms           , insts               ,
                             opts                                                                                                  = {})         {
   const mod = opts.mods ?? NO_MODS;
+  const research = {
+    poisonApplyMult: 1, poisonStackCap: 1, poisonStackFalloff: 1, burnApplyMult: 1, monDirectDamageMult: 1,
+    healthyDirectDamageMult: 1, woundedDamageMult: 1, frontRowDamageMult: 1, backRowDamageMult: 1,
+    commandSlotDamageMult: 1, regularSlotDamageMult: 1, frontRowHpMult: 1, monHpMult: 1, monSpeedMult: 1,
+    trapPowerMult: 1, dualTraps: false, trapDisarmImmune: false, directLifesteal: 0,
+    ...(opts.research ?? {}),
+  };
   const rt                = rooms.map((r, i) => {
     const mons         = [];
     if (r.front != null) {
       const inst = insts.find((m) => m.uid === r.front);
-      if (inst) mons.push(makeMonUnit(inst, 0, i, mod));
+      if (inst) { const unit = makeMonUnit(inst, 0, i, mod); unit.slot = 'front'; mons.push(unit); }
     }
     if (r.back != null) {
       const inst = insts.find((m) => m.uid === r.back);
-      if (inst) mons.push(makeMonUnit(inst, 1, i, mod));
+      if (inst) { const unit = makeMonUnit(inst, 1, i, mod); unit.slot = 'back'; mons.push(unit); }
     }
     // 侧翼兵位只在该房有统领时生效（UI 也这么锁）
     let leader              = null;
@@ -263,6 +271,7 @@ export function createBattle(raid         , rooms           , insts             
       const st = opts.champs?.[r.leader];
       if (st) {
         leader = makeChampUnit(st, r.leader, i, mod);
+        leader.slot = 'leader';
         mons.push(leader);
       }
     }
@@ -270,6 +279,7 @@ export function createBattle(raid         , rooms           , insts             
       const inst = insts.find((m) => m.uid === r.flank);
       if (inst) {
         const u = makeMonUnit(inst, 0, i, mod);
+        u.slot = 'flank';
         u.x = MON_FLANK_X; u.homeX = MON_FLANK_X;
         mons.push(u);
       }
@@ -278,12 +288,22 @@ export function createBattle(raid         , rooms           , insts             
     const workerInst = utilityRow?.workerUid != null ? insts.find((m) => m.uid === utilityRow.workerUid) : null;
     const worker = workerInst ? makeMonUnit(workerInst, 1, i, mod) : null;
     if (worker) {
+      worker.slot = 'worker';
       worker.utilityWorker = true;
       worker.x = 356; worker.homeX = 356; worker.y = BACK_Y;
     }
+    for (const unit of worker ? [...mons, worker] : mons) {
+      const hpMult = research.monHpMult * (unit.row === 0 ? research.frontRowHpMult : 1);
+      unit.maxHp = Math.max(1, Math.round(unit.maxHp * hpMult));
+      unit.hp = unit.maxHp;
+      unit.spd = Math.max(0.15, unit.spd * research.monSpeedMult);
+    }
+    const trapIds = [r.trap ?? 'none'];
+    if (research.dualTraps) trapIds.push(r.trap2 ?? 'none');
+    const trapStates = trapIds.filter((id) => id !== 'none' && id in TRAPS).map((id, slot) => ({ id, slot, used: false, disarmed: false }));
     return {
-      index: i, theme: r.theme, trap: r.trap, trapUsed: false, trapDisarmed: false,
-      trapArm: 0, spellLock: 0, reflectLeft: 0, reflectPct: 0, synergy: synergyOf(r.theme, r.trap)?.name ?? '',
+      index: i, theme: r.theme, trap: r.trap ?? 'none', trap2: research.dualTraps ? (r.trap2 ?? 'none') : 'none', trapStates,
+      trapArm: 0, spellLock: 0, reflectLeft: 0, reflectPct: 0,
       mons, leader, routed: false, heroKills: 0, broken: false, breachReason: '', breachTime: 0, doorShake: 0,
       utility: utilityRow ? {
         row: utilityRow, kind: utilityRow.kind ?? 'none', condition: utilityRow.condition ?? 100,
@@ -292,6 +312,7 @@ export function createBattle(raid         , rooms           , insts             
     };
   });
   const heroes = raid.members.map((mm, i) => makeHeroUnit(mm.cls, mm.lv, i, raid.members.length, mod));
+  for (const unit of [...heroes, ...rt.flatMap((room) => room.utility?.worker ? [...room.mons, room.utility.worker] : room.mons)]) unit.researchEffects = research;
   // 护主/统御等领袖特质：开场给同房非英雄单位加生命上限
   for (const r of rt) {
     const ld = r.leader;
@@ -317,7 +338,7 @@ export function createBattle(raid         , rooms           , insts             
     seal: sealCap, time: 0, moraleMult: 1,
     events: [], log: [], dialogue: [], result: null, throneIdx: 0,
     dungeonEconomy: opts.dungeonEconomy ?? null,
-    sealMax: sealCap, trapPower: (opts.trapPower ?? 1) * mod.trapMult,
+    sealMax: sealCap, trapPower: (opts.trapPower ?? 1) * mod.trapMult * research.trapPowerMult, research,
     rng: mulberry(raid.no * 9176 + 13),
     metrics: { attacks: 0, skills: 0, hits: 0, heavyHits: 0, damage: 0, healing: 0,
       thorns: 0, splash: 0, lifesteal: 0, backline: 0, poison: 0, burn: 0, revives: 0, allyRevives: 0 },
@@ -550,6 +571,17 @@ function statSpeech(b, units) {
   speak(b, unit, line, `stat-${kind}`, true);
 }
 
+function nextTrap(room) { return room?.trapStates?.find((trap) => !trap.used && !trap.disarmed) ?? null; }
+function disarmNextTrap(b, room, x, actor) {
+  const trap = nextTrap(room);
+  if (!trap || b.research.trapDisarmImmune) return false;
+  trap.disarmed = true;
+  b.events.push({ k: 'disarm', room: b.roomIndex, x, y: 0, kind: trap.id, slot: trap.slot });
+  log(b, `${actor}${TRAPS[trap.id].name}`, 'bad');
+  if (nextTrap(room)) room.trapArm = Math.max(room.trapArm, 0.7);
+  return true;
+}
+
 function enterRoom(b        ) {
   const room = b.rooms[b.roomIndex];
   b.heroes.forEach((h) => {
@@ -569,7 +601,10 @@ function enterRoom(b        ) {
     b.heroes.forEach((h) => { if (h.alive) { h.slowT = Math.max(h.slowT, 999); h.slowAmt = Math.max(h.slowAmt, 0.08); } });
     log(b, `沼室：泥水拖慢了勇者的动作`, 'good');
   }
-  if (room.synergy) log(b, `${room.synergy}：${room.theme}与${TRAPS[room.trap].name}同源生效`, 'good');
+  for (const trap of room.trapStates) {
+    const syn = synergyOf(room.theme, trap.id);
+    if (syn) log(b, `${syn.name}：${room.theme}与${TRAPS[trap.id].name}同源生效`, 'good');
+  }
   room.mons.forEach((m) => { m.charged = false; });
   const heroSpeaker = b.heroes.find((h) => h.alive);
   const monSpeaker = room.leader?.alive ? room.leader : room.mons.find((m) => m.alive);
@@ -648,10 +683,10 @@ function enterRoom(b        ) {
       log(b, `${m.name}居高临下，能越过前排直取后排`, 'good');
     }
   }
-  if (room.trap === 'rune' && !room.trapUsed) b.heroes.forEach((h) => (h.silenced = true));
-  room.trapArm = 1.2;
+  if (room.trapStates.some((trap) => trap.id === 'rune' && !trap.used && !trap.disarmed)) b.heroes.forEach((h) => (h.silenced = true));
+  room.trapArm = nextTrap(room) ? 1.2 : 0;
   const rogue = b.heroes.find((h) => h.alive && h.kind === 'rogue');
-  if (rogue && room.trap !== 'none' && !room.trapUsed && !room.trapDisarmed) rogue.disarmT = 2.0;
+  if (rogue && nextTrap(room) && !b.research.trapDisarmImmune) rogue.disarmT = 2.0;
   b.phase = 'enter';
   b.phaseT = 0;
   b.roomTimer = b.roomLimit;
@@ -787,6 +822,11 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
   if (src.side === 'mon' && auraOf(b, src) === 'atk') dmg = Math.max(1, Math.round(dmg * (1 + 0.25 * auraPow(b, src.room))));
   // 失去带领：统领阵亡后，本房兵种士气下降
   if (src.side === 'mon' && !src.legend && b.rooms[src.room]?.routed) dmg = Math.max(1, Math.round(dmg * 0.85));
+  const researchDirect = src.side === 'mon' && !src.environmental;
+  if (researchDirect) {
+    const mult = researchDirectMultiplier(b.research, src.row, src.slot, tgt.hp / Math.max(1, tgt.maxHp));
+    dmg = Math.max(1, Math.round(dmg * mult));
+  }
   if (tgt.side === 'mon' && auraOf(b, tgt) === 'guard') mitigationMult *= Math.max(0, 1 - 0.2 * auraPow(b, tgt.room));
   if (tgt.dmgTakenMult && tgt.dmgTakenMult !== 1) mitigationMult *= tgt.dmgTakenMult;
   // 狂战士：血越少打得越狠（最多 +80%），代价是吃不到治疗
@@ -833,6 +873,11 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
   tgt.hp -= dmg;
   tgt.flashT = 0.12;
   src.dmgDealt += dmg;
+  if (researchDirect && b.research.directLifesteal > 0 && src.alive && src.hp < src.maxHp) {
+    const healed = Math.min(src.maxHp - src.hp, Math.max(1, Math.round(dmg * b.research.directLifesteal)));
+    src.hp += healed; src.healed += healed;
+    if (healed > 0) b.events.push({ k: 'heal', room: b.roomIndex, x: src.x, y: src.y, amt: healed, target: src });
+  }
   note(b, 'hits');
   note(b, 'damage', dmg);
   if (heavy) note(b, 'heavyHits');
@@ -983,13 +1028,23 @@ function damage(b        , src      , tgt      , raw        , heavy         , pi
 }
 
 function applyBurn(tgt      , dps        , dur        ) {
-  tgt.burnDps = Math.max(tgt.burnDps, dps);
+  const mult = tgt.side === 'hero' ? (tgt.researchEffects?.burnApplyMult ?? 1) : 1;
+  tgt.burnDps = Math.max(tgt.burnDps, dps * mult);
   tgt.burnT = Math.max(tgt.burnT, dur);
 }
 
 function applyPoison(b        , tgt      , dps        , dur        ) {
   const holy = b.affixes.includes('holywater') ? 0.5 : 1;
-  tgt.poisonDps = Math.max(tgt.poisonDps, dps);
+  const mult = tgt.side === 'hero' ? b.research.poisonApplyMult : 1;
+  const scaled = dps * mult;
+  if (tgt.side === 'hero' && b.research.poisonStackCap > 1) {
+    if (tgt.poisonT <= 0) { tgt.poisonDps = 0; tgt.poisonStacks = 0; }
+    const applied = researchPoisonApplication(tgt.poisonDps, tgt.poisonStacks ?? 0, dps, b.research);
+    tgt.poisonDps = applied.dps; tgt.poisonStacks = applied.stacks;
+  } else {
+    tgt.poisonDps = Math.max(tgt.poisonDps, scaled);
+    tgt.poisonStacks = Math.max(1, tgt.poisonStacks ?? 0);
+  }
   tgt.poisonT = Math.max(tgt.poisonT, dur * holy);
 }
 
@@ -1859,64 +1914,67 @@ function heroSkill(b        , u      ) {
 
 function triggerTrap(b        ) {
   const room = b.rooms[b.roomIndex];
-  if (room.trap === 'none' || room.trapUsed || room.trapDisarmed) return;
-  room.trapUsed = true;
+  const trapState = nextTrap(room);
+  if (!trapState) return;
+  trapState.used = true;
+  const trapId = trapState.id;
   const first = aliveHeroes(b)[0];
-  b.events.push({ k: 'trap', room: b.roomIndex, x: first ? first.x : 200, y: 0, kind: room.trap });
+  b.events.push({ k: 'trap', room: b.roomIndex, x: first ? first.x : 200, y: 0, kind: trapId, slot: trapState.slot });
   b.events.push({ k: 'shake', amount: 3 });
-  const syn = !!room.synergy;
+  const syn = !!synergyOf(room.theme, trapId);
   // 沼室主题额外放大所有陷阱（和 trapPower 相乘，不是替换）
   const pw = b.trapPower * (room.theme === 'mire' ? 1.3 : 1);
-  if (room.trap === 'spike' && first) {
+  if (trapId === 'spike' && first) {
     if (syn) {
       // 骨刺共鸣：骨堆里的尖刺连成一片，全队都要踩过去
       for (const h of aliveHeroes(b)) {
         const amt = (28 + h.def * 0.6) * pw * (h === first ? 1.9 : 0.85);
-        damage(b, { ...h, name: '骨刺', side: 'mon' }        , h, amt, h === first);
+        damage(b, { ...h, name: '骨刺', side: 'mon', environmental: true }        , h, amt, h === first);
       }
       first.stunT = Math.max(first.stunT, 2.5);
       log(b, `骨刺共鸣：全队踩进骨刺，${first.name} 被钉住`, 'good');
     } else {
-      damage(b, { ...first, name: '尖刺', side: 'mon' }        , first, (28 + first.def * 0.6) * pw, true);
+      damage(b, { ...first, name: '尖刺', side: 'mon', environmental: true }        , first, (28 + first.def * 0.6) * pw, true);
       log(b, `尖刺触发：${first.name} 受到爆发伤害`, 'good');
     }
-  } else if (room.trap === 'slime') {
+  } else if (trapId === 'slime') {
     const dur = 6 * pw * (syn ? 2 : 1);
     aliveHeroes(b).forEach((h) => {
       h.slowT = dur; h.slowAmt = 0.3;
       if (syn) applyPoison(b, h, 4 * pw, 5);   // 毒沼共鸣
     });
     log(b, syn ? `毒沼共鸣：黏液带毒，减速时长翻倍` : `黏液陷阱：勇者全队攻速-30%`, 'good');
-  } else if (room.trap === 'rune') {
+  } else if (trapId === 'rune') {
     aliveHeroes(b).forEach((h) => (h.silenced = true));
     if (syn) {
       room.spellLock = 9;
       aliveHeroes(b).forEach((h) => { h.skillCd = Math.max(h.skillCd, 9); });
       log(b, `禁咒共鸣：本房法术被封禁 9 秒`, 'good');
     } else log(b, `沉默符已就位：勇者首次治疗/法术将失效`, 'good');
-  } else if (room.trap === 'blade') {
+  } else if (trapId === 'blade') {
     const hs = aliveHeroes(b);
     const boost = syn ? 1.4 : 1;
     let low = hs[0];
     for (const h of hs) if (h.hp / h.maxHp < low.hp / low.maxHp) low = h;
     for (const h of hs) {
       const amt = 14 * pw * boost * (h === low ? 2 : 1);
-      damage(b, { ...h, name: '摆刃', side: 'mon' }        , h, amt, h === low);
+      damage(b, { ...h, name: '摆刃', side: 'mon', environmental: true }        , h, amt, h === low);
       if (syn && h.alive) applyBurn(h, 4 * pw, 4);   // 赤刃共鸣
     }
     log(b, syn ? `赤刃共鸣：烧红的摆刃扫过全队` : `摆刃扫过：全队受伤，最虚弱者受双倍`, 'good');
-  } else if (room.trap === 'net') {
+  } else if (trapId === 'net') {
     const hs = aliveHeroes(b);
     // 常态只缚后两名（前排还能打，是"拖时间"而不是"清场"）；陷淖共鸣缚全队
     const targets = syn ? hs : hs.slice(-2);
     const dur = (syn ? 6 : 4) * pw;
     for (const h of targets) h.stunT = Math.max(h.stunT, dur);
     log(b, syn ? `陷淖共鸣：全队被绳网拖入泥沼` : `绳网收紧：后队 ${targets.length} 人被缚住`, 'good');
-  } else if (room.trap === 'mirror') {
+  } else if (trapId === 'mirror') {
     room.reflectLeft = syn ? 6 : 3;
     room.reflectPct = (syn ? 0.6 : 0.4) * Math.min(1.6, pw);
     log(b, syn ? `重影共鸣：镜面重叠，六次伤害将被折回` : `映照阵展开：勇者接下来的伤害会被折回`, 'good');
   }
+  if (nextTrap(room)) room.trapArm = 1.2;
 }
 
 function captainPhases(b        , u      ) {
@@ -1924,12 +1982,7 @@ function captainPhases(b        , u      ) {
   if (u.phase === 0 && r <= 0.5) {
     u.phase = 1;
     const room = b.rooms[b.roomIndex];
-    if (room.trap !== 'none' && !room.trapUsed) {
-      room.trapDisarmed = true;
-      room.trapUsed = true;
-      b.events.push({ k: 'disarm', room: b.roomIndex, x: 250, y: 0 });
-      log(b, `勇者队长击碎了本房陷阱`, 'bad');
-    }
+    disarmNextTrap(b, room, 250, '勇者队长击碎了');
     b.events.push({ k: 'shake', amount: 4 });
   } else if (u.phase === 1 && r <= 0.25) {
     u.phase = 2;
@@ -2011,6 +2064,7 @@ export function stepBattle(b        , dt        ) {
         log(b, `${u.name} 因中毒倒下`, u.side === 'hero' ? 'good' : 'bad');
         deathBurst(b, u);
       }
+      if (u.poisonT <= 0) { u.poisonT = 0; u.poisonDps = 0; u.poisonStacks = 0; }
     }
     if (u.burnT > 0) {
       u.burnT -= dt;
@@ -2073,12 +2127,7 @@ export function stepBattle(b        , dt        ) {
       if (!h.alive || h.room !== b.roomIndex) continue;
       if (h.disarmT > 0) {
         h.disarmT -= dt;
-        if (h.disarmT <= 0 && !room.trapUsed && room.trap !== 'none') {
-          room.trapDisarmed = true;
-          room.trapUsed = true;
-          b.events.push({ k: 'disarm', room: b.roomIndex, x: h.x, y: h.y });
-          log(b, `盗贼拆除了${TRAPS[room.trap].name}`, 'bad');
-        }
+        if (h.disarmT <= 0) disarmNextTrap(b, room, h.x, '盗贼拆除了');
         continue;
       }
       if (h.stunT > 0) continue;

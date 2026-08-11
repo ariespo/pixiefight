@@ -4,8 +4,9 @@ import { SCENES } from '../story.js';
 import { TEXTURES, RAIDS, RAID_BRIEFINGS, NORMAL_RAID_COUNT } from '../data.js';
 import { createBattle, stepBattle, effectiveThorns, effectiveMitigationMultiplier, armorMultiplier } from '../battle.js';
 import { newChamp, champStats } from '../heroes.js';
+import { WORKSHOP_RESEARCH, researchDirectMultiplier, researchEffects, researchPoisonApplication, researchTrapThroughput } from '../research.js';
 
-const core = ['game.js', 'battle.js', 'story.js', 'vars.js', 'ui.js', 'heroes.js', 'modules.js', 'gear.js', 'data.js', 'llm.js', 'audio.js'];
+const core = ['game.js', 'battle.js', 'story.js', 'vars.js', 'ui.js', 'heroes.js', 'modules.js', 'gear.js', 'data.js', 'llm.js', 'audio.js', 'research.js'];
 for (const file of core) {
   const out = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
   if (out.status !== 0) throw new Error(`${file} syntax failed\n${out.stderr}`);
@@ -41,6 +42,45 @@ if (!(effectiveMitigationMultiplier(0) > 0.14 && armorMultiplier(1000000) > 0.20
   throw new Error('Mitigation/armor can still reach mathematical invulnerability.');
 if (RAIDS[0].reward.bone >= RAIDS[9].reward.bone || RAIDS[9].reward.mana >= RAIDS[19].reward.mana)
   throw new Error('The 20-round bone/mana economy curve is not progressive.');
+
+if (WORKSHOP_RESEARCH.length !== 5 || WORKSHOP_RESEARCH.some((group) => group.options.length !== 3))
+  throw new Error('Workshop research must provide five mutually-exclusive groups of three options.');
+const optionIds = WORKSHOP_RESEARCH.flatMap((group) => group.options.map((option) => option.id));
+if (new Set(optionIds).size !== optionIds.length) throw new Error('Workshop research option ids must be globally unique.');
+const plague = researchEffects({ medium: 'plague-vat' });
+if (Math.abs(researchDirectMultiplier(plague, 0, 'front', 1) - 0.70) > 1e-9)
+  throw new Error('Plague route direct-damage tradeoff drifted from -30%.');
+let poison = { dps: 0, stacks: 0 };
+for (let i = 0; i < 6; i++) poison = researchPoisonApplication(poison.dps, poison.stacks, 10, plague);
+if (poison.stacks !== 4 || Math.abs(poison.dps - 47.5) > 1e-9)
+  throw new Error(`Plague stacking is not capped/diminishing as designed: ${JSON.stringify(poison)}`);
+const rear = researchEffects({ formation: 'rear-battery' });
+if (researchDirectMultiplier(rear, 1, 'back', 1) !== 1.5 || researchDirectMultiplier(rear, 0, 'front', 1) !== 0.2)
+  throw new Error('Rear-battery row modifiers do not match the promised +50%/-80%.');
+const dual = researchEffects({ traps: 'double-rail' });
+if (Math.abs(researchTrapThroughput(dual, 2) - 1.44) > 1e-9 || researchTrapThroughput(dual, 3) > 1.44)
+  throw new Error('Dual traps must cap at two 72% triggers (144% total throughput).');
+
+const builds = [{}];
+for (const group of WORKSHOP_RESEARCH) {
+  const prior = builds.splice(0);
+  for (const picks of prior) for (const option of group.options) builds.push({ ...picks, [group.id]: option.id });
+}
+for (const picks of builds) {
+  const effects = researchEffects(picks);
+  const values = Object.values(effects).filter((value) => typeof value === 'number');
+  if (values.some((value) => !Number.isFinite(value) || value < 0)) throw new Error(`Invalid research build: ${JSON.stringify(picks)}`);
+  const front = researchDirectMultiplier(effects, 0, 'front', 1);
+  const back = researchDirectMultiplier(effects, 1, 'back', 1);
+  if (Math.min(front, back) < 0.08 || Math.max(front, back) > 3.20)
+    throw new Error(`Research direct-damage envelope escaped 8%..320%: ${front}/${back}`);
+  if (effects.monHpMult * effects.frontRowHpMult < 0.40 || effects.monHpMult * effects.frontRowHpMult > 2.55)
+    throw new Error(`Research HP envelope escaped 40%..255%: ${JSON.stringify(picks)}`);
+  if (effects.monSpeedMult < 0.65 || effects.monSpeedMult > 1.40)
+    throw new Error(`Research speed envelope escaped 65%..140%: ${JSON.stringify(picks)}`);
+  if (researchTrapThroughput(effects, 2) > 2.71)
+    throw new Error(`Research trap throughput exceeded the calibrated ceiling: ${JSON.stringify(picks)}`);
+}
 for (let i = 16; i < RAIDS.length; i++) {
   const prevPower = RAIDS[i - 1].members.reduce((n, m) => n + m.lv, 0) + RAIDS[i - 1].affixes.length * 8;
   const power = RAIDS[i].members.reduce((n, m) => n + m.lv, 0) + RAIDS[i].affixes.length * 8;
@@ -93,6 +133,16 @@ if (!benchmark.win || benchmark.kills !== benchmark.total) throw new Error(`Inte
 const underbuilt = underbuiltBenchmark();
 if (underbuilt.win) throw new Error('An underbuilt three-floor formation should not clear round 20.');
 
+const dualTrapBattle = createBattle(
+  { no: 97, title: 'dual trap integration', members: [{ cls: 'knight', lv: 1 }], affixes: [], reward: { bone: 0, mana: 0 } },
+  [{ theme: 'stone', trap: 'slime', trap2: 'net', front: 1, back: null, leader: null, flank: null }],
+  [{ uid: 1, kind: 'magmagolem', lv: 5, xp: 0 }], { research: dual, seed: 2468 },
+);
+for (let i = 0; i < 160 && dualTrapBattle.events.filter((event) => event.k === 'trap').length < 2; i++) stepBattle(dualTrapBattle, 0.05);
+const dualTrapEvents = dualTrapBattle.events.filter((event) => event.k === 'trap');
+if (dualTrapEvents.length !== 2 || dualTrapEvents[0].slot !== 0 || dualTrapEvents[1].slot !== 1)
+  throw new Error(`Dual traps did not trigger sequentially: ${JSON.stringify(dualTrapEvents)}`);
+
 const skillRoom = { theme: 'stone', trap: 'none', front: 1, back: 2, leader: null, flank: null,
   utility: { kind: 'none', level: 0, condition: 100 } };
 const skillInsts = [{ uid: 1, kind: 'slime', lv: 1 }, { uid: 2, kind: 'goblin', lv: 1 }];
@@ -124,4 +174,4 @@ const statBattle = createBattle({ no: 98, title: 'attribute speech', members: [{
 if (!statBattle.dialogue.some((x) => x.kind === 'stat-thorns') || !statBattle.dialogue.some((x) => x.kind === 'stat-max'))
   throw new Error('High-stat or max-level battle dialogue did not trigger for both sides.');
 
-console.log(`Static check passed: ${core.length} scripts, ${TEXTURES.length} textures, 20 raid stories, diminishing defenses, attribute dialogue, calibrated final formation, 4 new enemy skills, ${SCENES.length} scenes, ${followups.length} follow-up links, ${leadIds.length} contextual leads.`);
+console.log(`Static check passed: ${core.length} scripts, ${TEXTURES.length} textures, 20 raid stories, 243 workshop builds, sequential dual traps, diminishing defenses, attribute dialogue, calibrated final formation, 4 new enemy skills, ${SCENES.length} scenes, ${followups.length} follow-up links, ${leadIds.length} contextual leads.`);

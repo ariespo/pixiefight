@@ -94,6 +94,31 @@ try {
   assert(onboarding.unlocks[8].features.heroTalent && !onboarding.unlocks[8].features.heroGraft, 'Raid 8 talent unlock is incorrect.');
   assert(onboarding.unlocks[9].features.heroGraft, 'Raid 9 hero graft did not unlock.');
 
+  const workshopResearch = await page.evaluate(() => {
+    __debug.giveResources(0, 1000);
+    __debug.devUtility(0, 'workshop', 3, 100);
+    __debug.forceRaid(14);
+    __debug.researchOpen();
+    __debug.researchGroup('traps');
+    __debug.researchPreview('double-rail');
+    const before = { research: __debug.workshopResearch, modalText: __debug.layerText().modal };
+    const confirmed = __debug.researchConfirm();
+    __debug.researchPreview('overclock-trap');
+    const overwrite = __debug.researchConfirm();
+    __debug.devTrap(0, 'slime', 0);
+    __debug.devTrap(0, 'net', 1);
+    const after = { research: __debug.workshopResearch, room: __debug.rooms[0], modalText: __debug.layerText().modal };
+    __debug.researchClose();
+    return { before, confirmed, overwrite, after };
+  });
+  assert(!workshopResearch.before.research.picks.traps && workshopResearch.before.research.modal.previewId === 'double-rail',
+    'Workshop research preview wrote the permanent pick before confirmation.');
+  assert(workshopResearch.confirmed.ok && workshopResearch.after.research.picks.traps === 'double-rail'
+    && workshopResearch.after.research.effects.dualTraps, 'Workshop research confirmation did not persist the selected route.');
+  assert(!workshopResearch.overwrite.ok, 'A locked workshop research group could be overwritten.');
+  assert(workshopResearch.after.room.trap === 'slime' && workshopResearch.after.room.trap2 === 'net'
+    && workshopResearch.after.modalText.some((text) => text.includes('其余封锁')), 'Dual-trap route did not expose two persistent trap slots or its locked state.');
+
   const lawAudit = await page.evaluate(() => {
     const uid = __debug.monsters[0].uid;
     __debug.devLawAudit('monster', uid, 'thorns');
