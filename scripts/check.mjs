@@ -27,6 +27,8 @@ for (const scene of SCENES) {
 for (const id of followups) if (!ids.has(id)) throw new Error(`Missing follow-up scene: ${id}`);
 
 const source = readFileSync('game.js', 'utf8');
+if (!source.includes("const GAME_NAME = '勇者去死！'")) throw new Error('The unified player-visible game name is missing.');
+if (/夜曲地牢|夜 曲 地 牢/.test(source)) throw new Error('A legacy game title remains in game.js.');
 const setBody = source.match(/const STORY_LEAD_SCENES = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? '';
 const leadIds = [...setBody.matchAll(/'([^']+)'/g)].map((m) => m[1]);
 for (const id of leadIds) if (!ids.has(id)) throw new Error(`Lead references missing scene: ${id}`);

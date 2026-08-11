@@ -24,6 +24,14 @@ import { TEX, txt, label, labelC, panel, panelF, frame, bar, sprite, Hits, butto
 import { initAudio, unlockAudio, playSfx, playHit, playMusic, setMuted, audioSnapshot, tickAudio } from './audio.js';
 import { WORKSHOP_RESEARCH, normalizeResearchPicks, researchAvailability, researchEffects, researchOption } from './research.js';
 
+const GAME_NAME = '勇者去死！';
+document.title = GAME_NAME;
+for (const name of ['application-name', 'apple-mobile-web-app-title']) {
+  let meta = document.querySelector(`meta[name="${name}"]`);
+  if (!meta) { meta = document.createElement('meta'); meta.name = name; document.head.appendChild(meta); }
+  meta.content = GAME_NAME;
+}
+
 // ---------- 存档 ----------
                
                                                                                           
@@ -1434,7 +1442,7 @@ async function boot() {
   await app.init({ background: C.bg, resizeTo: host, resolution: renderResolution, autoDensity: true, antialias: false, roundPixels: true });
   host.appendChild(app.canvas);
   app.canvas.style.imageRendering = 'pixelated';
-  app.canvas.setAttribute('aria-label', '夜曲地牢游戏画面');
+  app.canvas.setAttribute('aria-label', `${GAME_NAME}游戏画面`);
 
   const totalTasks = 1 + TEXTURES.length;
   let doneTasks = 0;
@@ -3351,7 +3359,7 @@ function buildTitle() {
   shade.rect(0, 0, VIEW_W, VIEW_H).fill({ color: 0x08070d, alpha: 0.36 });
   const throne = sprite('icon-throne', 240, titleMode === 'main' ? 156 : 60, titleMode === 'main' ? 92 : 52);
   throne.alpha = 0.72; overlay.addChild(throne);
-  labelC(overlay, '夜 曲 地 牢', 240, 20, 25, C.gold);
+  labelC(overlay, GAME_NAME, 240, 20, 25, C.gold);
   labelC(overlay, '经营黑暗 · 守住王座', 240, 50, 11, C.bone);
   const bg = new PIXI.Graphics(); overlay.addChild(bg);
   if (titleMode === 'main') {
@@ -4078,7 +4086,7 @@ function drawPortraitTitle() {
   const artTop = Math.max(18, Math.round(h * 0.055));
   const throne = sprite('icon-throne', w / 2, artTop + Math.min(150, h * 0.18), Math.min(128, w * 0.32));
   throne.alpha = 0.65; portraitLayer.addChild(throne);
-  labelC(portraitLayer, '夜 曲 地 牢', w / 2, artTop, Math.max(25, Math.min(36, w * 0.085)), C.gold);
+  labelC(portraitLayer, GAME_NAME, w / 2, artTop, Math.max(25, Math.min(36, w * 0.085)), C.gold);
   labelC(portraitLayer, '经营黑暗 · 守住王座', w / 2, artTop + 45, 14, C.bone);
   const margin = 18;
   if (titleMode === 'main') {
@@ -4124,7 +4132,7 @@ function drawPortraitTitle() {
 }
 
 function ensurePortraitChrome() {
-  const key = [portrait, screen, tab, paused, speed, confirmNew, S.bone, S.mana, S.raidNo, S.overtime,
+  const key = [portrait, screen, titleMode, titleNewConfirm, saveExists, meta.clears, tab, paused, speed, confirmNew, S.bone, S.mana, S.raidNo, S.overtime,
     tutorialData().step, Object.keys(tutorialData().visited).length, app.screen.width, app.screen.height].join('|');
   if (key === portraitChromeKey) return;
   portraitChromeKey = key;
