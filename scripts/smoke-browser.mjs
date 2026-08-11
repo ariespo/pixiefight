@@ -213,11 +213,13 @@ try {
       assert(await page.evaluate(() => __debug.newGameConfirm), 'Landscape new-game button did not receive the click.');
       await page.evaluate(() => __debug.cancelNewGame());
     } else {
-      assert(metrics.portraitLayout?.newY > metrics.portraitContentBottom, 'Portrait controls overlap the game view.');
+      assert(metrics.portraitLayout?.top >= metrics.portraitContentBottom - 1, 'Portrait controls overlap the game view.');
+      assert(Math.abs(metrics.portraitLayout?.contentTop - 4) <= 2, 'Portrait management content did not crop the duplicate desktop chrome.');
+      assert(metrics.portraitLayout?.actionY + 38 <= viewport.height, 'Portrait controls exceed the visible viewport.');
       const dungeonX = metrics.portraitLayout.margin + metrics.portraitLayout.buttonWidth + metrics.portraitLayout.gap + metrics.portraitLayout.buttonWidth / 2;
       await page.mouse.click(dungeonX, metrics.portraitLayout.tabTop + 19);
       assert(await page.evaluate(() => __debug.currentTab === 'dungeon'), 'Portrait tab navigation did not receive the click.');
-      await page.mouse.click(viewport.width / 2, metrics.portraitLayout.newY + 21);
+      await page.mouse.click(metrics.portraitLayout.newX + metrics.portraitLayout.utilityWidth / 2, metrics.portraitLayout.newY + 19);
       assert(await page.evaluate(() => __debug.newGameConfirm), 'Portrait new-game button did not receive the click.');
       await page.evaluate(() => __debug.cancelNewGame());
     }

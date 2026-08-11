@@ -1377,15 +1377,18 @@ function layout() {
   }
   const w = app.screen.width, h = app.screen.height;
   portrait = h > w * 1.15;
+  const portraitManage = portrait && screen === 'manage';
   viewScale = portrait
-    ? Math.max(0.1, Math.min((w - 8) / VIEW_W, (h * 0.44) / VIEW_H))
+    ? Math.max(0.1, Math.min((w - 8) / VIEW_W, portraitManage ? (h * 0.46) / 202 : (h * 0.44) / VIEW_H))
     : Math.max(0.1, Math.min(w / VIEW_W, h / VIEW_H));
   smallScreen = w < 720 || h < 420 || viewScale < 1;
   const snap = (v) => Math.round(v * renderResolution) / renderResolution;
   root.scale.set(viewScale);
   root.x = snap((w - VIEW_W * viewScale) / 2);
-  root.y = portrait ? snap(4) : snap((h - VIEW_H * viewScale) / 2);
-  portraitContentBottom = root.y + VIEW_H * viewScale;
+  // 竖屏经营页只展示横屏画布中真正的页面区域（y=36..238）。顶部 HUD 与底部标签
+  // 由下方触控控制台统一承接，避免同一组资源、导航和存档操作重复出现两次。
+  root.y = portraitManage ? snap(4 - 36 * viewScale) : portrait ? snap(4) : snap((h - VIEW_H * viewScale) / 2);
+  portraitContentBottom = portraitManage ? root.y + 238 * viewScale : root.y + VIEW_H * viewScale;
   setTextRes(Math.min(4, Math.max(1, Math.ceil(viewScale))));
   if (bdTile) { bdTile.width = w; bdTile.height = h; }
   bdFrame.clear();
@@ -2957,34 +2960,39 @@ function ensurePortraitChrome() {
   if (!portrait) return;
 
   const w = app.screen.width, h = app.screen.height;
-  const top = Math.min(h - 300, Math.ceil(portraitContentBottom + 6));
+  const top = Math.max(0, Math.ceil(portraitContentBottom));
   portraitGfx.rect(0, top, w, h - top).fill(C.bg).stroke({ width: 2, color: C.wallLit, alignment: 0 });
-  panelF(portraitGfx, portraitLayer, 'stone', 6, top + 6, w - 12, 38, C.wall);
-  const raid = currentRaid();
-  label(portraitLayer, `骨 ${S.bone}　魔 ${S.mana}`, 16, top + 15, 14, C.gold);
-  label(portraitLayer, S.overtime ? `加班 ${raid.no - 12}` : `袭击 ${S.raidNo}/12`, w - 94, top + 15, 14, C.bone);
-
   const gap = 5, margin = 8, cols = 4;
   const bw = Math.floor((w - margin * 2 - gap * (cols - 1)) / cols);
-  const tabTop = top + 50;
+  let cursorY = top + 7;
+  let tabTop = cursorY;
   const tabs = visibleTabs();
   const currentGuide = roundGuide();
-  tabs.forEach((item, i) => {
-    const x = margin + (i % cols) * (bw + gap);
-    const y = tabTop + Math.floor(i / cols) * 43;
-    const guided = screen === 'manage' && currentGuide?.[0] === item.id;
-    button(portraitGfx, portraitLayer, portraitHits, x, y, bw, 38, item.name, () => setTab(item.id), {
-      size: 14, enabled: screen === 'manage', fill: tab === item.id ? C.wallLit : C.wall,
-      border: guided || tab === item.id ? C.gold : C.stoneLit, color: guided || tab === item.id ? C.white : C.bone,
+  if (screen === 'manage') {
+    panelF(portraitGfx, portraitLayer, 'stone', 6, cursorY, w - 12, 36, C.wall);
+    const raid = currentRaid();
+    label(portraitLayer, `骨 ${S.bone}　魔 ${S.mana}`, 16, cursorY + 10, 14, C.gold);
+    label(portraitLayer, S.overtime ? `加班 ${raid.no - 12}` : `袭击 ${S.raidNo}/12`, w - 94, cursorY + 10, 14, C.bone);
+    cursorY += 42;
+    tabTop = cursorY;
+    tabs.forEach((item, i) => {
+      const x = margin + (i % cols) * (bw + gap);
+      const y = tabTop + Math.floor(i / cols) * 43;
+      const guided = currentGuide?.[0] === item.id;
+      button(portraitGfx, portraitLayer, portraitHits, x, y, bw, 38, item.name, () => setTab(item.id), {
+        size: 14, fill: tab === item.id ? C.wallLit : C.wall,
+        border: guided || tab === item.id ? C.gold : C.stoneLit, color: guided || tab === item.id ? C.white : C.bone,
+      });
+      if (guided) {
+        const pulse = new PIXI.Graphics().roundRect(x - 2, y - 2, bw + 4, 42, 4)
+          .stroke({ width: 2, color: C.white, alignment: 0 });
+        portraitLayer.addChild(pulse); guidePulseNodes.push(pulse);
+      }
     });
-    if (guided) {
-      const pulse = new PIXI.Graphics().roundRect(x - 2, y - 2, bw + 4, 42, 4)
-        .stroke({ width: 2, color: C.white, alignment: 0 });
-      portraitLayer.addChild(pulse); guidePulseNodes.push(pulse);
-    }
-  });
+    cursorY = tabTop + Math.ceil(tabs.length / cols) * 43 + 5;
+  }
 
-  const primaryY = tabTop + Math.ceil(tabs.length / cols) * 43 + 5;
+  const primaryY = cursorY;
   const guideAck = screen === 'manage' && currentGuide?.[2];
   const primaryLabel = screen === 'manage' ? (guideAck ? '明白，继续教学' : '迎　战') : screen === 'battle' ? (paused ? '继续战斗' : '暂停战斗') : screen === 'result' ? '继续结算' : '进入加班勇者';
   const primaryAction = screen === 'manage' ? (guideAck ? acknowledgeRoundGuide : startBattle) : screen === 'battle'
@@ -2999,19 +3007,27 @@ function ensurePortraitChrome() {
   }
 
   const actionY = primaryY + 51;
-  const aw = Math.floor((w - margin * 2 - gap * 2) / 3);
-  button(portraitGfx, portraitLayer, portraitHits, margin, actionY, aw, 38, '导出', exportSave, { size: 14 });
-  button(portraitGfx, portraitLayer, portraitHits, margin + aw + gap, actionY, aw, 38, screen === 'manage' ? '导入' : '导入锁定', importSave,
-    { size: 13, enabled: screen === 'manage' });
-  button(portraitGfx, portraitLayer, portraitHits, margin + (aw + gap) * 2, actionY, aw, 38, S.muted ? '开启声音' : '关闭声音', toggleMute, { size: 13 });
-
-  const newY = actionY + 45;
-  const canStartNew = screen === 'manage';
-  button(portraitGfx, portraitLayer, portraitHits, margin, newY, w - margin * 2, 42,
-    canStartNew ? (confirmNew ? '再次点按：清空并新建' : '开始新档') : '返回经营后可新建', requestNewGame,
-    { size: 15, enabled: canStartNew, fill: confirmNew ? C.redDark : C.wall, border: confirmNew ? C.red : C.bone, color: confirmNew ? C.white : C.bone });
-  labelC(portraitLayer, '竖屏控制区・横屏可获得完整战场视野', w / 2, Math.min(h - 20, newY + 50), 11, C.stoneLit);
-  portraitLayoutInfo = { top, tabTop, primaryY, actionY, newY, margin, gap, buttonWidth: bw };
+  let newY = actionY;
+  let newX = margin;
+  let utilityWidth = 0;
+  if (screen === 'manage') {
+    const aw = Math.floor((w - margin * 2 - gap * 3) / 4);
+    utilityWidth = aw;
+    newX = margin + (aw + gap) * 3;
+    button(portraitGfx, portraitLayer, portraitHits, margin, actionY, aw, 38, '导出', exportSave, { size: 13 });
+    button(portraitGfx, portraitLayer, portraitHits, margin + aw + gap, actionY, aw, 38, '导入', importSave, { size: 13 });
+    button(portraitGfx, portraitLayer, portraitHits, margin + (aw + gap) * 2, actionY, aw, 38, S.muted ? '开声音' : '关声音', toggleMute, { size: 12 });
+    button(portraitGfx, portraitLayer, portraitHits, newX, actionY, aw, 38,
+      confirmNew ? '确认新档' : '新档', requestNewGame,
+      { size: 13, fill: confirmNew ? C.redDark : C.wall, border: confirmNew ? C.red : C.bone, color: confirmNew ? C.white : C.bone });
+  } else if (screen === 'battle') {
+    const sw = Math.floor((w - margin * 2 - gap * 2) / 3);
+    [1, 2, 4].forEach((value, i) => button(portraitGfx, portraitLayer, portraitHits, margin + i * (sw + gap), actionY, sw, 38,
+      `${value}倍速`, () => { speed = value; portraitChromeKey = ''; },
+      { size: 14, fill: speed === value ? C.wallLit : C.wall, border: speed === value ? C.gold : C.stoneLit, color: speed === value ? C.white : C.bone }));
+  }
+  portraitLayoutInfo = { top, tabTop, primaryY, actionY, newY, newX, utilityWidth, margin, gap, buttonWidth: bw,
+    contentTop: screen === 'manage' ? root.y + 36 * viewScale : root.y, contentBottom: portraitContentBottom };
 }
 
 function drawTabs(g               ) {
@@ -5521,6 +5537,7 @@ function startBattle() {
     { sealMax: sealMax(), trapPower: trapPower(), mods: battleMods(), champs: champStatMap(), dungeonEconomy });
   pendingResultRaid = raid.no;
   screen = 'battle';
+  scheduleLayout();
   uiPortraitFx.length = 0;
   speed = 1;
   paused = false;
@@ -6039,6 +6056,7 @@ function finishBattle() {
   const b = battle ;
   const r = b.result ;
   screen = 'result';
+  scheduleLayout();
   resultLayerBuilt = false;
   const rewardMult = dungeonRaidScale().reward;
   r.bone = Math.round(r.bone * rewardMult);
@@ -6247,6 +6265,7 @@ function afterResult() {
   if (r.win) {
     if (!S.overtime && b.raid.no === 12) {
       screen = 'ending';
+      scheduleLayout();
       endingT = 0;
       for (const c of overlay.removeChildren()) c.destroy({ children: true });
       hits.clear();
@@ -6261,6 +6280,7 @@ function afterResult() {
 
 function backToManage() {
   screen = 'manage';
+  scheduleLayout();
   battle = null;
   battleLayer.visible = false;
   for (const c of overlay.removeChildren()) c.destroy({ children: true });
@@ -6316,6 +6336,7 @@ function enterOvertime() {
   S.otRaid = Math.max(13, S.otRaid);
   persist();
   screen = 'manage';
+  scheduleLayout();
   battle = null;
   battleLayer.visible = false;
   for (const c of overlay.removeChildren()) c.destroy({ children: true });
