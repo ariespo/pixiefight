@@ -215,15 +215,25 @@ try {
       await page.evaluate(() => __debug.cancelNewGame());
     } else {
       assert(metrics.portraitLayout?.top >= metrics.portraitContentBottom - 1, 'Portrait controls overlap the game view.');
-      assert(metrics.scale >= (viewport.width - 12) / 320 - 0.02, 'Portrait game view was not enlarged beyond the desktop-width fit.');
+      assert(metrics.portraitLayout?.pane === 0 && metrics.portraitLayout?.logicalLeft === 0 && metrics.portraitLayout?.logicalWidth === 480,
+        'Portrait overview does not expose the complete game width.');
+      assert(metrics.scale >= (viewport.width - 12) / 480 - 0.02, 'Portrait overview did not fit the complete game width.');
       assert(metrics.portraitLayout?.contentTop >= 35, 'Portrait game composition was not vertically centered.');
       assert(metrics.portraitLayout?.bottom <= viewport.height, 'Portrait console exceeds the visible viewport.');
       assert(metrics.portraitLayout?.actionY + 38 <= viewport.height, 'Portrait controls exceed the visible viewport.');
       const dungeonX = metrics.portraitLayout.margin + metrics.portraitLayout.buttonWidth + metrics.portraitLayout.gap + metrics.portraitLayout.buttonWidth / 2;
       await page.mouse.click(dungeonX, metrics.portraitLayout.tabTop + 19);
       assert(await page.evaluate(() => __debug.currentTab === 'dungeon'), 'Portrait tab navigation did not receive the click.');
+      const overviewScale = metrics.scale;
       await page.mouse.click(metrics.portraitLayout.margin + (metrics.portraitLayout.paneWidth + metrics.portraitLayout.gap) * 2 + metrics.portraitLayout.paneWidth / 2, metrics.portraitLayout.paneY + 18);
-      assert((await page.evaluate(() => __debug.viewport())).portraitLayout.pane === 2, 'Portrait right-pane control did not move the enlarged game view.');
+      await page.waitForTimeout(100);
+      const focused = await page.evaluate(() => __debug.viewport());
+      assert(focused.portraitLayout.pane === 2 && focused.portraitLayout.logicalLeft === 240 && focused.portraitLayout.logicalWidth === 240,
+        'Portrait right-column control did not expose the complete right half.');
+      assert(focused.scale > overviewScale * 1.8, 'Portrait focused column was not meaningfully enlarged.');
+      await page.mouse.click(metrics.portraitLayout.margin + metrics.portraitLayout.paneWidth / 2, focused.portraitLayout.paneY + 18);
+      await page.waitForTimeout(100);
+      assert((await page.evaluate(() => __debug.viewport())).portraitLayout.pane === 0, 'Portrait overview control did not restore the complete page.');
       await page.mouse.click(metrics.portraitLayout.newX + metrics.portraitLayout.utilityWidth / 2, metrics.portraitLayout.newY + 19);
       assert(await page.evaluate(() => __debug.newGameConfirm), 'Portrait new-game button did not receive the click.');
       await page.evaluate(() => __debug.cancelNewGame());

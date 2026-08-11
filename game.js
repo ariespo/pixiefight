@@ -1378,7 +1378,7 @@ function layout() {
   const w = app.screen.width, h = app.screen.height;
   portrait = h > w * 1.15;
   const portraitManage = portrait && screen === 'manage';
-  const portraitLogicalWidth = portraitManage ? 320 : 360;
+  const portraitLogicalWidth = portraitManage ? (portraitPane === 0 ? VIEW_W : VIEW_W / 2) : 360;
   const portraitSceneHeight = portraitManage ? 202 : VIEW_H;
   const portraitControlsHeight = portrait ? portraitConsoleHeight() : 0;
   viewScale = portrait
@@ -1387,7 +1387,7 @@ function layout() {
   smallScreen = w < 720 || h < 420 || viewScale < 1;
   const snap = (v) => Math.round(v * renderResolution) / renderResolution;
   root.scale.set(viewScale);
-  const portraitFocusX = portraitManage ? portraitPane * 80 : 60;
+  const portraitFocusX = portraitManage ? (portraitPane === 2 ? VIEW_W / 2 : 0) : 60;
   root.x = portrait ? snap((w - portraitLogicalWidth * viewScale) / 2 - portraitFocusX * viewScale) : snap((w - VIEW_W * viewScale) / 2);
   // 竖屏经营页只展示横屏画布中真正的页面区域（y=36..238）。顶部 HUD 与底部标签
   // 由下方触控控制台统一承接，避免同一组资源、导航和存档操作重复出现两次。
@@ -1407,7 +1407,8 @@ function layout() {
   drawRotateHint();
 }
 let portrait = false;
-let portraitPane = 1;
+// 0=完整全景，1=左栏放大，2=右栏放大。竖屏默认始终展示完整页面，避免裁掉两侧内容。
+let portraitPane = 0;
 let layoutQueued = false;
 
 function portraitConsoleHeight() {
@@ -1559,6 +1560,7 @@ function setTab(t     ) {
   if (graft) closeGraft();
   relicForgeConfirm = false;
   tab = t;
+  if (portrait) portraitPane = 0;
   sel = null;
   markTabVisited(t);
   syncTutorialProgress();
@@ -1598,6 +1600,10 @@ function render() {
   if (nameInput) nameInput.style.display = screen === 'manage' && (stitch || smith) && !detailPopup ? 'block' : 'none';
   if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !detailPopup ? 'block' : 'none';
   const modalOpen = screen === 'manage' && (!!stitch || !!forge || !!graft || !!smith);
+  if (portrait && screen === 'manage' && (modalOpen || detailPopup) && portraitPane !== 0) {
+    portraitPane = 0;
+    scheduleLayout();
+  }
   modalLayer.visible = modalOpen || !!detailPopup;
   if (screen !== 'manage') { uiLayer.visible = false; guideLayer.visible = false; if (storyInput) storyInput.style.display = 'none'; ensurePortraitChrome(); return; }
   if (!featureOpen(tab)) tab = 'throne';
@@ -3013,7 +3019,7 @@ function ensurePortraitChrome() {
 
     const paneY = cursorY;
     const pw = Math.floor((w - margin * 2 - gap * 2) / 3);
-    ['← 左区', '中央', '右区 →'].forEach((name, i) => button(portraitGfx, portraitLayer, portraitHits,
+    ['完整全景', '左栏放大', '右栏放大'].forEach((name, i) => button(portraitGfx, portraitLayer, portraitHits,
       margin + i * (pw + gap), paneY, pw, 36, name, () => setPortraitPane(i), {
         size: 13, fill: portraitPane === i ? C.wallLit : C.wall,
         border: portraitPane === i ? C.gold : C.stoneLit, color: portraitPane === i ? C.white : C.bone,
@@ -3058,7 +3064,8 @@ function ensurePortraitChrome() {
   portraitLayoutInfo = { top, bottom: top + consoleHeight, tabTop, primaryY, actionY, newY, newX, utilityWidth, margin, gap, buttonWidth: bw,
     paneY: screen === 'manage' ? primaryY - 43 : null, paneWidth: Math.floor((w - margin * 2 - gap * 2) / 3), pane: portraitPane,
     contentTop: screen === 'manage' ? root.y + 36 * viewScale : root.y, contentBottom: portraitContentBottom,
-    logicalLeft: screen === 'manage' ? portraitPane * 80 : 60, logicalWidth: screen === 'manage' ? 320 : 360 };
+    logicalLeft: screen === 'manage' ? (portraitPane === 2 ? VIEW_W / 2 : 0) : 60,
+    logicalWidth: screen === 'manage' ? (portraitPane === 0 ? VIEW_W : VIEW_W / 2) : 360 };
 }
 
 function drawTabs(g               ) {
@@ -6311,6 +6318,7 @@ function afterResult() {
 
 function backToManage() {
   screen = 'manage';
+  portraitPane = 0;
   scheduleLayout();
   battle = null;
   battleLayer.visible = false;
