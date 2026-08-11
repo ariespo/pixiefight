@@ -1214,17 +1214,67 @@ const ROUND_TUTORIALS = {
     { page: 'hero', target: 'heroRest', title: '四战轮休', detail: '英雄累计出战4场后必须休息3回合。轮换统领能避免关键房间在下一轮突然空缺。' },
     { page: 'dungeon', target: 'facilityArea', title: '疗愈与轮换', detail: '建造疗愈池后，英雄页可花20魔质减少1回合休息；没有疗愈池时按钮不会开放。' },
   ],
+  11: [
+    { page: 'shop', target: 'workshopResearch', title: '高端路线开放', detail: '每组研究三选一且永久锁定其余选项。先预览即可，本轮不要求购买或定型。' },
+    { page: 'report', target: 'reportPanel', title: '文学化战报', detail: '战报保留真实数字与逐房复盘，也可由已接入的AI润色叙述；AI失败时仍使用本地版本。' },
+  ],
+  12: [
+    { page: 'shop', target: 'workshopResearch', title: '阵列武装开放', detail: '后排炮列、前线冲压机和统领传动轴会重写站位收益。根据常用阵型选择，不必立刻消费。' },
+    { page: 'story', target: 'storyArea', title: '上下文秘闻', detail: '秘闻会引用相关英雄、设施、旧档案与战报；选项效果仍由本地规则锁定并明确显示。' },
+  ],
+  13: [
+    { page: 'shop', target: 'diyWorkshop', title: 'DIY能力扩展', detail: '造部件与造词缀可组合复活、碎盾、贯穿、护盾等能力，分数预算会约束强度。' },
+    { page: 'shop', target: 'diyWorkshop', title: '草案独立保存', detail: '部件、词缀和图鉴各自保留未完成内容；切换标签不会清空部位、愿望或能力选择。' },
+  ],
+  14: [
+    { page: 'shop', target: 'workshopResearch', title: '陷阱工程开放', detail: '可选双陷阱、单发超压或防拆路线。每项都有代价，先结合房间数量比较。' },
+    { page: 'dungeon', target: 'dungeonTools', title: '陷阱成为流派', detail: '双轨路线允许每房两个独立陷阱但单枚降功率；其他路线继续保留单槽并强化质量。' },
+  ],
+  15: [
+    { page: 'hero', target: 'heroLore', title: 'AI英雄档案', detail: '详情页可让AI结合战绩、称号与秘闻重构性格背景；只改文字，不修改任何战斗数值。' },
+    { page: 'story', target: 'storyArea', title: '档案回链', detail: '英雄、设施、战报与秘闻已互相引用。可从具体对象进入编年史，追踪一条长期故事。' },
+  ],
+  16: [
+    { page: 'shop', target: 'workshopResearch', title: '军团底盘开放', detail: '吸血、厚甲和高速路线会改变整支怪物军团的生存节奏，并各自附带明确弱点。' },
+    { page: 'shop', target: 'workshopResearch', title: '兵员铸造开放', detail: '精兵强将提高DIY预算与能力槽；巨构强化数值上限；流水目录偏向低价量产。' },
+  ],
+  17: [
+    { page: 'hero', target: 'heroForce', title: '强制驱使', detail: '休息英雄可二次确认支付300骨币与100魔质参加本场，但本场不会减少休息回合。' },
+    { page: 'hero', target: 'heroRest', title: '疗愈还是强征', detail: '疗愈便宜但需要疗愈池并逐回合缩短休息；强征昂贵，只适合关键防线救急。' },
+  ],
+  18: [
+    { page: 'shop', target: 'workshopResearch', title: '终局母机开放', detail: '极限输出、极限生存和状态机关三选一，会完成本局核心构筑；确认后不可改选。' },
+    { page: 'throne', target: 'raidPanel', title: '终盘强度上升', detail: '第16轮后敌军明显增强。先读职业与词缀，再用房间、陷阱和研究补齐短板。' },
+  ],
+  19: [
+    { page: 'shop', target: 'settings', title: '提示词可以编辑', detail: '桌面点顶部设置，手机从系统菜单进入“提示词”，可分别调整七类AI任务的创作方向。' },
+    { page: 'shop', target: 'aiWorkshop', title: 'AI始终可选', detail: 'AI用于叙事和创作，不负责结算。未接入、超时或返回异常时，核心玩法继续使用本地内容。' },
+  ],
+  20: [
+    { page: 'throne', target: 'raidPanel', title: '终局整备', detail: '四层满编、5级精英与四名8级英雄是参考线，不是硬门槛；专精陷阱与研究也能过关。' },
+    { page: 'report', target: 'reportPanel', title: '为下一局留证', detail: '战前用最近战报检查阵容瓶颈；通关会开放新开局方针，鼓励用另一套构筑重试。' },
+  ],
 };
 function prepareRoundGuideView() {
   const list = ROUND_TUTORIALS[S.raidNo] ?? [];
   const step = Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0));
   const item = list[step];
   if (!item || item.page !== 'hero' || tab !== 'hero') return;
-  if (item.target === 'heroTraits') heroView = 'info';
+  if (item.target === 'heroForce') heroSel = S.champs.find((c) => (c.restTurns || 0) > 0)?.uid ?? heroSel;
+  if (heroSel == null && S.champs.length) heroSel = S.champs[0].uid;
+  if (item.target === 'heroTraits' || item.target === 'heroLore') heroView = 'info';
   else if (item.target === 'heroGear') heroView = 'gear';
   else if (item.target === 'heroTitle') heroView = 'title';
   else if (item.target === 'heroTalent') heroView = 'talent';
   else heroView = 'stat';
+  if (portrait && heroSel != null) {
+    portraitHeroMode = 'roster';
+    portraitHeroDetail = true;
+    portraitHeroSection = item.target === 'heroLore' ? 'lore'
+      : item.target === 'heroTraits' ? 'traits'
+        : item.target === 'heroGear' ? 'gear'
+          : item.target === 'heroTalent' ? 'talent' : 'status';
+  }
 }
 function acknowledgeRoundGuide() {
   const t = tutorialData();
@@ -5980,9 +6030,16 @@ function guideTargetRect(target) {
   if (target === 'heroTitle') return { x: featureOpen('heroTalent') ? 444 : 414, y: 58, w: 34, h: 18 };
   if (target === 'heroGraft') return { x: 244, y: 212, w: 104, h: 19 };
   if (target === 'heroRest') return { x: 172, y: 108, w: 188, h: 104 };
+  if (target === 'heroLore') return { x: 316, y: 146, w: 148, h: 76 };
+  if (target === 'heroForce') return (champById(heroSel)?.restTurns || 0) > 0
+    ? { x: 344, y: 208, w: 120, h: 25 } : { x: 170, y: 104, w: 194, h: 110 };
   if (target === 'leaderSlot') return { x: 81, y: 85, w: 44, h: 27 };
   if (target === 'facilityArea') return { x: 226, y: 68, w: 102, h: 48 };
   if (target === 'shopArea') return { x: 4, y: 38, w: 324, h: 148 };
+  if (target === 'workshopResearch') return { x: 4, y: 164, w: 164, h: 26 };
+  if (target === 'diyWorkshop') return { x: 210, y: 184, w: 120, h: 30 };
+  if (target === 'aiWorkshop') return { x: 4, y: 186, w: 326, h: 50 };
+  if (target === 'settings') return { x: 404, y: 2, w: 38, h: 30 };
   if (target === 'monsterCreation') return { x: 4, y: 206, w: 156, h: 20 };
   if (target === 'storyArea') return { x: 4, y: 38, w: 324, h: 190 };
   return null;
@@ -8252,6 +8309,7 @@ window.__debug = {
     visibleTabs: visibleTabs().map((item) => item.id), guide: roundGuide(), deploymentReady: tutorialDeploymentReady(),
     enemyClasses: currentRaid().members.map((member) => member.cls), teachingComplete: roundTeachingComplete(),
     roundStep: Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0)),
+    roundTutorialTotal: (ROUND_TUTORIALS[S.raidNo] ?? []).length,
     recruitKinds: allKinds().filter(recruitKindOpen).map((kind) => kind.id),
     features: { hero: featureOpen('hero'), equipmentForge: featureOpen('equipmentForge'), heroTalent: featureOpen('heroTalent'), heroGraft: featureOpen('heroGraft') },
     heroGift: S.champs.find((c) => c.introGift) ? { uid: S.champs.find((c) => c.introGift).uid,

@@ -125,7 +125,7 @@ try {
     const battle = __debug.battle;
     __debug.backManage();
     const unlocks = {};
-    for (const raid of [2, 3, 4, 5, 6, 7, 8, 9, 10]) {
+    for (const raid of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) {
       __debug.forceRaid(raid);
       const before = __debug.progression;
       while (!__debug.progression.teachingComplete) {
@@ -136,7 +136,7 @@ try {
         __debug.ackGuide();
       }
       unlocks[raid] = { tabs: before.visibleTabs, kinds: before.recruitKinds, guide: before.guide, features: before.features,
-        heroGift: before.heroGift, complete: __debug.progression.teachingComplete };
+        heroGift: before.heroGift, tutorialTotal: before.roundTutorialTotal, complete: __debug.progression.teachingComplete };
     }
     return { initial, hiddenRouteBlocked, afterSlime, ready, briefing, briefingArchived, battle, unlocks };
   });
@@ -164,6 +164,9 @@ try {
   assert(onboarding.unlocks[7].features.equipmentForge && !onboarding.unlocks[7].features.heroTalent, 'Raid 7 forge unlock is incorrect.');
   assert(onboarding.unlocks[8].features.heroTalent && !onboarding.unlocks[8].features.heroGraft, 'Raid 8 talent unlock is incorrect.');
   assert(onboarding.unlocks[9].features.heroGraft, 'Raid 9 hero graft did not unlock.');
+  assert([11, 12, 13, 14, 15, 16, 17, 18, 19, 20].every((raid) => onboarding.unlocks[raid].tutorialTotal > 0
+    && onboarding.unlocks[raid].guide && onboarding.unlocks[raid].complete),
+  `Mid/late-game tutorials are incomplete: ${JSON.stringify(onboarding.unlocks)}`);
 
   const workshopResearch = await page.evaluate(() => {
     __debug.giveResources(0, 1000);
