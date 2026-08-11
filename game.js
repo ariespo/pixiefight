@@ -1420,6 +1420,7 @@ const PORTRAIT_NATIVE_TABS = new Set(['throne', 'dungeon', 'hero', 'mob', 'shop'
 let portraitStoryView = 'leads';
 let portraitHeroMode = 'roster';
 let portraitHeroSection = 'status';
+let portraitHeroDetail = false;
 function portraitNativeManage() {
   return portrait && screen === 'manage' && PORTRAIT_NATIVE_TABS.has(tab)
     && !portraitNativeBypass && !stitch && !forge && !graft && !smith;
@@ -3377,7 +3378,8 @@ function drawPortraitHeroTitles(x, y, w, h, c) {
 }
 
 function drawPortraitHeroDetail(x, y, w, h, c) {
-  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, 68, 36, '← 名册', () => { heroSel = null; render(); }, { size: 13 });
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, 68, 36, '← 名册', () => { portraitHeroDetail = false; render(); }, { size: 13 });
+  portraitActionMap.heroRosterBack = { x: x + 8, y: y + 2, w: 68, h: 36 };
   portraitLayer.addChild(portraitEffect(sprite(champKind(c).tex, x + 104, y + 40, 34), c.lv >= CHAMP_LV_CAP, true, c.uid));
   label(portraitLayer, `${c.name}　Lv${c.lv}　资质${POT_NAME[S.champPot[c.uid] ?? c.potential ?? 0]}`, x + 128, y + 11, 15, C.gold);
   const sections = [['status', '状态'], ['traits', '特质'], ['gear', '装备'], ['talent', '专精'], ['titles', '称号']];
@@ -3395,9 +3397,9 @@ function drawPortraitHeroDetail(x, y, w, h, c) {
 function drawPortraitHero(x, y, w, h) {
   refreshCands();
   const selected = champById(heroSel);
-  if (selected && portraitHeroMode === 'roster') { drawPortraitHeroDetail(x, y, w, h, selected); return; }
+  if (selected && portraitHeroMode === 'roster' && portraitHeroDetail) { drawPortraitHeroDetail(x, y, w, h, selected); return; }
   const tabW = Math.floor((w - 22) / 2);
-  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, tabW, 38, `麾下 ${S.champs.length}/${CHAMP_CAP}`, () => { portraitHeroMode = 'roster'; heroSel = null; render(); },
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, tabW, 38, `麾下 ${S.champs.length}/${CHAMP_CAP}`, () => { portraitHeroMode = 'roster'; portraitHeroDetail = false; render(); },
     { size: 14, fill: portraitHeroMode === 'roster' ? C.wallLit : C.wall, border: portraitHeroMode === 'roster' ? C.gold : C.stoneLit, color: C.white });
   button(portraitGfx, portraitLayer, portraitHits, x + 14 + tabW, y + 2, tabW, 38, '征召英雄', () => { portraitHeroMode = 'recruit'; heroSel = null; render(); },
     { size: 14, fill: portraitHeroMode === 'recruit' ? C.wallLit : C.wall, border: portraitHeroMode === 'recruit' ? C.gold : C.stoneLit, color: C.white });
@@ -3412,9 +3414,12 @@ function drawPortraitHero(x, y, w, h) {
     label(portraitLayer, recruitMode ? unit.name : `${unit.name}　Lv${unit.lv}`, x + 76, cy + 8, 15, C.gold);
     label(portraitLayer, recruitMode ? `${k.name}・资质${POT_NAME[unit.potential]}` : `${roomOfChamp(unit.uid) >= 0 ? `${roomOfChamp(unit.uid) + 1}层统领` : '待命'}・${fatigueTier(unit.fatigue).text}`,
       x + 76, cy + 34, 12, C.stoneLit);
-    button(portraitGfx, portraitLayer, portraitHits, x + w - 94, cy + 13, 78, 38, recruitMode ? `${cost}骨` : '详情', () => {
-      if (recruitMode) recruitChamp(unit); else { heroSel = unit.uid; portraitHeroSection = 'status'; render(); }
+    const actionX = x + w - 94;
+    button(portraitGfx, portraitLayer, portraitHits, actionX, cy + 13, 78, 38, recruitMode ? `${cost}骨` : '详情', () => {
+      if (recruitMode) { portraitHeroMode = 'roster'; portraitHeroDetail = true; recruitChamp(unit); }
+      else { heroSel = unit.uid; portraitHeroSection = 'status'; portraitHeroDetail = true; render(); }
     }, { size: 13, enabled: !recruitMode || S.bone >= cost, fill: recruitMode ? C.greenDark : C.wallLit, border: recruitMode ? C.green : C.gold, color: C.white });
+    if (!recruitMode) portraitActionMap[`hero-open-${unit.uid}`] = { x: actionX, y: cy + 13, w: 78, h: 38 };
   });
   portraitPager(`portrait-hero-${portraitHeroMode}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
 }

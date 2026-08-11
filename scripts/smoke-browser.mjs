@@ -245,6 +245,24 @@ try {
     assert(nativePage.nativePortrait && nativePage.portraitLayout?.native && !nativePage.rootVisible,
       `Raid-ten portrait page ${targetTab} fell back to the desktop canvas.`);
   }
+  await page.evaluate(() => __debug.setTab('hero'));
+  await page.waitForTimeout(80);
+  const portraitHeroUid = await page.evaluate(() => __debug.save.champs[0]?.uid);
+  assert(portraitHeroUid, 'Raid-ten portrait test has no hero to open.');
+  const portraitHeroOpen = await page.evaluate((uid) => __debug.viewport().portraitActions[`hero-open-${uid}`] ?? null, portraitHeroUid);
+  assert(portraitHeroOpen, 'Portrait hero roster has no working detail action.');
+  await page.mouse.click(portraitHeroOpen.x + portraitHeroOpen.w / 2, portraitHeroOpen.y + portraitHeroOpen.h / 2);
+  await page.waitForTimeout(80);
+  const portraitHeroDetail = await page.evaluate(() => __debug.viewport());
+  assert(portraitHeroDetail.portraitActions.heroRosterBack, 'Portrait hero detail did not expose the roster back action.');
+  await page.mouse.click(portraitHeroDetail.portraitActions.heroRosterBack.x + portraitHeroDetail.portraitActions.heroRosterBack.w / 2,
+    portraitHeroDetail.portraitActions.heroRosterBack.y + portraitHeroDetail.portraitActions.heroRosterBack.h / 2);
+  await page.waitForTimeout(80);
+  const portraitHeroRoster = await page.evaluate((uid) => ({
+    back: __debug.viewport().portraitActions.heroRosterBack ?? null,
+    open: __debug.viewport().portraitActions[`hero-open-${uid}`] ?? null,
+  }), portraitHeroUid);
+  assert(!portraitHeroRoster.back && portraitHeroRoster.open, 'Portrait hero roster back action did not return to the roster.');
   await page.evaluate(() => __debug.openDetail('竖屏详情', '这是一段用于确认原生竖屏详情卡片和关闭操作的测试文本。'));
   await page.waitForTimeout(80);
   const nativeDetail = await page.evaluate(() => __debug.viewport());
