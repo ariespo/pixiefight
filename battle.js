@@ -336,7 +336,7 @@ export function createBattle(raid         , rooms           , insts             
     roomLimit: limit,
     roomTimer: limit,
     seal: sealCap, time: 0, moraleMult: 1,
-    events: [], log: [], dialogue: [], result: null, throneIdx: 0,
+    events: [], log: [], dialogue: [], dialoguePack: opts.dialoguePack ?? null, result: null, throneIdx: 0,
     dungeonEconomy: opts.dungeonEconomy ?? null,
     sealMax: sealCap, trapPower: (opts.trapPower ?? 1) * mod.trapMult * research.trapPowerMult, research,
     rng: mulberry(raid.no * 9176 + 13),
@@ -368,6 +368,12 @@ function speak(b, u, text, kind = 'skill', force = false) {
 }
 
 const pickLine = (pool, rng) => pool[Math.floor(rng() * pool.length)];
+
+function generatedLine(b, u, kind) {
+  const entry = b.dialoguePack?.units?.[`${u.side}:${u.name}`];
+  const pool = entry?.[kind];
+  return Array.isArray(pool) && pool.length ? pickLine(pool, b.rng) : '';
+}
 
 const ATTACK_LINES = {
   hero: ['破绽在这里！', '别给它喘息！', '压住它！', '这一击开路！', '跟上我的节奏！', '先解决眼前这个！', '守住队形，我来！', '往关节打！'],
@@ -408,23 +414,23 @@ function attackSpeech(b, u, tgt) {
   if (b.rng() > 0.24) return;
   const side = u.side === 'hero' ? 'hero' : 'mon';
   const pool = tgt?.row === 1 ? BACK_ATTACK_LINES[side] : ATTACK_LINES[side];
-  speak(b, u, pickLine(pool, b.rng), 'attack');
+  speak(b, u, generatedLine(b, u, 'attack') || pickLine(pool, b.rng), 'attack');
 }
 
 function skillSpeech(b, u, nature, fallback) {
   const pool = SKILL_LINES[nature] ?? SKILL_LINES.strike;
-  speak(b, u, pickLine(pool, b.rng) || fallback, 'skill', true);
+  speak(b, u, generatedLine(b, u, 'skill') || pickLine(pool, b.rng) || fallback, 'skill', true);
 }
 
 function specialSpeech(b, u, kind) {
   const pool = SPECIAL_LINES[kind];
   // 特殊机制必须留下对白/战报记录；同一瞬间若连续触发，画面仍只保留该单位最后一句。
-  if (pool) speak(b, u, pickLine(pool, b.rng), kind, true);
+  if (pool) speak(b, u, generatedLine(b, u, 'special') || pickLine(pool, b.rng), kind, true);
 }
 
 function recoverySpeech(b, u) {
   const pool = u.side === 'hero' ? RECOVERY_LINES.hero : RECOVERY_LINES.mon;
-  speak(b, u, pickLine(pool, b.rng), 'heal');
+  speak(b, u, generatedLine(b, u, 'heal') || pickLine(pool, b.rng), 'heal');
 }
 
 function impactText(dmg        , tgt      )          {
@@ -471,7 +477,7 @@ function logHit(b        , src      , tgt      , dmg        , action        , he
   log(b, `${src.name}对${tgt.name}${action}，造成${dmg}点伤害（${imp}）`, tone);
   const beforeHp = Math.min(tgt.maxHp, Math.max(dmg, tgt.hp + dmg));
   if (dmg / Math.max(1, tgt.maxHp) >= 0.05 || dmg / Math.max(1, beforeHp) >= 0.14 || tgt.hp / Math.max(1, tgt.maxHp) < 0.35) {
-    const line = reactionText(tgt, dmg, beforeHp, rng ?? b.rng);
+    const line = generatedLine(b, tgt, 'reaction') || reactionText(tgt, dmg, beforeHp, rng ?? b.rng);
     log(b, `　${tgt.name}：${line}`, tone);
     speak(b, tgt, line, 'reaction');
   }
@@ -609,9 +615,21 @@ function enterRoom(b        ) {
   const heroSpeaker = b.heroes.find((h) => h.alive);
   const monSpeaker = room.leader?.alive ? room.leader : room.mons.find((m) => m.alive);
   log(b, `—— 第${b.roomIndex + 1}房交战：${room.mons.length ? `${room.mons.length}名守军列阵` : '房间无人驻守'} ——`, room.mons.length ? 'good' : 'bad');
-  if (heroSpeaker) log(b, `　${heroSpeaker.name}：${HERO_ROOM_LINES[Math.floor(b.rng() * HERO_ROOM_LINES.length)]}`, 'bad');
+  let aiOpening = false;
+  if (b.roomIndex === 0 && !b.__aiOpening && Array.isArray(b.dialoguePack?.opening)) {
+    b.__aiOpening = true;
+    const present = [...b.heroes.filter((u) => u.alive), ...room.mons.filter((u) => u.alive)];
+    for (const item of b.dialoguePack.opening) {
+      const unit = present.find((u) => `${u.side}:${u.name}` === item.key);
+      if (!unit) continue;
+      aiOpening = true;
+      log(b, `　${unit.name}：${item.text}`, unit.side === 'hero' ? 'bad' : 'good');
+      speak(b, unit, item.text, 'banter', true);
+    }
+  }
+  if (!aiOpening && heroSpeaker) log(b, `　${heroSpeaker.name}：${HERO_ROOM_LINES[Math.floor(b.rng() * HERO_ROOM_LINES.length)]}`, 'bad');
   const livingHeroes = b.heroes.filter((h) => h.alive);
-  if (livingHeroes.length > 1) {
+  if (!aiOpening && livingHeroes.length > 1) {
     const [lead, reply] = HERO_PARTY_BANTER[Math.floor(b.rng() * HERO_PARTY_BANTER.length)];
     const a = livingHeroes[Math.floor(b.rng() * livingHeroes.length)];
     const others = livingHeroes.filter((h) => h !== a);
@@ -621,7 +639,7 @@ function enterRoom(b        ) {
     speak(b, a, lead, 'banter');
     speak(b, z, reply, 'banter');
   }
-  if (monSpeaker) log(b, `　${monSpeaker.name}：${MON_ROOM_LINES[Math.floor(b.rng() * MON_ROOM_LINES.length)]}`, 'good');
+  if (!aiOpening && monSpeaker) log(b, `　${monSpeaker.name}：${MON_ROOM_LINES[Math.floor(b.rng() * MON_ROOM_LINES.length)]}`, 'good');
   // 每进一房各挑一名尚未发过属性台词的单位。高属性获得辨识度，但不会在同一瞬间把气泡铺满屏幕。
   statSpeech(b, room.mons);
   statSpeech(b, livingHeroes);

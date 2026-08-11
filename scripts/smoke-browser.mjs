@@ -40,10 +40,20 @@ try {
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ data: [{ id: 'test-model-a' }, { id: 'test-model-b' }] }) });
   });
   await page.route('https://api.example.test/v1/chat/completions', async (route) => {
-    requestedModel = route.request().postDataJSON()?.model ?? '';
-    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: JSON.stringify({
-      name: '试作毒躯', word: '毒', desc: '模型选择链路测试。', look: 'rock', stats: { hp: 60, atk: 4, def: 1, spd: 0 }, powers: ['poisonSkill'],
-    }) } }] }) });
+    const body = route.request().postDataJSON() ?? {};
+    requestedModel = body.model ?? '';
+    const prompt = body.messages?.at(-1)?.content ?? '';
+    let content;
+    if (prompt.includes('战前台词包')) content = { opening: [{ key: 'hero:剑士', text: '这次差旅没有返程票。' }], units: [
+      { key: 'hero:剑士', attack: ['报销单先斩了。'], skill: ['为了最低工资！'], reaction: ['这不在保险范围。'], heal: [], special: [] },
+      { key: 'mon:史莱姆', attack: ['黏住再算账。'], skill: [], reaction: ['桶又要漏了。'], heal: [], special: [] },
+    ] };
+    else if (prompt.includes('战地书记')) content = { title: '门轴与加班费', summary: '剑士按规定入侵，按事故离场。',
+      chronicle: '门轴响了第一声，守军便开始计算抚恤。\n\n战斗结束时，账本比剑士完整。', highlights: ['所有数字仍由原始战报作证。'] };
+    else if (prompt.includes('地牢编年史作者')) content = { who: '旧档案员', text: '旧账从柜底爬出来，准确叫出了当事人的名字。',
+      choices: [{ index: 0, label: '照旧办理', reply: '印章落下，原有效果一项不少。' }] };
+    else content = { name: '试作毒躯', word: '毒', desc: '模型选择链路测试。', look: 'rock', stats: { hp: 60, atk: 4, def: 1, spd: 0 }, powers: ['poisonSkill'] };
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }) });
   });
   await page.evaluate(() => __debug.aiSettingsOpen());
   await page.selectOption('[data-ai="provider"]', 'custom');
@@ -68,7 +78,7 @@ try {
   await page.evaluate(() => __debug.aiSettingsClose());
   await page.setViewportSize({ width: 1280, height: 720 });
 
-  const onboarding = await page.evaluate(() => {
+  const onboarding = await page.evaluate(async () => {
     const initial = __debug.progression;
     __debug.setTab('hero');
     const hiddenRouteBlocked = __debug.currentTab === 'throne';
@@ -83,9 +93,9 @@ try {
     __debug.devAssign(0, 'back', archer.uid);
     __debug.setTab('throne');
     const ready = __debug.progression;
-    __debug.startBattle();
+    await __debug.startBattle();
     const briefing = __debug.raidBriefing;
-    __debug.confirmRaidBriefing();
+    await __debug.confirmRaidBriefing();
     const briefingArchived = __debug.story.archive.some((x) => x.key === 'raid-briefing:1');
     const battle = __debug.battle;
     __debug.backManage();
@@ -113,6 +123,8 @@ try {
     `First raid did not show its pre-battle campaign story: ${JSON.stringify({ briefing: onboarding.briefing, ready: onboarding.ready, battle: onboarding.battle })}`);
   assert(onboarding.briefingArchived, 'Confirmed campaign briefing was not added to the chronicle.');
   assert(onboarding.battle?.heroesAlive === 1, 'Guided battle did not start against one enemy.');
+  assert(onboarding.battle?.dialoguePack?.opening?.[0]?.text === '这次差旅没有返程票。',
+    'The selected AI model did not provide the pre-battle dialogue pack.');
   assert(onboarding.unlocks[2].tabs.includes('report') && !onboarding.unlocks[2].tabs.includes('hero'), 'Raid 2 unlock schedule is incorrect.');
   assert(!onboarding.unlocks[3].tabs.includes('hero') && !onboarding.unlocks[3].tabs.includes('shop'), 'Raid 3 unlock schedule is incorrect.');
   assert(onboarding.unlocks[4].tabs.includes('shop') && !onboarding.unlocks[4].tabs.includes('story') && !onboarding.unlocks[4].tabs.includes('hero'), 'Raid 4 unlock schedule is incorrect.');
@@ -208,7 +220,7 @@ try {
   assert(skillDetail.layers.ui.length === 0 && skillDetail.layers.modal.some((text) => text.startsWith('技能・')), 'Detail layer still rendered underlying page text.');
   await page.mouse.click(closePoint.x, closePoint.y);
 
-  const result = await page.evaluate(() => {
+  const result = await page.evaluate(async () => {
     __debug.giveResources(20000, 20000);
     const heroA = __debug.devChamp('lich', 8, []);
     const heroB = __debug.devChamp('lich', 2, []);
@@ -244,8 +256,8 @@ try {
     __debug.devAssign(0, 'front', guardA);
     __debug.devAssign(0, 'back', guardB);
     __debug.devDev(8, 8);
-    __debug.startBattle();
-    if (__debug.raidBriefing) __debug.confirmRaidBriefing();
+    await __debug.startBattle();
+    if (__debug.raidBriefing) await __debug.confirmRaidBriefing();
     const facilityVisual = __debug.battle.utilityVisual;
     const battleRun = __debug.runBattleToEnd();
     const report = __debug.reports[0];
@@ -279,6 +291,27 @@ try {
   assert(result.returnAdvanced, 'Returning to management after a win did not advance exactly one raid.');
   assert(result.exileLead && result.exiles === 1, 'Dismissed hero encounter was not retained.');
   assert(result.violations.length === 0, `Bounded text overflow: ${JSON.stringify(result.violations)}`);
+
+  await page.waitForFunction(() => __debug.reports[0]?.aiState === 'done', null, { timeout: 10000 });
+  const literaryReport = await page.evaluate(() => __debug.reports[0]?.literary);
+  assert(literaryReport?.title === '门轴与加班费' && literaryReport.chronicle.includes('账本比剑士完整'),
+    'The literary battle report was not attached to the exact local battle record.');
+
+  const contextualLead = await page.evaluate(() => {
+    __debug.forceRaid(32);
+    const hero = __debug.champs[0];
+    return __debug.storyLeadQueue('smoke:ai-context', 'hero-talent-offense', '英雄秘闻', '旧档案重审',
+      { ref: hero.uid, hero: hero.name, talent: '旧式破阵', talentDesc: '攻击强化' });
+  });
+  assert(contextualLead?.id, 'Could not queue the contextual-story fixture.');
+  await page.evaluate((id) => __debug.storyLeadOpen(id), contextualLead.id);
+  await page.waitForFunction(() => __debug.storyScene?.log?.[0]?.text.includes('旧账从柜底爬出来'), null, { timeout: 10000 });
+  const contextualStory = await page.evaluate(() => ({
+    scene: __debug.storyScene,
+    chosen: __debug.storyChoose(0),
+  }));
+  assert(contextualStory.scene.who === '旧档案员' && contextualStory.scene.choices[0].label === '照旧办理'
+    && contextualStory.chosen, 'Contextual story prose did not update while preserving a valid local choice.');
 
   await page.evaluate(() => __debug.backManage());
   for (const viewport of [{ width: 640, height: 360 }, { width: 568, height: 320 }, { width: 390, height: 844 }, { width: 360, height: 640 }]) {

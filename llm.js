@@ -453,6 +453,112 @@ export async function requestScene(snap               , brief = '')             
   return sanitizeScene(j, String(Date.now() % 100000));
 }
 
+// ---------- 战前台词包 ----------
+const cleanLine = (value, max = 24) => String(value ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, max);
+
+export function battleDialoguePrompt(snap) {
+  return [
+    '你为中文像素风地牢经营游戏《勇者去死！》编写一场战前台词包。只输出 JSON，不要解释。',
+    '语气是地牢守方视角的黑色幽默。台词必须短、能在人物头顶两行内读完，不要描述伤害数值。',
+    '只使用输入中给出的 key；根据角色阵营、职业/种族、技能、性格、属性特征写出有辨识度的句子。',
+    '每个单位可写 attack、skill、reaction、heal、special，每类0至3句；opening写2至4句开场交锋。',
+    `<战斗事实>${JSON.stringify(snap)}</战斗事实>`,
+    '输出格式：{"opening":[{"key":"hero:王国剑士","text":"门后有动静。"}],"units":[{"key":"mon:骨头书记","attack":["留下加班费。"],"skill":[],"reaction":[],"heal":[],"special":[]}]}',
+  ].join('\n');
+}
+
+export function sanitizeBattleDialogue(raw, snap) {
+  if (!raw || typeof raw !== 'object') return null;
+  const allowed = new Set((snap?.units ?? []).map((unit) => unit.key));
+  const cleanPool = (value) => Array.isArray(value)
+    ? [...new Set(value.map((line) => cleanLine(line, 22)).filter((line) => line.length >= 2))].slice(0, 3) : [];
+  const units = {};
+  for (const item of Array.isArray(raw.units) ? raw.units.slice(0, 16) : []) {
+    const key = String(item?.key ?? '');
+    if (!allowed.has(key)) continue;
+    const entry = {
+      attack: cleanPool(item.attack), skill: cleanPool(item.skill), reaction: cleanPool(item.reaction),
+      heal: cleanPool(item.heal), special: cleanPool(item.special),
+    };
+    if (Object.values(entry).some((pool) => pool.length)) units[key] = entry;
+  }
+  const opening = [];
+  for (const item of Array.isArray(raw.opening) ? raw.opening.slice(0, 4) : []) {
+    const key = String(item?.key ?? ''), text = cleanLine(item?.text, 24);
+    if (allowed.has(key) && text.length >= 2) opening.push({ key, text });
+  }
+  return opening.length || Object.keys(units).length ? { opening, units } : null;
+}
+
+export async function requestBattleDialogue(snap) {
+  const j = await ask(battleDialoguePrompt(snap), 'dialogue', 8000);
+  return sanitizeBattleDialogue(j, snap);
+}
+
+// ---------- 文学化战报 ----------
+export function literaryReportPrompt(snap) {
+  return [
+    '你是《勇者去死！》地牢档案室的战地书记。只输出 JSON，不要解释。',
+    '根据给定战斗事实写黑色幽默但准确的文学战报。不得创造未发生的击杀、技能、人物、资源或房间结果。',
+    'summary是一段结论；chronicle是完整纪事，分2至4个短段落；highlights是2至4条短句。',
+    '数字必须与输入一致。失败可以尖刻，但必须给出可理解的转折原因。',
+    `<战报事实>${JSON.stringify(snap)}</战报事实>`,
+    '输出格式：{"title":"档案标题","summary":"短结论","chronicle":"第一段\\n\\n第二段","highlights":["关键事实一","关键事实二"]}',
+  ].join('\n');
+}
+
+export function sanitizeLiteraryReport(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const title = cleanLine(raw.title, 24);
+  const summary = String(raw.summary ?? '').trim().slice(0, 180);
+  const chronicle = String(raw.chronicle ?? '').trim().slice(0, 900);
+  const highlights = Array.isArray(raw.highlights)
+    ? raw.highlights.map((line) => cleanLine(line, 80)).filter(Boolean).slice(0, 4) : [];
+  if (!summary || !chronicle) return null;
+  return { title: title || '战地书记补录', summary, chronicle, highlights };
+}
+
+export async function requestLiteraryReport(snap) {
+  const j = await ask(literaryReportPrompt(snap), 'report', 12000);
+  return sanitizeLiteraryReport(j);
+}
+
+// ---------- 上下文秘闻润色 ----------
+export function contextStoryPrompt(snap) {
+  const choiceShape = (snap.base?.choices ?? []).map((choice, index) => ({ index, label: choice.label, reply: choice.reply }));
+  return [
+    '你是《勇者去死！》的地牢编年史作者。只输出 JSON，不要解释。',
+    '根据人物、设施、既往档案与本地事件底稿，改写一则上下文秘闻。保持黑色幽默和守方视角。',
+    '不得改变选项数量、顺序、事实或任何游戏效果；只润色正文、说话者、按钮短标签与选择后的回应。',
+    'text不超过220字，who不超过8字，label不超过8字，reply不超过160字。',
+    `<秘闻上下文>${JSON.stringify({ ...snap, base: { ...snap.base, choices: choiceShape } })}</秘闻上下文>`,
+    '输出格式：{"who":"说话者","text":"事件正文","choices":[{"index":0,"label":"选项","reply":"结果叙述"}]}',
+  ].join('\n');
+}
+
+export function sanitizeContextStory(raw, base) {
+  if (!raw || typeof raw !== 'object' || !base) return null;
+  const text = String(raw.text ?? '').trim().slice(0, 220);
+  if (!text) return null;
+  const patches = new Map();
+  for (const item of Array.isArray(raw.choices) ? raw.choices : []) {
+    const index = Math.round(Number(item?.index));
+    if (index < 0 || index >= (base.choices?.length ?? 0) || patches.has(index)) continue;
+    const label = cleanLine(item.label, 8), reply = String(item.reply ?? '').trim().slice(0, 160);
+    if (label && reply) patches.set(index, { label, reply });
+  }
+  return {
+    who: cleanLine(raw.who, 8) || base.who,
+    text,
+    choices: (base.choices ?? []).map((choice, index) => ({ ...choice, ...(patches.get(index) ?? {}) })),
+  };
+}
+
+export async function requestContextStory(snap) {
+  const j = await ask(contextStoryPrompt(snap), 'context', 10000);
+  return sanitizeContextStory(j, snap.base);
+}
+
 // ---------- 自定义 HTTP 后端（OpenAI 兼容的 chat/completions 形状） ----------
 // 玩家自己填接口地址与密钥；不内置任何服务商，也不代发请求。
 ;                                                                 
@@ -468,7 +574,7 @@ export function makePlatformBackend()             {
         system: '你是一款中文 8-bit 地牢经营游戏的设计助手。严格只输出一个 JSON 对象，不要解释、不要 markdown 代码块。',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.9,
-        maxTokens: opts.kind === 'scene' ? 700 : 320,
+        maxTokens: ({ scene: 700, dialogue: 800, report: 1100, context: 800 })[opts.kind] ?? 320,
       });
       if (!r.ok) {
         const MSG                         = {
@@ -493,6 +599,7 @@ export function makeHttpBackend(cfg         )             {
     name: clean?.model ? `${presetById(clean.provider).name}・${clean.model}` : '外部模型',
     async complete(prompt, opts) {
       if (!clean?.baseUrl || !clean.model) throw new Error('请先刷新并选择模型');
+      const maxTokens = ({ scene: 700, dialogue: 800, report: 1100, context: 800 })[opts.kind] ?? 320;
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
       try {
@@ -508,12 +615,12 @@ export function makeHttpBackend(cfg         )             {
             system: '你是一款中文 8-bit 地牢经营游戏的设计助手。严格只输出一个 JSON 对象，不要解释、不要 markdown 代码块。',
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.9,
-            max_tokens: opts.kind === 'scene' ? 700 : 320,
+            max_tokens: maxTokens,
           } : {
             model: clean.model,
             messages: [{ role: 'user', content: prompt }],
             temperature: 0.9,
-            max_tokens: opts.kind === 'scene' ? 700 : 320,
+            max_tokens: maxTokens,
           }),
           signal: ctrl.signal,
         });

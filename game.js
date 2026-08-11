@@ -8,7 +8,8 @@ import { createBattle, stepBattle, ROOM_W, affixText, actionProgress, deployUtil
 import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, AFFIX_BUDGET, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, clampAffixDraft, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, legendaryPartCount, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
                                                                                                                           
 import { AI_PRESETS, getBackend, hasBackend, llmStatus, loadCfg, loadMode, normalizeBaseUrl, presetById, refreshModels,
-  requestAffix, requestPart, restoreBackend, saveCfg, saveMode, setBackend, requestScene as llmScene } from './llm.js';
+  requestAffix, requestBattleDialogue, requestContextStory, requestLiteraryReport, requestPart,
+  restoreBackend, saveCfg, saveMode, setBackend, requestScene as llmScene } from './llm.js';
                                         
                                            
 import { applyEffects, fillText, getProvider, requestScene, sceneById, setProvider, testConds, localProvider, SCENES } from './story.js';
@@ -233,6 +234,8 @@ function syncForged() {
 // 旧版本/损坏存档可能带未知陷阱或悬空引用，清洗后再渲染，否则查表会 undefined 白屏
 function sanitizeSave() {
   syncForged();
+  S.reports = Array.isArray(S.reports) ? S.reports.filter((report) => report && typeof report.raidNo === 'number').slice(0, 5) : [];
+  for (const report of S.reports) if (report.aiState === 'pending') report.aiState = report.literary ? 'done' : 'fallback';
   if (Math.round(S.campaignVersion || 0) < 2 && S.overtime) S.otRaid = Math.max(NORMAL_RAID_COUNT + 1, Math.round(S.otRaid || 13) + 8);
   S.campaignVersion = 2;
   S.doctrine = S.doctrine in DOCTRINES ? S.doctrine : 'default';
@@ -1284,8 +1287,70 @@ let paused = false;
 let toast = { text: '', t: 0 };
 let endingT = 0;
 let pendingResultRaid = 0;
+let battlePrepBusy = false;
+const battleDialogueCache = new Map();
 
 function say(text        ) { toast = { text, t: 2.2 }; }
+
+function aiGenerationEnabled() {
+  const mode = loadMode();
+  return hasBackend() && (mode === 'http' || (mode === 'gp' && window.parent !== window));
+}
+
+function battleDialogueSnapshot(raid) {
+  const units = new Map();
+  const add = (unit) => { if (unit?.key && !units.has(unit.key)) units.set(unit.key, unit); };
+  raid.members.forEach((member) => {
+    const cls = HERO_CLASSES[member.cls];
+    add({ key: `hero:${cls.name}`, side: '入侵勇者', name: cls.name, kind: cls.role, level: member.lv,
+      skill: cls.skill, description: cls.intel });
+  });
+  const slotNames = { front: '前排', back: '后排', flank: '侧翼' };
+  S.rooms.forEach((room, floor) => {
+    for (const slot of ['front', 'back', 'flank']) {
+      const inst = instById(room[slot]);
+      if (!inst) continue;
+      const kind = instKind(inst);
+      add({ key: `mon:${kind.name}`, side: '地牢守军', name: kind.name, kind: kind.role, level: inst.lv,
+        position: `${floor + 1}层${slotNames[slot]}`, skill: kind.skill, description: kind.passive });
+    }
+    const champ = champById(room.leader);
+    if (champ) {
+      const kind = champKind(champ), stats = statOf(champ);
+      add({ key: `mon:${champ.name}`, side: '地牢英雄', name: champ.name, kind: kind.name, level: champ.lv,
+        position: `${floor + 1}层统领`, skill: kind.skill, title: titleOf(champ)?.name ?? '',
+        traits: champ.traits.map((id) => TRAITS[id]?.name).filter(Boolean), personality: personalityById(champ.personality)?.name ?? '',
+        stats: { hp: stats.hp, atk: stats.atk, def: stats.def, thorns: stats.eff?.thorns ?? 0 } });
+    }
+  });
+  return {
+    raid: { no: raid.no, title: raid.title, affixes: raid.affixes.map((id) => AFFIXES[id]?.name).filter(Boolean) },
+    doctrine: doctrine().name,
+    rooms: S.rooms.map((room, index) => ({ floor: index + 1, theme: THEMES[room.theme]?.name,
+      traps: [room.trap, room.trap2].filter((id) => id && id !== 'none').map((id) => TRAPS[id]?.name),
+      facility: utilityAt(index)?.kind === 'none' ? '' : utilityDef(utilityAt(index)).name })),
+    recentHistory: S.story.archive.slice(0, 3).map((item) => `${item.title}：${item.outcome ?? item.summary ?? ''}`),
+    units: [...units.values()],
+  };
+}
+
+async function prepareBattleDialogue(raid) {
+  if (!aiGenerationEnabled()) return null;
+  const snap = battleDialogueSnapshot(raid);
+  const key = JSON.stringify([getBackend()?.name, snap.raid, snap.units, snap.rooms]);
+  if (battleDialogueCache.has(key)) return battleDialogueCache.get(key);
+  try {
+    const pack = await requestBattleDialogue(snap);
+    if (pack) {
+      battleDialogueCache.set(key, pack);
+      while (battleDialogueCache.size > 6) battleDialogueCache.delete(battleDialogueCache.keys().next().value);
+    }
+    return pack;
+  } catch (error) {
+    console.warn('战前台词生成失败，已使用本地台词包', error);
+    return null;
+  }
+}
 
 function openDetailPopup(title, body, color = C.gold) {
   detailPopup = { title: String(title), body: String(body), color };
@@ -4004,6 +4069,23 @@ function drawPortraitHero(x, y, w, h) {
   portraitPager(`portrait-hero-${portraitHeroMode}`, pg.page, pg.pages, x + 8, y + h - 38, w - 16);
 }
 
+function reportDetailBody(r) {
+  const review = Array.isArray(r.review) && r.review.length ? r.review : [r.firstCause];
+  const literary = r.literary
+    ? `${r.literary.title}\n\n${r.literary.chronicle}${r.literary.highlights?.length ? `\n\n书记摘录：\n${r.literary.highlights.map((line) => `· ${line}`).join('\n')}` : ''}\n\n—— 原始战术记录 ——\n`
+    : r.aiState === 'pending' ? 'AI 战地书记正在补录，以下为原始战术记录。\n\n' : '';
+  const economy = r.economy;
+  const economyText = economy
+    ? `\n\n经营损益：结算${economy.bone}骨币、${economy.mana}魔质、${economy.xp ?? 0}训练经验与${economy.repair ?? 0}维修点；损失${economy.boneLost}骨币、${economy.manaLost}魔质、${economy.xpLost ?? 0}训练经验与${economy.repairLost ?? 0}维修点；宝库保护${economy.boneProtected}骨币、${economy.manaProtected}魔质。\n功能储备：疗愈${economy.services?.healing ?? 0}次，工坊${economy.services?.forge ?? 0}次（-${Math.round((economy.services?.forgeDiscount ?? 0) * 100)}%），孵化优惠${economy.services?.hatchery ?? 0}次（-${Math.round((economy.services?.hatcheryDiscount ?? 0) * 100)}%）。\n${economy.rows.filter((x) => x.kind !== 'none').map((x) => `第${x.floor + 1}层 ${utilityDef({ kind: x.kind }).name}：${x.breached ? `遭劫${(x.lootDuration ?? 0).toFixed(1)}秒、设施-${x.conditionDamage ?? 0}耐久、功能损失${x.serviceLost ?? 0}次、员工${x.workerState === 'evacuated' ? '撤离' : x.workerState === 'fallen' ? '抵抗倒下' : x.workerState === 'reinforced' ? '参战' : x.workerUid ? '留守' : '无人'}` : '安全'}，结算${x.boneGot}骨/${x.manaGot}魔/${(x.xpGot ?? 0) * (x.training?.length ?? 0)}经验/${x.repairGot ?? 0}维修点，耐久${x.conditionAfter}`).join('\n')}`
+    : '';
+  const quotes = Array.isArray(r.dialogue) && r.dialogue.length
+    ? r.dialogue.slice(-18).map((d) => `${d.name}：${d.text}`)
+    : r.logs.filter((line) => /^　/.test(line.text)).slice(0, 12).map((line) => line.text.trim());
+  const storyText = (r.storyConsequences?.length ?? 0) || (r.storyEchoes?.length ?? 0)
+    ? `\n\n秘闻留下的影响：\n${(r.storyConsequences ?? []).map((item) => `· ${item.name}：${item.summary}`).join('\n')}${r.storyEchoes?.length ? `\n${r.storyEchoes.map((item) => `· ${item.title}：${item.outcome}`).join('\n')}` : ''}` : '';
+  return `${literary}${review.join('\n\n')}${economyText}${storyText}${quotes.length ? `\n\n战场对白摘录：\n${quotes.join('\n')}` : ''}`;
+}
+
 function drawPortraitReport(x, y, w, h) {
   if (!S.reports.length) { labelC(portraitLayer, '还没有战报，先打一场袭击', x + w / 2, y + 80, 16, C.stoneLit); return; }
   reportIdx = Math.min(reportIdx, S.reports.length - 1);
@@ -4016,10 +4098,14 @@ function drawPortraitReport(x, y, w, h) {
   });
   const r = S.reports[reportIdx];
   panelF(portraitGfx, portraitLayer, 'stone', x + 8, y + 46, w - 16, 82, C.wall);
-  label(portraitLayer, `${r.title}・${r.win ? '守住' : '失守'}`, x + 20, y + 58, 17, r.win ? C.green : C.red);
+  label(portraitLayer, `${cut(r.literary?.title ?? r.title, 10)}・${r.win ? '守住' : '失守'}`, x + 20, y + 58, 17, r.win ? C.green : C.red);
+  button(portraitGfx, portraitLayer, portraitHits, x + w - 92, y + 52, 76, 30, r.aiState === 'pending' ? 'AI补录中' : r.literary ? '文学全文' : '完整复盘',
+    () => openDetailPopup(`#${r.raidNo} ${r.literary?.title ?? '战术复盘'}`, reportDetailBody(r), r.win ? C.green : C.red),
+    { size: 11, enabled: r.aiState !== 'pending', border: r.literary ? C.purple : C.gold, color: r.literary ? C.purple : C.gold });
   label(portraitLayer, `封印 ${r.seal}　耗时 ${r.time.toFixed(1)}秒　评价 ${'★'.repeat(r.skulls) || '无'}`, x + 20, y + 84, 13, C.bone);
   label(portraitLayer, `资源 ${r.bone >= 0 ? '+' : ''}${r.bone}骨　${r.mana >= 0 ? '+' : ''}${r.mana}魔`, x + 20, y + 106, 13, C.gold);
   const rows = [
+    ...(r.literary ? [`书记：${r.literary.summary}`, ...r.literary.highlights.map((line) => `摘录：${line}`)] : r.aiState === 'pending' ? ['AI战地书记正在补录…'] : []),
     ...(r.rooms ?? []).map((room) => `${room.i + 1}层：${room.broken ? `失守・${room.reason}` : '守住'}`),
     ...(r.review ?? []).map((line) => `复盘：${line}`),
     ...(r.logs ?? []).slice(-8).map((line) => `战况：${line}`),
@@ -4037,6 +4123,7 @@ function drawPortraitStoryRun(x, y, w, h) {
   const run = storyRun;
   button(portraitGfx, portraitLayer, portraitHits, x + w - 84, y + 2, 76, 36, '离开', closeStory, { size: 14, border: C.red, color: C.red });
   label(portraitLayer, run.scene?.title ?? '地牢秘闻', x + 8, y + 10, 17, C.gold);
+  if (run.aiState === 'pending') label(portraitLayer, 'AI 正在结合旧档案润色…', x + 8, y + 32, 11, C.purple);
   const latest = run.log.slice(-5);
   let cy = y + 50;
   latest.forEach((entry) => {
@@ -4151,11 +4238,11 @@ function drawPortraitNativeManage() {
 
   const ack = guide?.[2];
   const battleReady = tab === 'throne' && (!guide || guide[0] === 'battle');
-  const primaryLabel = detailPopup ? '关闭详情' : portraitMobileMenu ? '关闭菜单' : ack ? '明白，继续' : battleReady ? '迎战' : guide ? '按引导完成当前步骤' : tab === 'throne' ? '迎战' : '返回王座';
+  const primaryLabel = detailPopup ? '关闭详情' : portraitMobileMenu ? '关闭菜单' : ack ? '明白，继续' : battlePrepBusy ? 'AI 正在编排战前台词…' : battleReady ? '迎战' : guide ? '按引导完成当前步骤' : tab === 'throne' ? '迎战' : '返回王座';
   const primaryAction = detailPopup ? closeDetailPopup : portraitMobileMenu ? () => { portraitMobileMenu = false; confirmNew = false; render(); }
     : ack ? acknowledgeRoundGuide : battleReady || tab === 'throne' ? startBattle : guide ? () => {} : () => setTab('throne');
   button(portraitGfx, portraitLayer, portraitHits, 8, primaryY, w - 16, 46, primaryLabel, primaryAction,
-    { size: 17, enabled: !!detailPopup || portraitMobileMenu || ack || battleReady || tab === 'throne' || !guide, fill: ack ? C.goldDark : C.greenDark, border: ack ? C.gold : C.green, color: C.white });
+    { size: 17, enabled: !battlePrepBusy && (!!detailPopup || portraitMobileMenu || ack || battleReady || tab === 'throne' || !guide), fill: ack ? C.goldDark : C.greenDark, border: ack ? C.gold : C.green, color: C.white });
   portraitActionMap.primary = { x: 8, y: primaryY, w: w - 16, h: 46 };
 
   const gap = 5, bw = Math.floor((w - 16 - gap * (cols - 1)) / cols);
@@ -4325,12 +4412,12 @@ function ensurePortraitChrome() {
     return;
   }
   const guideAck = screen === 'manage' && currentGuide?.[2];
-  const primaryLabel = screen === 'manage' ? (guideAck ? '明白，继续教学' : '迎　战') : screen === 'battle' ? (paused ? '继续战斗' : '暂停战斗') : screen === 'result' ? '继续结算' : '进入加班勇者';
+  const primaryLabel = screen === 'manage' ? (guideAck ? '明白，继续教学' : battlePrepBusy ? 'AI 编排中…' : '迎　战') : screen === 'battle' ? (paused ? '继续战斗' : '暂停战斗') : screen === 'result' ? '继续结算' : '进入加班勇者';
   const primaryAction = screen === 'manage' ? (guideAck ? acknowledgeRoundGuide : startBattle) : screen === 'battle'
     ? () => { paused = !paused; portraitChromeKey = ''; }
     : screen === 'result' ? afterResult : enterOvertime;
   button(portraitGfx, portraitLayer, portraitHits, margin, primaryY, w - margin * 2, 44, primaryLabel, primaryAction,
-    { size: 17, fill: guideAck ? C.goldDark : C.greenDark, border: guideAck ? C.gold : C.green, color: C.white });
+    { size: 17, enabled: !battlePrepBusy, fill: guideAck ? C.goldDark : C.greenDark, border: guideAck ? C.gold : C.green, color: C.white });
   if (screen === 'manage' && currentGuide?.[0] === 'battle') {
     const pulse = new PIXI.Graphics().roundRect(margin - 2, primaryY - 2, w - margin * 2 + 4, 48, 4)
       .stroke({ width: 2, color: C.gold, alignment: 0 });
@@ -4462,8 +4549,9 @@ function pageThrone(g               ) {
   labelC(uiLayer, `封印 ${sealEff}・${doctrine().tag}`, 405, 133, 12, doctrineSeal < 1 ? C.red : C.purple);
   labelC(uiLayer, '突围勇者每名 -25', 405, 148, 12, C.stoneLit);
   labelC(uiLayer, placed === 0 ? '空防必败' : cut(`待产＋${economy.bone}骨＋${economy.mana}魔`, 14), 405, 163, 11, placed === 0 ? C.red : C.gold);
-  button(g, uiLayer, hits, 344, 181, 122, 30, '迎 战', () => startBattle(), { fill: C.redDark, border: C.red, color: C.white });
-  labelC(uiLayer, 'Enter 开战', 405, 215, 12, C.stoneLit);
+  button(g, uiLayer, hits, 344, 181, 122, 30, battlePrepBusy ? 'AI 编排中…' : '迎 战', () => void startBattle(),
+    { enabled: !battlePrepBusy, fill: C.redDark, border: C.red, color: C.white });
+  labelC(uiLayer, battlePrepBusy ? '生成失败会自动使用本地台词' : 'Enter 开战', 405, 215, 12, C.stoneLit);
 }
 
 function tutorialHint()         {
@@ -5169,13 +5257,71 @@ function queueTrainingRelation(floor, added, existing) {
     { ref: refs[0], refs, floor: floor + 1, heroARef: refs[0], heroBRef: refs[1], studentA: nameOf(existing, ua), studentB: nameOf(added, ub) });
 }
 
+function contextualStorySnapshot(lead, sc) {
+  const subjects = storyLeadSubjects(lead.source, lead.context, lead.subjects);
+  const heroIds = subjects.filter((token) => token.startsWith('hero:')).map((token) => Number(token.slice(5))).filter(Number.isFinite);
+  const heroes = heroIds.map(champById).filter(Boolean).map((champ) => ({
+    name: champ.name, race: champKind(champ).name, level: champ.lv, title: titleOf(champ)?.name ?? '',
+    personality: personalityById(champ.personality)?.name ?? '', traits: champ.traits.map((id) => TRAITS[id]?.name).filter(Boolean),
+    battles: champ.battles, kills: champ.kills, wounds: champ.wounds ?? 0, restTurns: champ.restTurns ?? 0,
+  }));
+  const facilityRefs = subjects.filter((token) => token.startsWith('facility:')).map((token) => token.slice(9));
+  const facilities = facilityRefs.map((ref) => {
+    const floor = Number(ref.split(':')[0]), facility = utilityAt(floor);
+    if (!facility || facility.kind === 'none') return null;
+    return { floor: floor + 1, name: utilityDef(facility).name, level: facility.level, condition: facility.condition,
+      nickname: facility.nickname ?? '', persona: facility.persona ? FACILITY_PERSONAS[facility.persona]?.name : '',
+      history: (facility.history ?? []).slice(-4).map((item) => item.text ?? item) };
+  }).filter(Boolean);
+  const related = S.story.archive.filter((item) => storyLeadSubjects(item.source, item.context, item.subjects)
+    .some((token) => subjects.includes(token))).slice(0, 6)
+    .map((item) => ({ title: item.title, outcome: item.outcome, effects: item.effects, raid: item.resolvedRaid }));
+  const base = {
+    id: sc.id,
+    who: sc.who ? fillText(sc.who, storyBridge) : '',
+    text: fillText(sc.text, storyBridge),
+    choices: (sc.choices ?? []).map((choice) => ({ ...choice,
+      label: fillText(choice.label, storyBridge), reply: fillText(choice.reply, storyBridge) })),
+  };
+  return {
+    lead: { source: lead.source, title: lead.title, raid: lead.raidNo, context: lead.context },
+    current: { raid: S.raidNo, bone: S.bone, mana: S.mana, doctrine: doctrine().name },
+    heroes, facilities, related,
+    recentBattle: S.reports[0] ? { raid: S.reports[0].raidNo, title: S.reports[0].title, win: S.reports[0].win,
+      summary: S.reports[0].literary?.summary ?? S.reports[0].firstCause } : null,
+    base,
+  };
+}
+
+async function enrichContextStory(run, lead, sc) {
+  if (!aiGenerationEnabled() || lead.source === '无主传闻') return;
+  run.aiState = 'pending';
+  render();
+  try {
+    const patch = await requestContextStory(contextualStorySnapshot(lead, sc));
+    if (!patch || storyRun !== run || run.pending === 'done') return;
+    run.scene = { ...sc, who: patch.who, text: patch.text, choices: patch.choices };
+    if (run.log[0]) {
+      run.log[0].who = patch.who;
+      run.log[0].text = patch.text;
+    }
+    run.aiState = 'done';
+    render();
+  } catch (error) {
+    if (storyRun === run) { run.aiState = 'fallback'; render(); }
+    console.warn('上下文秘闻生成失败，已保留本地事件', error);
+  }
+}
+
 function openStoryLead(id) {
   const lead = S.story.leads.find((x) => x.id === id);
   const sc = lead && sceneById(lead.sceneId);
   if (!lead || !sc || (lead.dueRaid ?? 0) > S.raidNo) return false;
   storyRun = { scene: sc, log: [], pending: null, leadId: lead.id, context: { ...lead.context } };
+  const run = storyRun;
   tab = 'story';
   openScene(sc, false);
+  void enrichContextStory(run, lead, sc);
   return true;
 }
 
@@ -5759,6 +5905,7 @@ function pageStory(g               ) {
 
   const run = storyRun;
   label(uiLayer, '地牢秘闻', 20, 42, 12, C.gold);
+  if (run.aiState === 'pending') label(uiLayer, 'AI 正在结合角色与旧档案润色…', 226, 42, 10, C.purple);
   button(g, uiLayer, hits, 400, 40, 56, 16, '离开', () => closeStory(), { size: 12, border: C.red, color: C.red });
 
   // 羊皮卷正文：从最新一段往回收，真实测量 pixi 文本高度，装不下的旧段直接丢掉
@@ -6759,7 +6906,7 @@ function pageReport(g               ) {
     { size: 10, fill: C.purpleDark, border: C.purple, color: C.white });
   else if ((r.storyConsequences?.length ?? 0) || (r.storyEchoes?.length ?? 0)) button(g, uiLayer, hits, 252, 40, 74, 18, '追溯秘闻', () =>
     openChronicle('all', null, r.raidNo), { size: 10, fill: C.ink, border: C.purple, color: C.purple });
-  label(uiLayer, `${r.title}：${r.win ? '守住' : '失守'}  封印${r.seal}  ${r.time.toFixed(1)}s`, 8, 64, 12, r.win ? C.green : C.red);
+  label(uiLayer, `${cut(r.literary?.title ?? r.title, 18)}：${r.win ? '守住' : '失守'}  封印${r.seal}  ${r.time.toFixed(1)}s`, 8, 64, 12, r.win ? C.green : C.red);
   skullRow(g, 250, 62, r.skulls);
   const prooms = paged(`rep-rooms-${reportIdx}`, r.rooms, 3);
   let y = 82;
@@ -6772,20 +6919,11 @@ function pageReport(g               ) {
   pager(g, `rep-rooms-${reportIdx}`, prooms.pages, 8, 138, 200, '楼层 ');
   y = 158;
   label(uiLayer, '关键败因/结论：', 8, y + 4, 12, C.gold);
-  button(g, uiLayer, hits, 132, y + 2, 76, 15, '完整战术复盘', () => {
-    const review = Array.isArray(r.review) && r.review.length ? r.review : [r.firstCause];
-    const economy = r.economy;
-    const economyText = economy
-      ? `\n\n经营损益：结算${economy.bone}骨币、${economy.mana}魔质、${economy.xp ?? 0}训练经验与${economy.repair ?? 0}维修点；损失${economy.boneLost}骨币、${economy.manaLost}魔质、${economy.xpLost ?? 0}训练经验与${economy.repairLost ?? 0}维修点；宝库保护${economy.boneProtected}骨币、${economy.manaProtected}魔质。\n功能储备：疗愈${economy.services?.healing ?? 0}次，工坊${economy.services?.forge ?? 0}次（-${Math.round((economy.services?.forgeDiscount ?? 0) * 100)}%），孵化优惠${economy.services?.hatchery ?? 0}次（-${Math.round((economy.services?.hatcheryDiscount ?? 0) * 100)}%）。\n${economy.rows.filter((x) => x.kind !== 'none').map((x) => `第${x.floor + 1}层 ${utilityDef({ kind: x.kind }).name}：${x.breached ? `遭劫${(x.lootDuration ?? 0).toFixed(1)}秒、设施-${x.conditionDamage ?? 0}耐久、功能损失${x.serviceLost ?? 0}次、员工${x.workerState === 'evacuated' ? '撤离' : x.workerState === 'fallen' ? '抵抗倒下' : x.workerState === 'reinforced' ? '参战' : x.workerUid ? '留守' : '无人'}` : '安全'}，结算${x.boneGot}骨/${x.manaGot}魔/${(x.xpGot ?? 0) * (x.training?.length ?? 0)}经验/${x.repairGot ?? 0}维修点，耐久${x.conditionAfter}`).join('\n')}`
-      : '';
-    const quotes = Array.isArray(r.dialogue) && r.dialogue.length
-      ? r.dialogue.slice(-18).map((d) => `${d.name}：${d.text}`)
-      : r.logs.filter((l) => /^　/.test(l.text)).slice(0, 12).map((l) => l.text.trim());
-    const storyText = (r.storyConsequences?.length ?? 0) || (r.storyEchoes?.length ?? 0)
-      ? `\n\n秘闻留下的影响：\n${(r.storyConsequences ?? []).map((x) => `· ${x.name}：${x.summary}`).join('\n')}${r.storyEchoes?.length ? `\n${r.storyEchoes.map((x) => `· ${x.title}：${x.outcome}`).join('\n')}` : ''}` : '';
-    openDetailPopup(`#${r.raidNo} 战术复盘`, `${review.join('\n\n')}${economyText}${storyText}${quotes.length ? `\n\n战场对白摘录：\n${quotes.join('\n')}` : ''}`, r.win ? C.green : C.red);
-  }, { size: 9, fill: C.ink, border: C.goldDark, color: C.gold });
-  boundedText(uiLayer, r.firstCause, 8, y + 20, 200, Math.max(15, 210 - (y + 20)), 11, C.bone);
+  button(g, uiLayer, hits, 132, y + 2, 76, 15, r.aiState === 'pending' ? 'AI补录中…' : r.literary ? '文学战报' : '完整战术复盘', () => {
+    openDetailPopup(`#${r.raidNo} ${r.literary?.title ?? '战术复盘'}`, reportDetailBody(r), r.win ? C.green : C.red);
+  }, { size: 9, enabled: r.aiState !== 'pending', fill: C.ink, border: r.literary ? C.purple : C.goldDark, color: r.literary ? C.purple : C.gold });
+  boundedText(uiLayer, r.literary?.summary ?? (r.aiState === 'pending' ? 'AI战地书记正在依据真实战斗记录补写文学战报…' : r.firstCause),
+    8, y + 20, 200, Math.max(15, 210 - (y + 20)), 11, r.aiState === 'pending' ? C.purple : C.bone);
   const pu = paged(`rep-units-${reportIdx}`, r.units, 4);
   label(uiLayer, `单位战绩 ${r.units.length}`, 216, 82, 12, C.white);
   let y2 = 98;
@@ -6880,11 +7018,12 @@ function confirmRaidBriefing() {
   }
   raidBriefing = null;
   persist(); playSfx('tab');
-  startBattle();
+  return startBattle();
 }
 
-function startBattle() {
+async function startBattle() {
   if (screen !== 'manage') return;
+  if (battlePrepBusy) { say('叙事者正在整理战前台词…'); return; }
   confirmNew = false;
   if (S.raidNo === 1 && !S.overtime) {
     const step = syncTutorialProgress();
@@ -6919,10 +7058,22 @@ function startBattle() {
   for (const m of S.monsters) instKind(m);
   for (const c of S.champs) champKind(c);
   const raid = currentRaid();
+  let dialoguePack = null;
+  if (aiGenerationEnabled()) {
+    battlePrepBusy = true;
+    say('叙事者正在为本场编排战前台词…');
+    render();
+    try {
+      dialoguePack = await prepareBattleDialogue(raid);
+    } finally {
+      battlePrepBusy = false;
+    }
+    if (screen !== 'manage' || currentRaid().no !== raid.no) return;
+  }
   const dungeonEconomy = dungeonEconomyPreview();
   const doctrineSeal = S.doctrine === 'default' ? 1.25 : S.doctrine === 'economy' ? 0.8 : 1;
   battle = createBattle(raid, S.rooms, S.monsters,
-    { sealMax: Math.round(sealMax() * doctrineSeal), trapPower: trapPower(), mods: battleMods(), research: researchEffects(S.workshopResearch), champs: champStatMap(), dungeonEconomy });
+    { sealMax: Math.round(sealMax() * doctrineSeal), trapPower: trapPower(), mods: battleMods(), research: researchEffects(S.workshopResearch), champs: champStatMap(), dungeonEconomy, dialoguePack });
   pendingResultRaid = raid.no;
   screen = 'battle';
   scheduleLayout();
@@ -7435,6 +7586,42 @@ function drawBattleHud() {
 
 // ---------- 结算 ----------
 let resultLayerBuilt = false;
+
+function literaryReportSnapshot(report) {
+  return {
+    raid: { no: report.raidNo, title: report.title, win: report.win, seal: report.seal, time: Number(report.time.toFixed(1)), skulls: report.skulls },
+    rooms: report.rooms.map((room) => ({ floor: room.i + 1, broken: room.broken, breachTime: Number((room.t ?? 0).toFixed(1)),
+      reason: room.reason, lootDuration: Number((room.lootDuration ?? 0).toFixed(1)), workerState: room.workerState })),
+    units: report.units.slice(0, 10),
+    metrics: report.metrics,
+    economy: report.economy ? { bone: report.economy.bone, mana: report.economy.mana, xp: report.economy.xp, repair: report.economy.repair,
+      losses: report.economy.rows?.filter((row) => row.breached).map((row) => ({ floor: row.floor + 1, boneLoss: row.boneLoss, manaLoss: row.manaLoss,
+        conditionDamage: row.conditionDamage, workerState: row.workerState })) } : null,
+    tacticalReview: report.review,
+    dialogue: report.dialogue.filter((line) => ['banter', 'skill', 'reaction', 'heal', 'revive', 'allyRevive', 'loot'].includes(line.kind)).slice(-18)
+      .map((line) => `${line.name}：${line.text}`),
+    story: [...report.storyConsequences.map((item) => `${item.name}：${item.summary}`),
+      ...report.storyEchoes.map((item) => `${item.title}：${item.outcome}`)].slice(0, 6),
+  };
+}
+
+async function enrichLiteraryReport(report) {
+  if (!aiGenerationEnabled()) { report.aiState = 'local'; return; }
+  report.aiState = 'pending';
+  persist();
+  try {
+    const literary = await requestLiteraryReport(literaryReportSnapshot(report));
+    if (!literary || !S.reports.includes(report)) return;
+    report.literary = literary;
+    report.aiState = 'done';
+    persist();
+    render();
+  } catch (error) {
+    if (S.reports.includes(report)) { report.aiState = 'fallback'; persist(); render(); }
+    console.warn('文学战报生成失败，已保留本地战术复盘', error);
+  }
+}
+
 function finishBattle() {
   const b = battle ;
   const r = b.result ;
@@ -7512,10 +7699,12 @@ function finishBattle() {
   r.economy = economy;
   const report         = {
     raidNo: b.raid.no, title: b.raid.title, win: r.win, skulls: r.skulls, seal: r.seal, time: b.time,
+    bone: r.bone, mana: r.mana, relicLoot: r.relicLoot ?? 0,
     rooms: b.rooms.map((rm) => ({ i: rm.index, broken: rm.broken, t: rm.breachTime, reason: rm.breachReason,
       lootDuration: rm.utility?.row?.realtime?.duration ?? 0, lootProgress: rm.utility?.row?.realtime?.progress ?? 0,
       workerState: rm.utility?.row?.realtime?.workerState ?? rm.utility?.workerState ?? 'none' })),
     units, firstCause: r.firstCause, review: r.review ?? [], metrics: r.metrics ?? {}, economy,
+    aiState: aiGenerationEnabled() ? 'pending' : 'local',
     dialogue: (b.dialogue ?? []).map((d) => ({ name: d.name, text: d.text, kind: d.kind, side: d.side, room: d.room, t: d.t })),
     logs: b.log.map((l) => ({ text: l.text, tone: l.tone })),
     storyConsequences: S.story.mods.map((m) => ({ id: m.id, name: m.name, summary: modSummary(m), originLeadId: m.originLeadId ?? null })),
@@ -7570,6 +7759,7 @@ function finishBattle() {
   S.story.credits = Math.min(5, S.story.credits + (r.win ? 2 : 1));
   playSfx(r.win ? 'win' : 'lose');
   persist();
+  void enrichLiteraryReport(report);
   playMusic('bgm-manage');
 }
 
@@ -7938,6 +8128,7 @@ window.__debug = {
     return {
       phase: battle.phase, seal: battle.seal, roomIndex: battle.roomIndex, time: battle.time,
       heroesAlive: battle.heroes.filter((h) => h.alive).length,
+      dialoguePack: battle.dialoguePack,
       heroHp: battle.heroes.map((h) => Math.round(h.hp)),
       monHp: battle.rooms.map((r) => r.mons.map((m) => Math.round(m.hp))),
       loot: battle.rooms[battle.roomIndex]?.utility?.loot ? { ...battle.rooms[battle.roomIndex].utility.loot } : null,
@@ -7963,9 +8154,9 @@ window.__debug = {
   } : null,
   deployWorker: () => battle ? deployUtilityWorker(battle) : false,
   evacuateWorker: () => battle ? evacuateUtilityWorker(battle) : false,
-  startBattle: () => { startBattle(); return screen; },
+  startBattle: async () => { await startBattle(); return screen; },
   get raidBriefing() { return raidBriefing ? { ...raidBriefing } : null; },
-  confirmRaidBriefing: () => { confirmRaidBriefing(); return screen; },
+  confirmRaidBriefing: async () => { await confirmRaidBriefing(); return screen; },
   get lawAudit() { return lawAudit ? { ...lawAudit } : null; },
   acceptLawAudit: () => { acceptLawAudit(); return lawAudit; },
   devLawAudit: (type, uid, kind = 'thorns') => {
