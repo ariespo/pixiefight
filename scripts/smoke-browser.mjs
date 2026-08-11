@@ -251,6 +251,13 @@ try {
   assert(nativeDetail.nativePortrait && nativeDetail.portraitActions.primary, 'Portrait detail popup fell back to the desktop canvas.');
   await page.mouse.click(nativeDetail.portraitActions.primary.x + nativeDetail.portraitActions.primary.w / 2,
     nativeDetail.portraitActions.primary.y + nativeDetail.portraitActions.primary.h / 2);
+  await page.evaluate(() => __debug.smithOpen());
+  await page.waitForTimeout(100);
+  const portraitWorkbench = await page.evaluate(() => __debug.viewport());
+  assert(portraitWorkbench.portraitLayout?.nativeModal && portraitWorkbench.portraitActions.modalClose,
+    'Portrait equipment workbench did not open as a complete centered modal.');
+  await page.mouse.click(portraitWorkbench.portraitActions.modalClose.x + portraitWorkbench.portraitActions.modalClose.w / 2,
+    portraitWorkbench.portraitActions.modalClose.y + portraitWorkbench.portraitActions.modalClose.h / 2);
 
   // Native portrait onboarding must be playable without exposing or clicking the hidden desktop canvas.
   await page.setViewportSize({ width: 390, height: 844 });
@@ -277,6 +284,9 @@ try {
   assert(await page.evaluate(() => __debug.progression.deploymentReady && __debug.progression.tutorialStep >= 6), 'Native portrait deployment did not complete the tutorial state.');
   await clickPortraitAction('primary');
   assert(await page.evaluate(() => __debug.screen === 'battle' && __debug.battle?.heroesAlive === 1), 'Native portrait flow did not start the one-enemy teaching battle.');
+  const portraitBattle = await page.evaluate(() => __debug.viewport());
+  assert(portraitBattle.portraitLayout?.logicalLeft === 0 && portraitBattle.portraitLayout?.logicalWidth === 480,
+    'Portrait battle still crops the sides of the combat viewport.');
 
   assert(errors.length === 0, `Browser errors:\n${errors.join('\n')}`);
   console.log('Browser smoke passed: boot, legacy save, story/facility flows, battle/report links, constrained text, landscape touch targets and portrait controls.');

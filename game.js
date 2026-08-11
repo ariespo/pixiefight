@@ -1379,7 +1379,7 @@ function layout() {
   }
   const w = app.screen.width, h = app.screen.height;
   portrait = h > w * 1.15;
-  const portraitManage = portrait && screen === 'manage';
+  const portraitManage = portrait && screen === 'manage' && !portraitModalOpen();
   const portraitLogicalWidth = portraitManage ? (portraitPane === 0 ? VIEW_W : VIEW_W / 2) : VIEW_W;
   const portraitSceneHeight = portraitManage ? 202 : VIEW_H;
   const portraitControlsHeight = portrait ? portraitConsoleHeight() : 0;
@@ -1424,9 +1424,16 @@ function portraitNativeManage() {
   return portrait && screen === 'manage' && PORTRAIT_NATIVE_TABS.has(tab)
     && !portraitNativeBypass && !stitch && !forge && !graft && !smith;
 }
+function portraitModalOpen() { return portrait && screen === 'manage' && (!!stitch || !!forge || !!graft || !!smith); }
+function closePortraitModal() {
+  if (stitch) closeStitch(); else if (forge) closeForge(); else if (graft) closeGraft(); else if (smith) closeSmith();
+  portraitNativeBypass = false;
+  scheduleLayout();
+}
 
 function portraitConsoleHeight() {
-  if (screen !== 'manage') return screen === 'battle' ? 103 : 58;
+  if (portraitModalOpen()) return 64;
+  if (screen !== 'manage') return screen === 'battle' ? 153 : 58;
   const rows = Math.max(1, Math.ceil(visibleTabs().length / 4));
   return 186 + rows * 43;
 }
@@ -1696,8 +1703,9 @@ function openGraft(uid        , target = 'monster') {
   smith = null;
   playSfx('tab');
   render();
+  if (portrait) scheduleLayout();
 }
-function closeGraft() { graft = null; playSfx('tab'); render(); }
+function closeGraft() { graft = null; playSfx('tab'); render(); if (portrait) scheduleLayout(); }
 
 function previewGraftPart(id        ) {
   const gf = graft ;
@@ -1889,6 +1897,7 @@ function openStitch(editUid                = null) {
   playSfx('tab');
   ensureNameInput();
   render();
+  if (portrait) scheduleLayout();
 }
 
 function closeStitch() {
@@ -1971,6 +1980,7 @@ function openSmith(editId                = null) {
   if (nameInput) nameInput.value = smith.plan.name;
   playSfx('tab');
   render();
+  if (portrait) scheduleLayout();
 }
 
 function closeSmith() {
@@ -2263,6 +2273,7 @@ function openForge(tab                            = 'part') {
   syncForgePlaceholder();
   playSfx('tab');
   render();
+  if (portrait) scheduleLayout();
 }
 
 function closeForge() {
@@ -2270,6 +2281,7 @@ function closeForge() {
   removeForgeInput();
   playSfx('tab');
   render();
+  if (portrait) scheduleLayout();
 }
 
 function ensureForgeInput() {
@@ -3043,6 +3055,32 @@ function drawPortraitThrone(x, y, w, h) {
 }
 
 function drawPortraitMob(x, y, w, h) {
+  const selectedInst = sel?.kind === 'inst' ? instById(sel.uid) : null;
+  if (portraitMobView === 'owned' && selectedInst) {
+    const k = instKind(selectedInst), mult = LEVEL_MULT[selectedInst.lv - 1];
+    button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, 76, 36, '← 列表', () => { sel = null; render(); }, { size: 14 });
+    portraitLayer.addChild(portraitEffect(sprite(k.tex, x + 116, y + 76, 64), selectedInst.lv >= 5, true, selectedInst.uid));
+    label(portraitLayer, `${k.name}　Lv${selectedInst.lv}`, x + 162, y + 16, 18, C.gold);
+    label(portraitLayer, `生命 ${Math.round(k.hp * mult)}　攻击 ${Math.round(k.atk * mult)}`, x + 162, y + 48, 14, C.bone);
+    label(portraitLayer, `防御 ${Math.round(k.def * mult)}　速度 ${k.spd.toFixed(1)}`, x + 162, y + 73, 14, C.bone);
+    panelF(portraitGfx, portraitLayer, 'stone', x + 8, y + 100, w - 16, 112, C.wall);
+    label(portraitLayer, `技能・${k.skill}`, x + 20, y + 112, 15, C.purple);
+    boundedText(portraitLayer, k.skillDesc, x + 20, y + 138, w - 40, 60, 12, C.bone);
+    if (selectedInst.lv < 5) {
+      const need = XP_PER_LEVEL[selectedInst.lv - 1], cost = UPGRADE_COST[selectedInst.lv - 1];
+      button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 224, w - 16, 42, `升级 ${cost}骨・经验${selectedInst.xp}/${need}`, () => {
+        if (selectedInst.xp < need || S.bone < cost) return;
+        selectedInst.xp -= need; selectedInst.lv++; S.bone -= cost; persist(); playSfx('buy'); render();
+      }, { size: 14, enabled: selectedInst.xp >= need && S.bone >= cost, fill: C.greenDark, border: C.green, color: C.white });
+    }
+    if (featureOpen('monsterCreation')) {
+      button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 274, Math.floor((w - 22) / 2), 42, '全身改造', () => openGraft(selectedInst.uid),
+        { size: 14, border: C.purple, color: C.purple });
+      button(portraitGfx, portraitLayer, portraitHits, x + 14 + Math.floor((w - 22) / 2), y + 274, Math.floor((w - 22) / 2), 42, '遣散怪物', () => dismantle(selectedInst.uid),
+        { size: 14, border: C.red, color: C.red });
+    }
+    return;
+  }
   const tabW = Math.floor((w - 22) / 2);
   button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, tabW, 38, '招募兵种', () => { portraitMobView = 'recruit'; render(); },
     { size: 15, fill: portraitMobView === 'recruit' ? C.wallLit : C.wall, border: portraitMobView === 'recruit' ? C.gold : C.stoneLit, color: C.white });
@@ -3077,11 +3115,13 @@ function drawPortraitMob(x, y, w, h) {
       portraitLayer.addChild(portraitEffect(sprite(k.tex, x + 38, cy + 55, 44), inst.lv >= 5, false, inst.uid));
       label(portraitLayer, `${k.name}　Lv${inst.lv}`, x + 70, cy + 8, 15, C.white);
       label(portraitLayer, `位置：${post.text}　技能：${cut(k.skill, 8)}`, x + 70, cy + 31, 12, post.kind === 'free' ? C.stoneLit : C.gold);
-      button(portraitGfx, portraitLayer, portraitHits, x + w - 88, cy + 13, 72, 34, '详情', () => openDetailPopup(k.name, `${k.skill}：${k.skillDesc}`, C.purple),
+      button(portraitGfx, portraitLayer, portraitHits, x + w - 88, cy + 13, 72, 34, '详情', () => { sel = { kind: 'inst', uid: inst.uid }; render(); },
         { size: 13, border: C.purple, color: C.purple });
     });
     portraitPager('portrait-mob-owned', pg.page, pg.pages, x + 8, y + h - 38, w - 16);
   }
+  if (portraitMobView === 'recruit' && featureOpen('monsterCreation')) button(portraitGfx, portraitLayer, portraitHits, x + w - 118, y + h - 40, 110, 36,
+    '创造怪物', () => openStitch(), { size: 13, fill: C.purpleDark, border: C.purple, color: C.white });
 }
 
 function portraitSlotName(uid, which) {
@@ -3548,6 +3588,18 @@ function drawPortraitNativeManage() {
   syncStoryInput();
 }
 
+function drawPortraitModalChrome() {
+  const w = app.screen.width, h = app.screen.height;
+  const top = Math.max(0, Math.ceil(portraitContentBottom));
+  portraitGfx.rect(0, top, w, Math.min(64, h - top)).fill(C.bg).stroke({ width: 2, color: C.wallLit, alignment: 0 });
+  const name = stitch ? '怪物创造' : graft ? '部件改造' : smith ? '装备锻造' : '叙事工坊';
+  label(portraitLayer, `${name}・完整工作台`, 14, top + 17, 15, C.gold);
+  button(portraitGfx, portraitLayer, portraitHits, w - 128, top + 8, 114, 44, '关闭工作台', closePortraitModal,
+    { size: 15, border: C.red, color: C.red });
+  portraitActionMap.modalClose = { x: w - 128, y: top + 8, w: 114, h: 44 };
+  portraitLayoutInfo = { nativeModal: true, contentTop: root.y, contentBottom: portraitContentBottom, primaryY: top + 8, bottom: Math.min(h, top + 64) };
+}
+
 function ensurePortraitChrome() {
   const key = [portrait, screen, tab, paused, speed, confirmNew, S.bone, S.mana, S.raidNo, S.overtime,
     tutorialData().step, Object.keys(tutorialData().visited).length, app.screen.width, app.screen.height].join('|');
@@ -3565,6 +3617,7 @@ function ensurePortraitChrome() {
   root.visible = !portraitNativeManage();
   if (!portrait) { root.visible = true; return; }
   if (portraitNativeManage()) { drawPortraitNativeManage(); return; }
+  if (portraitModalOpen()) { drawPortraitModalChrome(); return; }
 
   const w = app.screen.width, h = app.screen.height;
   const top = Math.max(0, Math.ceil(portraitContentBottom));
@@ -3607,6 +3660,14 @@ function ensurePortraitChrome() {
         border: portraitPane === i ? C.gold : C.stoneLit, color: portraitPane === i ? C.white : C.bone,
       }));
     cursorY += 43;
+  } else if (screen === 'battle' && battle) {
+    panelF(portraitGfx, portraitLayer, 'stone', 6, cursorY, w - 12, 44, C.wall);
+    const invaders = battle.heroes.filter((unit) => unit.alive).length;
+    const defenders = battle.rooms.flatMap((room) => room.mons).filter((unit) => unit.alive).length;
+    label(portraitLayer, `第${battle.roomIndex + 1}层`, 16, cursorY + 12, 14, C.gold);
+    labelC(portraitLayer, `守军 ${defenders}　勇者 ${invaders}`, w / 2, cursorY + 12, 14, C.bone);
+    label(portraitLayer, `封印 ${Math.max(0, Math.round(battle.seal))}`, w - 102, cursorY + 12, 14, battle.seal <= 25 ? C.red : C.purple);
+    cursorY += 50;
   }
 
   const primaryY = cursorY;
@@ -4868,6 +4929,7 @@ function openChronicle(filter = 'all', ref = null, raid = null) {
   tab = 'story';
   playSfx('tab');
   render();
+  if (portrait) scheduleLayout();
 }
 
 function chronicleKind(item) {
@@ -5237,6 +5299,7 @@ function previewTalent(c, id) {
   talentPreview = { uid: c.uid, id: owned || id };
   playSfx('tab');
   render();
+  if (portrait) scheduleLayout();
 }
 
 function confirmTalent(c) {
