@@ -1378,16 +1378,22 @@ function layout() {
   const w = app.screen.width, h = app.screen.height;
   portrait = h > w * 1.15;
   const portraitManage = portrait && screen === 'manage';
+  const portraitLogicalWidth = portraitManage ? 320 : 360;
+  const portraitSceneHeight = portraitManage ? 202 : VIEW_H;
+  const portraitControlsHeight = portrait ? portraitConsoleHeight() : 0;
   viewScale = portrait
-    ? Math.max(0.1, Math.min((w - 8) / VIEW_W, portraitManage ? (h * 0.46) / 202 : (h * 0.44) / VIEW_H))
+    ? Math.max(0.1, Math.min((w - 12) / portraitLogicalWidth, (h - portraitControlsHeight - 8) / portraitSceneHeight))
     : Math.max(0.1, Math.min(w / VIEW_W, h / VIEW_H));
   smallScreen = w < 720 || h < 420 || viewScale < 1;
   const snap = (v) => Math.round(v * renderResolution) / renderResolution;
   root.scale.set(viewScale);
-  root.x = snap((w - VIEW_W * viewScale) / 2);
+  const portraitFocusX = portraitManage ? portraitPane * 80 : 60;
+  root.x = portrait ? snap((w - portraitLogicalWidth * viewScale) / 2 - portraitFocusX * viewScale) : snap((w - VIEW_W * viewScale) / 2);
   // 竖屏经营页只展示横屏画布中真正的页面区域（y=36..238）。顶部 HUD 与底部标签
   // 由下方触控控制台统一承接，避免同一组资源、导航和存档操作重复出现两次。
-  root.y = portraitManage ? snap(4 - 36 * viewScale) : portrait ? snap(4) : snap((h - VIEW_H * viewScale) / 2);
+  const portraitCompositionHeight = portraitSceneHeight * viewScale + portraitControlsHeight;
+  const portraitSceneTop = portrait ? Math.max(4, (h - portraitCompositionHeight) / 2) : 0;
+  root.y = portraitManage ? snap(portraitSceneTop - 36 * viewScale) : portrait ? snap(portraitSceneTop) : snap((h - VIEW_H * viewScale) / 2);
   portraitContentBottom = portraitManage ? root.y + 238 * viewScale : root.y + VIEW_H * viewScale;
   setTextRes(Math.min(4, Math.max(1, Math.ceil(viewScale))));
   if (bdTile) { bdTile.width = w; bdTile.height = h; }
@@ -1401,7 +1407,20 @@ function layout() {
   drawRotateHint();
 }
 let portrait = false;
+let portraitPane = 1;
 let layoutQueued = false;
+
+function portraitConsoleHeight() {
+  if (screen !== 'manage') return screen === 'battle' ? 103 : 58;
+  const rows = Math.max(1, Math.ceil(visibleTabs().length / 4));
+  return 186 + rows * 43;
+}
+
+function setPortraitPane(value) {
+  portraitPane = Math.max(0, Math.min(2, Math.round(value)));
+  portraitChromeKey = '';
+  scheduleLayout();
+}
 
 function scheduleLayout() {
   if (layoutQueued) return;
@@ -2961,7 +2980,8 @@ function ensurePortraitChrome() {
 
   const w = app.screen.width, h = app.screen.height;
   const top = Math.max(0, Math.ceil(portraitContentBottom));
-  portraitGfx.rect(0, top, w, h - top).fill(C.bg).stroke({ width: 2, color: C.wallLit, alignment: 0 });
+  const consoleHeight = Math.min(h - top, portraitConsoleHeight());
+  portraitGfx.rect(0, top, w, consoleHeight).fill(C.bg).stroke({ width: 2, color: C.wallLit, alignment: 0 });
   const gap = 5, margin = 8, cols = 4;
   const bw = Math.floor((w - margin * 2 - gap * (cols - 1)) / cols);
   let cursorY = top + 7;
@@ -2990,6 +3010,15 @@ function ensurePortraitChrome() {
       }
     });
     cursorY = tabTop + Math.ceil(tabs.length / cols) * 43 + 5;
+
+    const paneY = cursorY;
+    const pw = Math.floor((w - margin * 2 - gap * 2) / 3);
+    ['← 左区', '中央', '右区 →'].forEach((name, i) => button(portraitGfx, portraitLayer, portraitHits,
+      margin + i * (pw + gap), paneY, pw, 36, name, () => setPortraitPane(i), {
+        size: 13, fill: portraitPane === i ? C.wallLit : C.wall,
+        border: portraitPane === i ? C.gold : C.stoneLit, color: portraitPane === i ? C.white : C.bone,
+      }));
+    cursorY += 43;
   }
 
   const primaryY = cursorY;
@@ -3026,8 +3055,10 @@ function ensurePortraitChrome() {
       `${value}倍速`, () => { speed = value; portraitChromeKey = ''; },
       { size: 14, fill: speed === value ? C.wallLit : C.wall, border: speed === value ? C.gold : C.stoneLit, color: speed === value ? C.white : C.bone }));
   }
-  portraitLayoutInfo = { top, tabTop, primaryY, actionY, newY, newX, utilityWidth, margin, gap, buttonWidth: bw,
-    contentTop: screen === 'manage' ? root.y + 36 * viewScale : root.y, contentBottom: portraitContentBottom };
+  portraitLayoutInfo = { top, bottom: top + consoleHeight, tabTop, primaryY, actionY, newY, newX, utilityWidth, margin, gap, buttonWidth: bw,
+    paneY: screen === 'manage' ? primaryY - 43 : null, paneWidth: Math.floor((w - margin * 2 - gap * 2) / 3), pane: portraitPane,
+    contentTop: screen === 'manage' ? root.y + 36 * viewScale : root.y, contentBottom: portraitContentBottom,
+    logicalLeft: screen === 'manage' ? portraitPane * 80 : 60, logicalWidth: screen === 'manage' ? 320 : 360 };
 }
 
 function drawTabs(g               ) {

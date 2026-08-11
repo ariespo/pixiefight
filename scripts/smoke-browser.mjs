@@ -201,12 +201,13 @@ try {
     await page.waitForTimeout(150);
     const metrics = await page.evaluate(() => __debug.viewport());
     assert(Math.abs(metrics.width - viewport.width) <= 1 && Math.abs(metrics.height - viewport.height) <= 1, `Renderer did not follow ${viewport.width}x${viewport.height}.`);
-    assert(metrics.scale > 0 && metrics.scale <= Math.min(viewport.width / 480, viewport.height / 270) + 0.01, 'Logical canvas scaling is invalid.');
+    assert(metrics.scale > 0, 'Logical canvas scaling is invalid.');
     assert(metrics.smallScreen, `Small-screen mode was not enabled at ${viewport.width}x${viewport.height}.`);
     assert(!metrics.rotateHint, 'Legacy portrait rotation blocker is still visible.');
     assert(metrics.portraitChrome === (viewport.height > viewport.width * 1.15), 'Portrait control console visibility is inconsistent.');
     assert(metrics.safeRect?.width > 0 && metrics.safeRect?.height > 0, 'Safe viewport was not measurable.');
     if (viewport.width > viewport.height) {
+      assert(metrics.scale <= Math.min(viewport.width / 480, viewport.height / 270) + 0.01, 'Landscape logical canvas scaling is invalid.');
       const point = await page.evaluate(() => __debug.toScreen(458, 17));
       assert(point.x < viewport.width && point.y < viewport.height, 'Landscape new-game button is outside the viewport.');
       await page.mouse.click(point.x, point.y);
@@ -214,11 +215,15 @@ try {
       await page.evaluate(() => __debug.cancelNewGame());
     } else {
       assert(metrics.portraitLayout?.top >= metrics.portraitContentBottom - 1, 'Portrait controls overlap the game view.');
-      assert(Math.abs(metrics.portraitLayout?.contentTop - 4) <= 2, 'Portrait management content did not crop the duplicate desktop chrome.');
+      assert(metrics.scale >= (viewport.width - 12) / 320 - 0.02, 'Portrait game view was not enlarged beyond the desktop-width fit.');
+      assert(metrics.portraitLayout?.contentTop >= 35, 'Portrait game composition was not vertically centered.');
+      assert(metrics.portraitLayout?.bottom <= viewport.height, 'Portrait console exceeds the visible viewport.');
       assert(metrics.portraitLayout?.actionY + 38 <= viewport.height, 'Portrait controls exceed the visible viewport.');
       const dungeonX = metrics.portraitLayout.margin + metrics.portraitLayout.buttonWidth + metrics.portraitLayout.gap + metrics.portraitLayout.buttonWidth / 2;
       await page.mouse.click(dungeonX, metrics.portraitLayout.tabTop + 19);
       assert(await page.evaluate(() => __debug.currentTab === 'dungeon'), 'Portrait tab navigation did not receive the click.');
+      await page.mouse.click(metrics.portraitLayout.margin + (metrics.portraitLayout.paneWidth + metrics.portraitLayout.gap) * 2 + metrics.portraitLayout.paneWidth / 2, metrics.portraitLayout.paneY + 18);
+      assert((await page.evaluate(() => __debug.viewport())).portraitLayout.pane === 2, 'Portrait right-pane control did not move the enlarged game view.');
       await page.mouse.click(metrics.portraitLayout.newX + metrics.portraitLayout.utilityWidth / 2, metrics.portraitLayout.newY + 19);
       assert(await page.evaluate(() => __debug.newGameConfirm), 'Portrait new-game button did not receive the click.');
       await page.evaluate(() => __debug.cancelNewGame());
