@@ -1181,6 +1181,7 @@ let archiveSection = 'report';
 let novelBusy = false;
 let novelEnableConfirm = false;
 let novelInputRect = null;
+let novelDecisionRoot = null;
 let selectedEntity = null;
 let inspectorView = 'summary';
 let desktopSystemMenu = false;
@@ -2240,6 +2241,7 @@ function setTab(t     ) {
   if (graft) closeGraft();
   relicForgeConfirm = false;
   customDeleteConfirm = '';
+  closeNovelDecisionCard(true);
   tab = t;
   const guideItem = (ROUND_TUTORIALS[S.raidNo] ?? [])[Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0))];
   if (t === 'story' && guideItem?.page === 'story' && guideItem.target === 'storyArea') storyView = 'dashboard';
@@ -4221,6 +4223,7 @@ function toggleMute() {
 
 function clearTransientUi() {
   closeOnlineModeTour(false);
+  closeNovelDecisionCard(true);
   sel = null; heroSel = null; detailPopup = null; researchModal = null; raidBriefing = null; lawAudit = null; stitch = null; forge = null; graft = null; smith = null;
   selectedEntity = null; inspectorView = 'summary'; desktopSystemMenu = false;
   armySection = 'mob'; archiveSection = 'report';
@@ -5093,11 +5096,12 @@ function drawPortraitNovel(x, y, w, h) {
     button(portraitGfx, portraitLayer, portraitHits, x + 8, navY + 48, w - 16, 46, '前往王座备战', () => setTab('throne'), { size: 16, fill: C.greenDark, border: C.green, color: C.white });
   } else if (n.dailyTurns < 3) {
     const actionable = n.phase === 'daily' && !novelBusy;
-    n.choices.slice(0, 3).forEach((choice, i) => button(portraitGfx, portraitLayer, portraitHits, x + 8, navY + 46 + i * 44, w - 16, 38, cut(choice, 34), () => submitNovelInput(choice),
+    n.choices.slice(0, 3).forEach((choice, i) => button(portraitGfx, portraitLayer, portraitHits, x + 8, navY + 46 + i * 44, w - 16, 38, `${i + 1}. ${cut(choice, 29)}  ›`, () => openNovelChoiceCard(choice),
       { size: 13, enabled: actionable, fill: C.wallLit, border: C.purple, color: C.white }));
-    novelInputRect = { x: x + 8, y: navY + 180, w: w - 118, h: 42 };
-    portraitGfx.roundRect(novelInputRect.x, novelInputRect.y, novelInputRect.w, novelInputRect.h, 4).fill(C.ink).stroke({ width: 1, color: C.purple, alignment: 0 });
-    button(portraitGfx, portraitLayer, portraitHits, x + w - 102, navY + 180, 94, 42, '发送', () => submitNovelInput(), { size: 14, enabled: actionable, fill: C.purpleDark, border: C.purple, color: C.white });
+    novelInputRect = null;
+    button(portraitGfx, portraitLayer, portraitHits, x + 8, navY + 180, w - 16, 42,
+      n.draft ? `✎ 继续编辑：${cut(n.draft, 22)}` : '✎ 打开自由输入卡片', openNovelInputCard,
+      { size: 14, enabled: actionable, fill: C.purpleDark, border: C.purple, color: C.white });
     button(portraitGfx, portraitLayer, portraitHits, x + 8, navY + 228, w - 16, 42, '签发新任务', () => void issueNovelMission(), { size: 15, enabled: !novelBusy && entries.length > 0, fill: C.redDark, border: C.red, color: C.white });
   } else {
     novelInputRect = null;
@@ -6733,14 +6737,11 @@ function removeStoryInput() {
 
 function syncStoryInput() {
   const spec = storyRun?.scene.input;
-  const novelInputOpen = screen === 'manage' && tab === 'story' && archiveSection === 'novel' && S.novel?.enabled
-    && S.novel.phase === 'daily' && S.novel.dailyTurns < 3 && S.novel.page >= S.novel.entries.length - 1 && !novelBusy && !S.novel.pendingMission;
-  if (screen === 'manage' && tab === 'story' && (spec || novelInputOpen) && !stitch && !forge) {
+  if (screen === 'manage' && tab === 'story' && archiveSection !== 'novel' && spec && !stitch && !forge) {
     ensureStoryInput();
     if (storyInput) {
-      storyInput.maxLength = novelInputOpen ? 500 : spec.max;
-      storyInput.placeholder = novelInputOpen ? '自由输入…' : spec.placeholder;
-      if (novelInputOpen && storyInput.value !== S.novel.draft) storyInput.value = S.novel.draft ?? '';
+      storyInput.maxLength = spec.max;
+      storyInput.placeholder = spec.placeholder;
       storyInput.style.display = 'block';
       positionStoryInput();
     }
@@ -7021,8 +7022,87 @@ async function issueNovelMission() {
   } finally { novelBusy = false; render(); }
 }
 
+function novelDecisionActionable() {
+  const n = S.novel, latest = Math.max(0, n.entries.length - 1);
+  return !!n.enabled && n.page >= latest && n.phase === 'daily' && n.dailyTurns < 3 && !novelBusy && !n.pendingMission;
+}
+
+function closeNovelDecisionCard(saveDraft = true, redraw = false) {
+  if (!novelDecisionRoot) return;
+  if (saveDraft && novelDecisionRoot.dataset.mode === 'input') {
+    const area = novelDecisionRoot.querySelector('textarea');
+    if (area) { S.novel.draft = area.value.slice(0, 500); persist(); }
+  }
+  novelDecisionRoot.remove();
+  novelDecisionRoot = null;
+  if (redraw) render();
+}
+
+function createNovelDecisionCard(mode, text = '') {
+  if (!novelDecisionActionable()) { say('当前章节不能继续提交内容'); return null; }
+  closeNovelDecisionCard(true, false);
+  if (storyInput) storyInput.style.display = 'none';
+  const rootNode = document.createElement('div');
+  rootNode.id = 'novel-decision-card'; rootNode.dataset.mode = mode;
+  rootNode.style.cssText = 'position:fixed;inset:0;z-index:108;display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;background:rgba(3,2,8,.9);font-family:monospace;color:#eadcae';
+  const card = document.createElement('div');
+  card.className = 'novel-decision-card-inner';
+  card.style.cssText = 'width:min(600px,96vw);max-height:calc(100vh - 28px);overflow:auto;box-sizing:border-box;padding:18px;border:3px solid #8f6fc4;background:#191423;box-shadow:0 0 0 3px #21172d,0 16px 52px #000';
+  const css = document.createElement('style');
+  css.textContent = '#novel-decision-card button,#novel-decision-card textarea{box-sizing:border-box;border:1px solid #76698a;border-radius:0;background:#272033;color:#f1e5bd;font:14px monospace;padding:9px;outline:none}#novel-decision-card button{min-height:44px;cursor:pointer}#novel-decision-card textarea{display:block;width:100%;min-height:min(42vh,300px);resize:vertical;line-height:1.65;user-select:text;-webkit-user-select:text}#novel-decision-card button:focus,#novel-decision-card textarea:focus{border-color:#e2bd64;box-shadow:0 0 0 1px #e2bd64}';
+  rootNode.append(css, card); document.body.appendChild(rootNode); novelDecisionRoot = rootNode;
+  return { rootNode, card };
+}
+
+function openNovelChoiceCard(choice) {
+  const value = String(choice ?? '').trim();
+  if (!value) return false;
+  const shell = createNovelDecisionCard('choice', value);
+  if (!shell) return false;
+  shell.card.innerHTML = `<div style="font-size:12px;color:#918aa0">小说战役 · 完整选项</div>
+    <div style="font-size:20px;color:#e2bd64;margin:7px 0 12px">确认你的行动</div>
+    <div data-choice-text style="max-height:48vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:14px;border:1px solid #55466d;background:#100d17;font-size:15px;line-height:1.75;color:#f1e5bd"></div>
+    <div style="margin-top:10px;font-size:12px;line-height:1.5;color:#918aa0">点击确认后才会把这段完整文本写入历史并发送给叙事者。</div>
+    <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:8px;margin-top:16px"><button data-novel-card="cancel">返回修改</button><button data-novel-card="confirm" style="border-color:#e2bd64;background:#59451f">采用这个选项</button></div>`;
+  shell.card.querySelector('[data-choice-text]').textContent = value;
+  shell.card.querySelector('[data-novel-card="cancel"]').onclick = () => closeNovelDecisionCard(false, true);
+  shell.card.querySelector('[data-novel-card="confirm"]').onclick = () => { closeNovelDecisionCard(false, false); submitNovelInput(value); };
+  shell.rootNode.onclick = (event) => { if (event.target === shell.rootNode) closeNovelDecisionCard(false, true); };
+  shell.rootNode.onkeydown = (event) => { event.stopPropagation(); if (event.key === 'Escape') closeNovelDecisionCard(false, true); };
+  shell.card.querySelector('[data-novel-card="confirm"]').focus();
+  return true;
+}
+
+function openNovelInputCard() {
+  const shell = createNovelDecisionCard('input');
+  if (!shell) return false;
+  shell.card.innerHTML = `<div style="font-size:12px;color:#918aa0">小说战役 · 自由输入</div>
+    <div style="font-size:20px;color:#e2bd64;margin:7px 0 12px">写下完整行动</div>
+    <textarea maxlength="500" spellcheck="false" placeholder="写下你的行动、回答或命令……"></textarea>
+    <div style="display:flex;justify-content:space-between;gap:10px;margin-top:7px;font-size:12px;color:#918aa0"><span data-input-status>关闭卡片也会保留草稿</span><span data-input-count>0/500</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:8px;margin-top:14px"><button data-novel-card="cancel">保存草稿并返回</button><button data-novel-card="confirm" style="border-color:#8f6fc4;background:#3d2855">发送给叙事者</button></div>`;
+  const area = shell.card.querySelector('textarea'), count = shell.card.querySelector('[data-input-count]'), status = shell.card.querySelector('[data-input-status]');
+  area.value = String(S.novel.draft ?? '').slice(0, 500);
+  const updateCount = () => { count.textContent = `${area.value.length}/500`; S.novel.draft = area.value.slice(0, 500); };
+  area.oninput = updateCount; updateCount();
+  shell.card.querySelector('[data-novel-card="cancel"]').onclick = () => closeNovelDecisionCard(true, true);
+  shell.card.querySelector('[data-novel-card="confirm"]').onclick = () => {
+    const value = area.value.trim().slice(0, 500);
+    if (!value) { status.textContent = '至少写下一句行动或回答'; status.style.color = '#ed6b6b'; area.focus(); return; }
+    S.novel.draft = value; persist(); closeNovelDecisionCard(false, false); submitNovelInput(value);
+  };
+  shell.rootNode.onclick = (event) => { if (event.target === shell.rootNode) closeNovelDecisionCard(true, true); };
+  shell.rootNode.onkeydown = (event) => {
+    event.stopPropagation();
+    if (event.key === 'Escape') closeNovelDecisionCard(true, true);
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') shell.card.querySelector('[data-novel-card="confirm"]').click();
+  };
+  area.focus(); area.setSelectionRange(area.value.length, area.value.length);
+  return true;
+}
+
 function submitNovelInput(value = null) {
-  const raw = String(value ?? storyInput?.value ?? S.novel.draft ?? '').trim().slice(0, 500);
+  const raw = String(value ?? S.novel.draft ?? storyInput?.value ?? '').trim().slice(0, 500);
   if (!raw) { say('至少写下一句行动或回答'); return; }
   S.novel.draft = raw; persist(); void runNovelTurn(raw);
 }
@@ -7062,12 +7142,12 @@ function pageNovel(g) {
     button(g, uiLayer, hits, 328, 172, 138, 26, '前往王座备战', () => setTab('throne'), { size: 11, fill: C.greenDark, border: C.green, color: C.white });
   } else if (n.page < latest) boundedText(uiLayer, '正在翻阅已经发生的内容。历史不可编辑；回溯请读取手动快照。', 328, 74, 138, 70, 10, C.stoneLit);
   else {
-    n.choices.slice(0, 3).forEach((choice, i) => button(g, uiLayer, hits, 328, 66 + i * 28, 138, 24, cut(choice, 18), () => submitNovelInput(choice),
+    n.choices.slice(0, 3).forEach((choice, i) => button(g, uiLayer, hits, 328, 66 + i * 28, 138, 24, `${i + 1}. ${cut(choice, 14)} ›`, () => openNovelChoiceCard(choice),
       { size: 9, enabled: actionable, fill: C.wallLit, border: C.purple, color: C.white }));
     if (actionable) {
-      novelInputRect = { x: 328, y: 152, w: 102, h: 22 };
-      frame(uiLayer, 'inset', 326, 150, 106, 26, { tint: C.stoneLit });
-      button(g, uiLayer, hits, 436, 152, 30, 22, '发送', () => submitNovelInput(), { size: 9, fill: C.purpleDark, border: C.purple, color: C.white });
+      novelInputRect = null;
+      button(g, uiLayer, hits, 328, 152, 138, 24, n.draft ? `✎ ${cut(n.draft, 14)}` : '✎ 打开自由输入', openNovelInputCard,
+        { size: 9, fill: C.purpleDark, border: C.purple, color: C.white });
     } else novelInputRect = null;
     if (novelBusy) label(uiLayer, n.phase === 'mission' ? '正在签发任务…' : '叙事者正在写…', 328, 154, 10, C.purple);
     if (n.error) boundedText(uiLayer, n.error, 328, 178, 138, 22, 9, C.red);
@@ -9684,6 +9764,10 @@ window.__debug = {
   novelEnable: () => { enableNovelCampaign(); return S.novel.enabled; },
   novelSay: async (value) => { await runNovelTurn(value); return structuredClone(S.novel); },
   novelIssue: async () => { await issueNovelMission(); return structuredClone(S.novel.pendingMission); },
+  novelChoiceOpen: (index = 0) => openNovelChoiceCard(S.novel.choices[index]),
+  novelInputOpen: () => openNovelInputCard(),
+  novelDecisionClose: (saveDraft = true) => { closeNovelDecisionCard(saveDraft, true); return !novelDecisionRoot; },
+  get novelDecision() { return { open: !!novelDecisionRoot, mode: novelDecisionRoot?.dataset.mode ?? null, draft: S.novel.draft }; },
   get novelPrompts() { return loadNovelPromptStructure(); },
   novelPromptsOpen: () => { openNovelPromptManager(); return !!novelPromptRoot; },
   novelPromptsClose: () => { closeNovelPromptManager(); return !novelPromptRoot; },

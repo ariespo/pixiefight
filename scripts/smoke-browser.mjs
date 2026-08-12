@@ -59,7 +59,7 @@ try {
       members: [{ cls: 'captain', lv: 23 }, { cls: 'knight', lv: 22 }, { cls: 'cleric', lv: 22 }, { cls: 'mage', lv: 22 }, { cls: 'rogue', lv: 22 }],
       affixes: ['brave'], objective: { type: 'breachLimit', maxBreaches: 1 }, rewardMult: 1.4, penalty: 'resource' };
     else if (prompt.includes('小说战役叙事者')) content = { body: '战后的账房里，巫妖把伤亡名单订成了员工手册。新来的幽灵坚持要求补发入职日期。',
-      choices: ['补签昨天', '承认工龄', '把手册埋回去'], facts: { relations: ['幽灵开始信任巫妖'], promises: [], threads: ['员工手册仍会翻页'], places: ['战后账房'] } };
+      choices: ['补签昨天的入职日期，并要求账房逐字记录这份跨越死亡与欠薪的正式声明', '承认工龄', '把手册埋回去'], facts: { relations: ['幽灵开始信任巫妖'], promises: [], threads: ['员工手册仍会翻页'], places: ['战后账房'] } };
     else if (prompt.includes('维护小说战役的长期记忆')) content = { summary: '地牢的员工手册开始自行记录伤亡。', facts: { relations: ['幽灵开始信任巫妖'], promises: [], threads: ['员工手册仍会翻页'], places: ['战后账房'] } };
     else if (prompt.includes('战前台词包')) content = { opening: [{ key: 'hero:剑士', text: '这次差旅没有返程票。' }], units: [
       { key: 'hero:剑士', attack: ['报销单先斩了。'], skill: ['为了最低工资！'], reaction: ['这不在保险范围。'], heal: [], special: [] },
@@ -669,6 +669,24 @@ try {
     `Novel daily chapter did not expose three choices or block unsigned battle: ${JSON.stringify(novelDaily)}`);
   assert(requestedPrompt.includes('小说自动化测试') && requestedPrompt.indexOf('小说自动化测试') < requestedPrompt.indexOf('互动选项'),
     'Novel request did not use the independently ordered prompt entries.');
+  const longNovelChoice = novelDaily.novel.choices[0];
+  assert(longNovelChoice.length > 30 && await page.evaluate(() => __debug.novelChoiceOpen(0)), 'Long novel option did not open its confirmation card.');
+  assert(await page.locator('#novel-decision-card [data-choice-text]').textContent() === longNovelChoice,
+    'Novel option confirmation card did not show the full untruncated text.');
+  await page.click('#novel-decision-card [data-novel-card="cancel"]');
+  await page.evaluate(() => __debug.novelInputOpen());
+  const longDraft = '我要求账房把所有欠薪、伤亡、设施损坏与幽灵工龄逐项列出，然后当着全体守军的面重新宣读并允许他们提出异议。';
+  await page.fill('#novel-decision-card textarea', longDraft);
+  await page.setViewportSize({ width: 390, height: 844 });
+  const novelInputBox = await page.locator('#novel-decision-card .novel-decision-card-inner').boundingBox();
+  assert(novelInputBox && novelInputBox.x >= 0 && novelInputBox.y >= 0 && novelInputBox.x + novelInputBox.width <= 390
+    && novelInputBox.y + novelInputBox.height <= 844, 'Novel free-input card exceeds the portrait viewport.');
+  await page.click('#novel-decision-card [data-novel-card="cancel"]');
+  assert(await page.evaluate((draft) => __debug.novelDecision.draft === draft, longDraft), 'Closing the novel input card did not preserve the full draft.');
+  await page.evaluate(() => __debug.novelInputOpen());
+  assert(await page.inputValue('#novel-decision-card textarea') === longDraft, 'Reopening the novel input card did not restore the editable draft.');
+  await page.click('#novel-decision-card [data-novel-card="cancel"]');
+  await page.setViewportSize({ width: 1920, height: 1080 });
   await page.evaluate(async () => {
     for (let i = 0; i < 3; i++) await __debug.novelSay(__debug.novel.choices[0]);
   });
