@@ -32,7 +32,15 @@ try {
   await page.waitForFunction(() => window.__gpReady && window.__debug, null, { timeout: 20000 });
   assert(await page.evaluate(() => __debug.screen === 'title' && __debug.title.mode === 'main'), 'Game did not open on the title screen.');
   await page.evaluate(() => __debug.titleNew());
-  assert(await page.evaluate(() => __debug.screen === 'manage'), 'First new game did not leave the title screen.');
+  assert(await page.evaluate(() => __debug.identityOpen), 'First new game did not request the lord and dungeon names.');
+  await page.click('[data-roll="lord"]');
+  await page.click('[data-roll="lair"]');
+  await page.fill('[data-id="lord"]', '测试魔王');
+  await page.fill('[data-id="lair"]', '自动化地牢');
+  await page.click('[data-confirm]');
+  assert(await page.evaluate(() => __debug.screen === 'intro' && __debug.save.playerName === '测试魔王' && __debug.save.lairName === '自动化地牢'), 'Named new game did not open its personalized intro.');
+  await page.evaluate(() => __debug.introContinue());
+  assert(await page.evaluate(() => __debug.screen === 'manage'), 'Opening story did not enter management mode.');
 
   // AI 设置必须走“地址/Key → 刷新模型 → 选择模型 → 保存”的完整链路。
   let requestedModel = '';
@@ -57,6 +65,11 @@ try {
     else if (prompt.includes('重构一名英雄档案')) content = { personalityName: '账簿式冷静',
       personalityDesc: '越危险越先核对伤亡与欠款，仿佛死亡只是一张填错栏目的表。',
       backgroundName: '欠薪墓园', backgroundStory: '他曾替一座墓园守夜，领到的薪水只有逝者留下的道歉。后来账本自行补上了地牢地址，他便带着旧钥匙来讨一份不会拖欠的差事。' };
+    else if (prompt.includes('全新的随机短事件')) content = { title: '自动售后窗口', who: '窗口职员', text: '一扇窗口要求地牢证明自己仍在营业。',
+      choices: [{ label: '交表', reply: '表格收走了。', effects: [{ t: 'res', bone: -5 }] }, { label: '关窗', reply: '窗口失业了。', effects: [{ t: 'res', bone: 5 }] }, { label: '招人', reply: '窗口开始收费。', effects: [{ t: 'res', mana: 2 }] }] };
+    else if (prompt.includes('亲自写下处理方式')) content = { reply: '窗口接受了玩家的即兴行政命令，并开出一张有损耗的收据。', effects: [{ t: 'res', bone: 12, mana: -2 }] };
+    else if (prompt.includes('无尽模式下一批勇者')) content = { title: '线上报销远征', body: '六名勇者为争夺同一张差旅报销单来到地牢。', reply: '请按死亡顺序排队。',
+      members: [{ cls: 'captain', lv: 23 }, { cls: 'knight', lv: 22 }, { cls: 'cleric', lv: 22 }, { cls: 'mage', lv: 22 }, { cls: 'rogue', lv: 22 }], affixes: ['brave', 'shield'] };
     else if (prompt.includes('怪物词缀')) content = { name: '试作毒纹', word: '毒', desc: '模型词缀链路测试。', powers: ['venom', 'healCut'] };
     else content = { name: '试作毒躯', word: '毒', desc: '模型选择链路测试。', look: 'rock', stats: { hp: 60, atk: 4, def: 1, spd: 0 }, powers: ['poisonSkill'] };
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ message: { content: JSON.stringify(content) } }] }) });
@@ -94,6 +107,28 @@ try {
   assert(preservedForge.part.draft?.name === '试作毒躯' && preservedForge.part.brief === '测试毒物'
     && preservedForge.restoredAffix.af?.name === '试作毒纹' && preservedForge.restoredAffix.brief === '测试毒纹',
   `DIY part/affix tabs did not preserve their independent drafts and input: ${JSON.stringify(preservedForge)}`);
+  const aiRumor = await page.evaluate(async () => {
+    __debug.closeForge(); __debug.storyCredits(1); await __debug.storyDraw();
+    const opened = __debug.storyScene;
+    await __debug.storySay('把窗口改成怪物食堂的取餐口');
+    return { opened, archived: __debug.story.archive[0], bone: __debug.bone, mana: __debug.mana };
+  });
+  assert(aiRumor.opened?.kind === 'input' && aiRumor.archived?.title === '自动售后窗口'
+    && aiRumor.archived?.outcome.includes('即兴行政命令'), `AI free-response rumor did not resolve: ${JSON.stringify(aiRumor)}`);
+  const beforeOnlineSave = await page.evaluate(() => __debug.rawSave);
+  const onlineRaid = await page.evaluate(async () => {
+    __debug.storyLeave();
+    const uid = __debug.monsters[0]?.uid ?? __debug.devRecruit('slime');
+    __debug.devAssign(0, 'front', uid);
+    __debug.devOvertime(21); await __debug.startBattle();
+    return { briefing: __debug.raidBriefing, raid: __debug.currentRaid, mode: __debug.llm.mode, tasks: __debug.uiTasks, screen: __debug.screen };
+  });
+  assert(onlineRaid.briefing?.title === '线上报销远征' && onlineRaid.briefing.body.includes('差旅报销单')
+    && onlineRaid.raid.affixes.includes('brave'), `AI overtime raid was not generated before battle: ${JSON.stringify(onlineRaid)}`);
+  await page.evaluate((raw) => localStorage.setItem('yqh-save-v2', raw), beforeOnlineSave);
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => window.__gpReady && window.__debug, null, { timeout: 20000 });
+  await page.evaluate(() => __debug.titleContinue());
   await page.evaluate(() => __debug.closeForge());
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => __debug.aiSettingsOpen());
@@ -200,6 +235,16 @@ try {
   assert(uiArchitecture.blockedTasks.some((task) => task.id === 'empty-defense' && task.blocking)
     && uiArchitecture.blockerRoute === 'dungeon' && !uiArchitecture.unblockedTasks.some((task) => task.id === 'empty-defense'),
   `UI task blocking or direct navigation is incorrect: ${JSON.stringify(uiArchitecture)}`);
+  const exchange = await page.evaluate(() => {
+    const before = { bone: __debug.bone, mana: __debug.mana };
+    __debug.exchange('bone-to-mana');
+    const middle = { bone: __debug.bone, mana: __debug.mana };
+    __debug.exchange('mana-to-bone');
+    return { before, middle, after: { bone: __debug.bone, mana: __debug.mana } };
+  });
+  assert(exchange.middle.bone === exchange.before.bone - 25 && exchange.middle.mana === exchange.before.mana + 4
+    && exchange.after.bone === exchange.middle.bone + 20 && exchange.after.mana === exchange.middle.mana - 5,
+  `Lossy bone/mana exchange drifted from the 5:1, 20% design: ${JSON.stringify(exchange)}`);
 
   await page.evaluate(() => { __debug.setTab('throne'); __debug.forceRaid(20); });
   const affixPoint = await page.evaluate(() => __debug.toScreen(147, 46));
@@ -269,34 +314,17 @@ try {
   const randomArchived = await page.evaluate(async () => {
     const before = __debug.story.archive.length;
     __debug.storyCredits(1);
-    await __debug.storyDraw();
+    await __debug.storyDrawOffline();
+    const fixedChoices = __debug.storyScene?.choices?.length;
     for (let i = 0; i < 4 && __debug.storyScene?.kind !== 'done'; i++) {
       const scene = __debug.storyScene;
       if (scene.kind === 'input') __debug.storySay('守住这里');
       else __debug.storyChoose(Math.max(0, scene.choices.findIndex((x) => x.open)));
     }
-    return __debug.story.archive.length > before && __debug.story.archive[0]?.source === '无主传闻';
+    return { archived: __debug.story.archive.length > before && __debug.story.archive[0]?.source === '无主传闻', fixedChoices };
   });
-  assert(randomArchived, 'A random story was not recorded in the permanent chronicle.');
+  assert(randomArchived.archived && randomArchived.fixedChoices === 3, `Offline rumor did not expose three fixed choices and archive: ${JSON.stringify(randomArchived)}`);
 
-  const generatedLead = await page.evaluate(async () => {
-    __debug.storyLeave();
-    __debug.storySetProvider({ id: 'generated-test', name: 'generated-test', next: async () => ({
-      id: 'ai-only-scene', text: '一封没有寄件人的账单从王座底下爬了出来。',
-      choices: [{ label: '处理账单', reply: '账单被郑重塞进了别人的抽屉。', effects: [{ t: 'res', bone: 1 }] }],
-    }) });
-    __debug.storyCredits(1);
-    await __debug.storyDraw();
-    const id = __debug.story.leads[0]?.id;
-    __debug.storyLeave();
-    const reopened = __debug.storyLeadOpen(id);
-    const scene = __debug.storyScene;
-    if (reopened) __debug.storyChoose(0);
-    __debug.storySetProvider(null);
-    return { reopened, scene, archived: __debug.story.archive.some((item) => item.sceneId === 'ai-only-scene') };
-  });
-  assert(generatedLead.reopened && generatedLead.scene?.choices?.[0]?.label === '处理账单' && generatedLead.archived,
-    `Generated unowned story lead could not be processed: ${JSON.stringify(generatedLead)}`);
   const repairedLegacyLead = await page.evaluate(() => {
     const id = __debug.save.story.leadNext++;
     __debug.save.story.leads.unshift({ id, key: `legacy-ai:${id}`, sceneId: 'missing-ai-scene', source: '无主传闻',
@@ -584,6 +612,8 @@ try {
     await page.waitForTimeout(80);
   };
   await clickPortraitAction('titleNew');
+  assert(await page.evaluate(() => __debug.identityOpen), 'Portrait new game did not open identity registration.');
+  await page.evaluate(() => { __debug.identityStart('竖屏魔王', '竖屏地牢'); __debug.introContinue(); });
   assert(await page.evaluate(() => __debug.viewport().nativePortrait), 'Portrait new game did not enter the native management layout.');
   await clickPortraitAction('nav-mob');
   await clickPortraitAction('recruit-slime');
@@ -617,7 +647,7 @@ try {
   assert(doctrineTitle.title.mode === 'doctrine'
     && ['default', 'swarm', 'elite', 'economy'].every((id) => doctrineTitle.actions[`doctrine-${id}`]),
   'A permanent clear did not unlock all four starting doctrines.');
-  await page.evaluate(() => { __debug.titlePick('economy'); __debug.titleConfirm(); });
+  await page.evaluate(() => { __debug.titlePick('economy'); __debug.titleConfirm(); __debug.introContinue(); });
   assert(await page.evaluate(() => __debug.screen === 'manage' && __debug.save.doctrine === 'economy'),
     'The selected starting doctrine was not persisted into the new run.');
 

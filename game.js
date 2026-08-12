@@ -9,7 +9,7 @@ import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, PART_BUDGET, DIY_AFF
                                                                                                                           
 import { AI_PRESETS, AI_PROMPT_TASKS, getBackend, hasBackend, llmStatus, loadCfg, loadMode, loadPromptOverrides, normalizeBaseUrl, presetById, refreshModels,
   requestAffix, requestBattleDialogue, requestContextStory, requestHeroLore, requestLiteraryReport, requestPart,
-  restoreBackend, saveCfg, saveMode, savePromptOverrides, setBackend, requestScene as llmScene } from './llm.js';
+  requestStoryReply, requestOvertimeRaid, restoreBackend, saveCfg, saveMode, savePromptOverrides, setBackend, requestScene as llmScene } from './llm.js';
                                         
                                            
 import { applyEffects, fillText, getProvider, requestScene, sceneById, setProvider, testConds, localProvider, SCENES } from './story.js';
@@ -64,6 +64,12 @@ for (const name of ['application-name', 'apple-mobile-web-app-title']) {
 
 const SAVE_KEY = 'yqh-save-v2';
 const META_KEY = 'yqh-meta-v1';
+const BONE_PER_MANA = 5;
+const EXCHANGE_EFFICIENCY = 0.8;
+const BONE_EXCHANGE_LOT = 25;
+const MANA_EXCHANGE_LOT = 5;
+const LORD_NAMES = ['莫老板', '骨德纲', '冥小满', '赫尔加班', '维克多欠薪', '黛西灭灯'];
+const LAIR_NAMES = ['亏损堡', '不归乡办事处', '骨头湾分部', '黑灯地牢', '最后一笔矿坑', '偏远王座'];
 
 const DOCTRINES = {
   default: { id: 'default', name: '守成王座', tag: '标准', desc: '封印上限+25%。经济与兵力保持标准规则，容错最高，适合稳步构筑四层防线。' },
@@ -106,6 +112,21 @@ function doctrineCost(kind, bone, mana = 0) {
   return { bone: Math.max(0, Math.ceil(bone * mult)), mana: Math.max(0, Math.ceil(mana * mult)) };
 }
 
+function exchangeQuote(direction) {
+  return direction === 'bone-to-mana'
+    ? { payBone: BONE_EXCHANGE_LOT, payMana: 0, getBone: 0, getMana: Math.floor(BONE_EXCHANGE_LOT / BONE_PER_MANA * EXCHANGE_EFFICIENCY) }
+    : { payBone: 0, payMana: MANA_EXCHANGE_LOT, getBone: Math.floor(MANA_EXCHANGE_LOT * BONE_PER_MANA * EXCHANGE_EFFICIENCY), getMana: 0 };
+}
+
+function exchangeResource(direction) {
+  const q = exchangeQuote(direction);
+  if (exchangeConfirm !== direction) { exchangeConfirm = direction; say(`再次点击确认兑换：${q.payBone ? `${q.payBone}骨币` : `${q.payMana}魔质`} → ${q.getBone ? `${q.getBone}骨币` : `${q.getMana}魔质`}`); render(); return false; }
+  exchangeConfirm = '';
+  if (S.bone < q.payBone || S.mana < q.payMana) { say('兑换资源不足'); render(); return false; }
+  S.bone += q.getBone - q.payBone; S.mana += q.getMana - q.payMana;
+  persist(); playSfx('buy'); say(`兑换完成：获得${q.getBone ? `${q.getBone}骨币` : `${q.getMana}魔质`}`); render(); return true;
+}
+
 const MAX_FLOORS = 6;
 const BASE_NEW_FLOORS = 2;
 const DEPTH_MULT = [1.30, 1.15, 1, 0.90, 0.85, 0.80];
@@ -140,6 +161,7 @@ function freshSave(selectedDoctrine = 'default')       {
   const floors = Array.from({ length: BASE_NEW_FLOORS }, (_, i) => freshFloor(i + 1));
   return {
     bone: 95, mana: 18, relic: 0, raidNo: 1, uidNext: 1, campaignVersion: 2,
+    playerName: LORD_NAMES[0], lairName: LAIR_NAMES[0], introSeen: false, onlineRaids: {},
     doctrine: selectedDoctrine in DOCTRINES ? selectedDoctrine : 'default', monsterCap: MONSTER_CAP_TIERS[0],
     monsters: [],
     floors, rooms: floors.map((f) => f.battle),
@@ -234,6 +256,10 @@ function syncForged() {
 // 旧版本/损坏存档可能带未知陷阱或悬空引用，清洗后再渲染，否则查表会 undefined 白屏
 function sanitizeSave() {
   syncForged();
+  S.playerName = String(S.playerName || S.story?.vars?.playerName || LORD_NAMES[0]).trim().slice(0, 12) || LORD_NAMES[0];
+  S.lairName = String(S.lairName || S.story?.vars?.lairName || LAIR_NAMES[0]).trim().slice(0, 16) || LAIR_NAMES[0];
+  S.onlineRaids = S.onlineRaids && typeof S.onlineRaids === 'object' ? S.onlineRaids : {};
+  S.introSeen = !!S.introSeen || S.raidNo > 1 || S.overtime;
   S.reports = Array.isArray(S.reports) ? S.reports.filter((report) => report && typeof report.raidNo === 'number').slice(0, 5) : [];
   for (const report of S.reports) if (report.aiState === 'pending') report.aiState = report.literary ? 'done' : 'fallback';
   if (Math.round(S.campaignVersion || 0) < 2 && S.overtime) S.otRaid = Math.max(NORMAL_RAID_COUNT + 1, Math.round(S.otRaid || 13) + 8);
@@ -1039,6 +1065,7 @@ const seatedChampUids = () => S.rooms.map((r) => r.leader).filter((u)           
 const roomOfChamp = (uid        ) => S.rooms.findIndex((r) => r.leader === uid);
 function currentRaid()          {
   if (!S.overtime && S.raidNo <= NORMAL_RAID_COUNT) return RAIDS[S.raidNo - 1];
+  if (S.onlineRaids?.[S.otRaid]) return S.onlineRaids[S.otRaid];
   return makeOvertimeRaid(S.otRaid);
 }
 function makeOvertimeRaid(no        )          {
@@ -1054,6 +1081,21 @@ function makeOvertimeRaid(no        )          {
     affixes: affPool[(batch - 1) % affPool.length],
     reward: { bone: 280 + batch * 24, mana: 180 + batch * 12 },
   };
+}
+
+async function prepareOnlineOvertimeRaid() {
+  if (!S.overtime || loadMode() !== 'http' || S.onlineRaids?.[S.otRaid]) return null;
+  const batch = Math.max(1, S.otRaid - NORMAL_RAID_COUNT), fallback = makeOvertimeRaid(S.otRaid);
+  battlePrepBusy = true; say('线上叙事者正在签发本批勇者的出差单…'); render();
+  try {
+    const generated = await requestOvertimeRaid({ batch, no: S.otRaid, minLevel: 18 + batch * 2, maxLevel: 21 + batch * 2,
+      playerName: S.playerName, lairName: S.lairName, recent: Object.values(S.onlineRaids ?? {}).slice(-3).map((raid) => raid.title),
+      defense: { floors: S.rooms.length, monsters: countPlaced(), heroes: seatedChampUids().length } });
+    if (!generated) return null;
+    const raid = { no: S.otRaid, title: generated.title, members: generated.members, affixes: generated.affixes,
+      reward: fallback.reward, online: true, briefing: { body: generated.body, reply: generated.reply } };
+    S.onlineRaids[S.otRaid] = raid; persist(); return raid;
+  } finally { battlePrepBusy = false; render(); }
 }
 const MONSTER_UPGRADE_MANA = [0, 0, 12, 28];
 function monsterUpgradeQuote(inst) {
@@ -1417,6 +1459,9 @@ let titleMode = 'main';
 let titleDoctrinePick = 'default';
 let titleNewConfirm = false;
 let titleActionRects = {};
+let identityRoot = null;
+let pendingDoctrine = 'default';
+let exchangeConfirm = '';
 
 let sel                                                                                                                                                                            = null;
 let heroSel                = null;          // 当前查看的英雄 uid
@@ -2010,10 +2055,13 @@ function bindInput() {
     if (screen === 'title') {
       if (e.key === 'Escape' && titleMode === 'doctrine') { titleMode = 'main'; titleNewConfirm = false; render(); return; }
       if (e.key === 'Enter') {
-        if (titleMode === 'doctrine') beginNewRun(titleDoctrinePick);
+        if (titleMode === 'doctrine') openIdentitySetup(titleDoctrinePick);
         else if (saveExists) continueGame();
         else startFromTitle();
       }
+      return;
+    } else if (screen === 'intro') {
+      if (e.key === 'Enter' || e.key === ' ') finishIntro();
       return;
     } else if (screen === 'manage') {
       if (lawAudit || raidBriefing) {
@@ -2211,6 +2259,7 @@ function render() {
     guideLayer.visible = false;
     if (storyInput) storyInput.style.display = 'none';
     if (screen === 'title') buildTitle();
+    else if (screen === 'intro') buildIntro();
     ensurePortraitChrome();
     return;
   }
@@ -2255,6 +2304,20 @@ function render() {
   drawProgressGuide();
   syncStoryInput();
   ensurePortraitChrome();
+}
+
+function buildIntro() {
+  for (const c of overlay.removeChildren()) c.destroy({ children: true });
+  hits.clear();
+  const g = new PIXI.Graphics(); overlay.addChild(g);
+  g.rect(0, 0, VIEW_W, VIEW_H).fill(0x050408);
+  const throne = sprite('icon-throne', 78, 190, 82); throne.alpha = 0.52; overlay.addChild(throne);
+  label(overlay, `${S.playerName}的创业说明会`, 28, 24, 18, C.gold);
+  panelF(g, overlay, 'scroll', 24, 58, 432, 144, C.wall);
+  const intro = `你原本也是一位体面的魔王——至少名片上这么写。后来同行嫌你穷，王国嫌你偏，债主则认为两者都是优点，于是把你发配到边境乡下。\n\n这里唯一的产业，是一座漏风、欠税、尚未被勇者正式发现的地下城：${S.lairName}。你带着95骨币、18魔质和一份无法报销的雄心抵达。\n\n从今天起，${S.playerName}要招募怪物、经营房间、应付英雄，并说服一批批勇者：死亡不是失败，只是他们职业生涯中最后一次考核。`;
+  boundedText(overlay, intro, 42, 72, 396, 118, 11, C.bone);
+  button(g, overlay, hits, 300, 216, 138, 34, '开门营业', finishIntro, { size: 15, fill: C.redDark, border: C.gold, color: C.white });
+  titleActionRects.intro = { x: 300, y: 216, w: 138, h: 34 };
 }
 
 function drawWorkshopResearch() {
@@ -2322,8 +2385,8 @@ function drawRaidBriefing() {
   }
   panelF(g, modalLayer, 'scroll', 44, 24, 392, 222, C.wall);
   labelC(modalLayer, `第${scene.no}轮・${scene.title}`, 240, 38, 15, C.gold);
-  labelC(modalLayer, scene.speaker, 240, 62, 10, C.purple);
-  boundedText(modalLayer, scene.body, 72, 84, 336, 82, 12, C.bone);
+  labelC(modalLayer, scene.speaker || `${S.lairName}门口的临时书记`, 240, 62, 10, C.purple);
+  boundedText(modalLayer, `${S.playerName}，${scene.body}`, 72, 84, 336, 82, 12, C.bone);
   panelF(g, modalLayer, 'stone', 68, 172, 344, 35, C.wall);
   boundedText(modalLayer, `王座回应：${scene.reply}`, 82, 182, 316, 17, 10, C.stoneLit);
   hits.add(44, 24, 392, 222, () => { /* 战前章回不可点穿，也不可跳过 */ });
@@ -2964,8 +3027,8 @@ function openAISettings() {
       <label>可用模型<select data-ai="model" disabled><option value="">请先刷新模型</option></select></label>
       <div data-ai="status" style="min-height:34px;padding:8px;border:1px solid #484054;background:#100d17;color:#918aa0;box-sizing:border-box">修改地址或 Key 后，需要重新刷新模型。</div>
       <div style="margin-top:10px;font-size:12px;line-height:1.5;color:#918aa0">Key 只保存在这个浏览器中，不进入游戏存档或上传到部署文件。自定义服务需允许浏览器跨域访问。</div>
+      <div style="margin-top:10px;padding:8px;border:1px solid #484054;color:#918aa0">未配置有效接口时自动使用本地回声；刷新模型并保存后自动使用外部 AI，无需另设模式开关。</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
-        <button data-ai="echo" type="button">使用本地回声</button><button data-ai="off" type="button">关闭 AI</button>
         <button data-ai="sound" type="button">${S.muted ? '开启声音' : '关闭声音'}</button><button data-ai="save" type="button" disabled>保存并启用</button>
       </div>
     </div>
@@ -3100,10 +3163,8 @@ function openAISettings() {
     if (!model.value || refreshedSignature !== signature()) { invalidate(); return; }
     const ok = saveCfg({ provider: provider.value, protocol: protocol.value, baseUrl: url.value, key: key.value, model: model.value, models });
     if (!ok) { setStatusText('保存失败，请检查浏览器存储权限。', 'error'); return; }
-    saveMode('http'); restoreBackend(); playSfx('buy'); closeAISettings(); say(`AI 已启用：${model.value}`);
+    restoreBackend(); playSfx('buy'); closeAISettings(); say(`AI 已启用：${model.value}`);
   });
-  el('echo').addEventListener('click', () => { saveMode('echo'); restoreBackend(); closeAISettings(); say('已切到本地回声（离线可用）'); });
-  el('off').addEventListener('click', () => { saveMode('off'); restoreBackend(); closeAISettings(); say('已关闭 AI'); });
   el('sound').addEventListener('click', () => { toggleMute(); el('sound').textContent = S.muted ? '开启声音' : '关闭声音'; });
   el('close').addEventListener('click', closeAISettings);
   root.addEventListener('click', (event) => { if (event.target === root) closeAISettings(); });
@@ -3850,19 +3911,56 @@ function clearTransientUi() {
   hits.clear(); endingBuilt = false; endingActionRect = null; endingRebirthRect = null;
 }
 
-function beginNewRun(doctrineId = 'default') {
+function closeIdentitySetup() { if (identityRoot) identityRoot.remove(); identityRoot = null; }
+function randomIdentity(kind) {
+  const pool = kind === 'lord' ? LORD_NAMES : LAIR_NAMES;
+  return pool[Math.floor(Math.random() * pool.length)];
+}
+function openIdentitySetup(doctrineId = 'default') {
+  closeIdentitySetup(); pendingDoctrine = doctrineId;
+  const rootNode = document.createElement('div'); rootNode.id = 'identity-setup';
+  rootNode.style.cssText = 'position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;background:rgba(4,3,8,.93);font-family:monospace;color:#eadcae';
+  rootNode.innerHTML = `<div style="width:min(460px,96vw);box-sizing:border-box;padding:20px;border:3px solid #e2bd64;background:#191423;box-shadow:0 0 0 3px #21172d">
+    <div style="font-size:22px;color:#e2bd64;margin-bottom:8px">登记偏远地区创业主体</div>
+    <div style="font-size:13px;line-height:1.55;color:#918aa0;margin-bottom:16px">王国要求每一位魔王和每一处地牢都有名字，主要方便寄送讨伐通知与欠税单。</div>
+    <label style="display:block;margin:10px 0">魔王姓名<div style="display:flex;gap:8px;margin-top:6px"><input data-id="lord" maxlength="12"><button data-roll="lord" title="随机姓名">🎲</button></div></label>
+    <label style="display:block;margin:10px 0">地牢名称<div style="display:flex;gap:8px;margin-top:6px"><input data-id="lair" maxlength="16"><button data-roll="lair" title="随机地牢名">🎲</button></div></label>
+    <div data-error style="min-height:20px;color:#ed6b6b;font-size:12px"></div>
+    <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:10px;margin-top:8px"><button data-cancel>返回</button><button data-confirm>提交创业备案</button></div></div>`;
+  const css = document.createElement('style'); css.textContent = '#identity-setup input,#identity-setup button{box-sizing:border-box;min-height:44px;border:1px solid #76698a;background:#272033;color:#f1e5bd;font:16px monospace;padding:8px}#identity-setup input{width:100%;flex:1}#identity-setup button{cursor:pointer}#identity-setup button:focus,#identity-setup input:focus{outline:1px solid #e2bd64;border-color:#e2bd64}';
+  rootNode.prepend(css); document.body.appendChild(rootNode); identityRoot = rootNode;
+  const lord = rootNode.querySelector('[data-id="lord"]'), lair = rootNode.querySelector('[data-id="lair"]');
+  lord.value = randomIdentity('lord'); lair.value = randomIdentity('lair');
+  rootNode.querySelector('[data-roll="lord"]').onclick = () => { lord.value = randomIdentity('lord'); };
+  rootNode.querySelector('[data-roll="lair"]').onclick = () => { lair.value = randomIdentity('lair'); };
+  rootNode.querySelector('[data-cancel]').onclick = () => { closeIdentitySetup(); render(); };
+  rootNode.querySelector('[data-confirm]').onclick = () => {
+    const identity = { playerName: lord.value.trim().slice(0, 12), lairName: lair.value.trim().slice(0, 16) };
+    if (!identity.playerName || !identity.lairName) { rootNode.querySelector('[data-error]').textContent = '姓名和地牢名都不能留空——欠税单需要收件人。'; return; }
+    closeIdentitySetup(); beginNewRun(pendingDoctrine, identity);
+  };
+  lord.focus();
+}
+
+function beginNewRun(doctrineId = 'default', identity = null) {
   S = freshSave(doctrineId);
+  S.playerName = identity?.playerName || randomIdentity('lord');
+  S.lairName = identity?.lairName || randomIdentity('lair');
+  S.story.vars.playerName = S.playerName; S.story.vars.lairName = S.lairName;
   syncDiyAffixes(); syncDiy(); syncCustoms();
   clearTransientUi();
-  tab = 'throne'; screen = 'manage'; portraitPane = 0;
+  tab = 'throne'; screen = 'intro'; portraitPane = 0;
   persist();
   playMusic('bgm-manage');
   scheduleLayout(); render();
-  say(meta.clears > 0 ? `新轮回：${doctrine().name}` : '新的地牢已经苏醒');
+  say(`${S.playerName}已接管${S.lairName}`);
 }
+
+function finishIntro() { S.introSeen = true; screen = 'manage'; persist(); playMusic('bgm-manage'); scheduleLayout(); render(); }
 
 function continueGame() {
   if (!saveExists) { titleMode = meta.clears > 0 ? 'doctrine' : 'main'; render(); return; }
+  closeIdentitySetup();
   clearTransientUi();
   screen = 'manage'; tab = featureOpen(tab) ? tab : 'throne'; portraitPane = 0;
   playMusic('bgm-manage'); scheduleLayout(); render();
@@ -3877,7 +3975,7 @@ function startFromTitle() {
   }
   titleNewConfirm = false;
   if (meta.clears > 0) { titleMode = 'doctrine'; titleDoctrinePick = 'default'; render(); }
-  else beginNewRun('default');
+  else openIdentitySetup('default');
 }
 
 function openNewCycle() {
@@ -3931,7 +4029,7 @@ function buildTitle() {
   titleActionRects.back = { x: 82, y: 224, w: 120, h: 30 };
   titleActionRects.confirm = { x: 278, y: 224, w: 120, h: 30 };
   button(bg, overlay, hits, 82, 224, 120, 30, '返回', () => { titleMode = 'main'; titleNewConfirm = false; render(); }, { size: 12 });
-  button(bg, overlay, hits, 278, 224, 120, 30, '以此方针开局', () => beginNewRun(titleDoctrinePick),
+  button(bg, overlay, hits, 278, 224, 120, 30, '以此方针开局', () => openIdentitySetup(titleDoctrinePick),
     { size: 12, fill: C.purpleDark, border: C.gold, color: C.white });
 }
 
@@ -4363,7 +4461,7 @@ function drawPortraitShop(x, y, w, h) {
       S.mana -= item.cost; item.buy(); playSfx('buy'); persist(); say(`${item.name} 已解锁`); render();
     }, { size: 13, enabled: !item.owned && S.mana >= item.cost, fill: C.purpleDark, border: item.owned ? C.green : C.purple, color: item.owned ? C.green : C.white });
   });
-  const bottomY = y + h - 42;
+  const bottomY = y + h - 84;
   portraitPager('portrait-shop', pg.page, pg.pages, x + 8, bottomY, Math.min(150, w - 180));
   button(portraitGfx, portraitLayer, portraitHits, x + w - 252, bottomY, 76, 36, '高端路线', () => { portraitNativeBypass = true; openWorkshopResearch(); scheduleLayout(); },
     { size: 11, enabled: S.overtime || S.raidNo >= 10, border: C.gold, color: C.gold });
@@ -4371,6 +4469,13 @@ function drawPortraitShop(x, y, w, h) {
     { size: 12, enabled: hasBackend(), border: C.purple, color: C.purple });
   button(portraitGfx, portraitLayer, portraitHits, x + w - 90, bottomY, 74, 36, '造词缀', () => { portraitNativeBypass = true; openForge('affix'); scheduleLayout(); },
     { size: 12, enabled: hasBackend(), border: C.purple, color: C.purple });
+  const q1 = exchangeQuote('bone-to-mana'), q2 = exchangeQuote('mana-to-bone'), ew = Math.floor((w - 22) / 2);
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, bottomY + 42, ew, 36,
+    exchangeConfirm === 'bone-to-mana' ? '确认：25骨→4魔' : `${q1.payBone}骨→${q1.getMana}魔`, () => exchangeResource('bone-to-mana'),
+    { size: 12, enabled: S.bone >= q1.payBone, border: C.purple, color: C.purple });
+  button(portraitGfx, portraitLayer, portraitHits, x + 14 + ew, bottomY + 42, ew, 36,
+    exchangeConfirm === 'mana-to-bone' ? '确认：5魔→20骨' : `${q2.payMana}魔→${q2.getBone}骨`, () => exchangeResource('mana-to-bone'),
+    { size: 12, enabled: S.mana >= q2.payMana, border: C.gold, color: C.gold });
 }
 
 function drawPortraitHeroStatus(x, y, w, h, c) {
@@ -4816,7 +4921,7 @@ function drawPortraitTitle() {
   boundedText(portraitLayer, (DOCTRINES[titleDoctrinePick] ?? DOCTRINES.default).desc, margin + 18, detailY + 13, w - margin * 2 - 36, 72, 13, C.bone);
   const bottomY = Math.min(h - 70, detailY + 110), bw = Math.floor((w - margin * 2 - 10) / 2);
   button(portraitGfx, portraitLayer, portraitHits, margin, bottomY, bw, 52, '返回', () => { titleMode = 'main'; titleNewConfirm = false; render(); }, { size: 17 });
-  button(portraitGfx, portraitLayer, portraitHits, margin + bw + 10, bottomY, bw, 52, '以此方针开局', () => beginNewRun(titleDoctrinePick),
+  button(portraitGfx, portraitLayer, portraitHits, margin + bw + 10, bottomY, bw, 52, '以此方针开局', () => openIdentitySetup(titleDoctrinePick),
     { size: 16, fill: C.purpleDark, border: C.gold, color: C.white });
   portraitActionMap.doctrineBack = { x: margin, y: bottomY, w: bw, h: 52 };
   portraitActionMap.doctrineConfirm = { x: margin + bw + 10, y: bottomY, w: bw, h: 52 };
@@ -4839,6 +4944,7 @@ function ensurePortraitChrome() {
   root.visible = screen !== 'title' && !portraitNativeManage();
   if (!portrait) { root.visible = true; return; }
   if (screen === 'title') { drawPortraitTitle(); return; }
+  if (screen === 'intro') { portraitLayer.visible = false; root.visible = true; return; }
   if (portraitNativeManage()) { drawPortraitNativeManage(); return; }
   if (portraitModalOpen()) { drawPortraitModalChrome(); return; }
 
@@ -6078,7 +6184,7 @@ const hybridProvider                = {
   id: 'hybrid',
   name: '地牢秘闻＋外部叙事者',
   async next(snap, pick) {
-    if (hasBackend()) {
+    if (loadMode() === 'http') {
       try {
         const sc = await llmScene(snap, String(S.story.vars.lairName ?? ''));
         if (sc) return sc;
@@ -6089,6 +6195,24 @@ const hybridProvider                = {
     return localProvider.next(snap, pick);
   },
 };
+
+function offlineRumorScene() {
+  const variants = [
+    { id: 'offline-ledger', title: '会走路的欠账', who: '骨头会计', text: '一本欠账簿从门缝里爬进来，声称自己不是催债，只是来确认你是否仍有被催的价值。',
+      choices: [
+        { label: '当场还账', reply: '账簿吃掉骨币，留下几粒品质可疑的魔质作为收据。', effects: [{ t: 'res', bone: -25, mana: 4 }] },
+        { label: '雇它记账', reply: '它开始替地牢记账。数字更清楚了，亏损也因此显得更专业。', effects: [{ t: 'mod', mod: { id: 'ledger-discipline', name: '账簿纪律', raids: 3, monHpMult: 1.1, heroAtkMult: 1.04 } }] },
+        { label: '塞回门外', reply: '门外传来纸张被勇者踩碎的声音。至少废纸还能卖钱。', effects: [{ t: 'res', bone: 20 }] },
+      ] },
+    { id: 'offline-inspector', title: '乡镇安全检查', who: '无证检查员', text: '一名检查员要求查看地牢的消防出口。你指出这里只有勇者入口，他在表格上勾选了“经营理念先进”。',
+      choices: [
+        { label: '补办手续', reply: '手续齐了，钱包薄了。怪物们第一次知道自己属于高危服务业。', effects: [{ t: 'res', bone: -20 }, { t: 'mod', mod: { id: 'safety-drill', name: '安全演练', raids: 2, monHpMult: 1.12 } }] },
+        { label: '贿赂检查', reply: '检查员收下魔质，郑重宣布火灾今后不归他管。', effects: [{ t: 'res', mana: -5, bone: 28 }] },
+        { label: '让他入职', reply: '他负责监督勇者遵守死亡流程，守军因此打得更有章法。', effects: [{ t: 'mod', mod: { id: 'hostile-compliance', name: '敌意合规', raids: 3, monAtkMult: 1.1, roomLimitAdd: -1 } }] },
+      ] },
+  ];
+  return structuredClone(variants[(S.raidNo + S.story.seen.length) % variants.length]);
+}
 
 function storyHasNew() { return !storyRun && (availableStoryLeads().length > 0 || S.story.credits > 0); }
 
@@ -6103,18 +6227,20 @@ function pushStoryLine(text        , who         , tone                   ) {
   storyRun.log.push({ who, text, tone });
 }
 
-async function drawStoryScene() {
+async function drawStoryScene(forceOffline = false) {
   if (storyBusy) return;
   if (S.story.credits <= 0) { say('暂时没有新的秘闻，打完下一波再来'); return; }
   storyBusy = true;
   render();
   try {
-    const sc = await requestScene(storyBridge, storySnapshot(), storyRng);
+    const external = !forceOffline && loadMode() === 'http';
+    const generated = external ? await llmScene(storySnapshot(), '') : offlineRumorScene();
+    const sc = generated && external ? { ...generated, input: { prompt: '写下你打算如何处理', placeholder: '输入你的处理方式，让世界承担后果…', max: 120, ai: true, sourceScene: generated }, choices: undefined } : generated;
     if (!sc) { say('地牢今夜无事发生'); return; }
     S.story.credits -= 1;
     const id = S.story.leadNext++;
     const lead = { id, key: `random:${S.raidNo}:${sc.id}:${id}`, sceneId: sc.id, source: '无主传闻',
-      title: cut(fillText(sc.text, storyBridge).replace(/\n/g, ' '), 18), context: {}, raidNo: S.raidNo, dueRaid: S.raidNo,
+      context: {}, raidNo: S.raidNo, dueRaid: S.raidNo, title: sc.title || cut(fillText(sc.text, storyBridge).replace(/\n/g, ' '), 18),
       ...(sceneById(sc.id) ? {} : { scene: structuredClone(sc) }) };
     S.story.leads.unshift(lead);
     openStoryLead(id);
@@ -6168,11 +6294,29 @@ function closeStory() {
   render();
 }
 
-function submitStoryInput() {
+async function submitStoryInput() {
   const run = storyRun;
   const spec = run?.scene.input;
   if (!run || !spec) return;
   const raw = (storyInput?.value ?? '').slice(0, spec.max).trim();
+  if (spec.ai) {
+    if (!raw) { say('至少写一句你打算怎么处理'); return; }
+    if (storyBusy) return;
+    storyBusy = true;
+    if (storyInput) storyInput.disabled = true;
+    render();
+    try {
+      const outcome = await requestStoryReply(storySnapshot(), spec.sourceScene ?? run.scene, raw);
+      if (!outcome) { say('外部叙事者没有给出可结算的回应，请重试'); return; }
+      if (storyInput) storyInput.value = '';
+      resolveExit(outcome.reply, outcome.effects, null, storyRun?.scene.followup);
+    } finally {
+      storyBusy = false;
+      if (storyInput) storyInput.disabled = false;
+      render();
+    }
+    return;
+  }
   if (spec.store) S.story.vars[spec.store] = raw || '（沉默）';
   const rule = spec.rules.find((r) => r.keys.some((k) => raw.includes(k)));
   if (storyInput) storyInput.value = '';
@@ -6426,7 +6570,7 @@ function pageStory(g               ) {
   }
 
   const run = storyRun;
-  label(uiLayer, '地牢秘闻', 20, 42, 12, C.gold);
+  label(uiLayer, cut(run.scene?.title ?? '地牢秘闻', 18), 20, 42, 12, C.gold);
   if (run.aiState === 'pending') label(uiLayer, 'AI 正在结合角色与旧档案润色…', 226, 42, 10, C.purple);
   button(g, uiLayer, hits, 400, 40, 56, 16, '离开', () => closeStory(), { size: 12, border: C.red, color: C.red });
 
@@ -7338,32 +7482,22 @@ function shopItems()             {
 
 function pageShop(g               ) {
   label(uiLayer, `工坊：解锁与强化・英雄遗物 ${S.relic}`, 10, 40, 12, C.white);
-  // 叙事者（LLM）接入：三档模式 + 造件入口
-  const mode = loadMode();
-  const MODES                                  = [
-    { id: 'gp', name: '内置' }, { id: 'echo', name: '回声' }, { id: 'http', name: '外部' }, { id: 'off', name: '关' },
-  ];
+  // AI 连接统一由系统设置管理；工坊这里只保留创作入口与资源兑换。
   panelF(g, uiLayer, 'inset', 6, 188, 322, 46, C.ink);
-  label(uiLayer, '外部叙事者', 12, 192, 12, C.purple);
-  MODES.forEach((m, i) => {
-    const on = mode === m.id;
-    const x = 78 + i * 34;
-    g.rect(x, 191, 32, 15).fill(on ? C.purpleDark : C.wall).stroke({ width: 1, color: on ? C.purple : C.stoneLit, alignment: 0 });
-    labelC(uiLayer, m.name, x + 16, 192, 12, on ? C.white : C.bone);
-    hits.add(x, 191, 32, 15, () => setLlmMode(m.id));
-  });
+  label(uiLayer, '资源精炼・基准 5骨＝1魔・损耗20%', 12, 192, 10, C.purple);
+  const b2m = exchangeQuote('bone-to-mana'), m2b = exchangeQuote('mana-to-bone');
+  button(g, uiLayer, hits, 12, 208, 92, 19, exchangeConfirm === 'bone-to-mana' ? '确认25骨→4魔' : `${b2m.payBone}骨→${b2m.getMana}魔`, () => exchangeResource('bone-to-mana'),
+    { size: 10, enabled: S.bone >= b2m.payBone, border: C.purple, color: C.purple });
+  button(g, uiLayer, hits, 108, 208, 92, 19, exchangeConfirm === 'mana-to-bone' ? '确认5魔→20骨' : `${m2b.payMana}魔→${m2b.getBone}骨`, () => exchangeResource('mana-to-bone'),
+    { size: 10, enabled: S.mana >= m2b.payMana, border: C.gold, color: C.gold });
   const st = llmStatus();
-  const line = st.state === 'error' ? st.note
-    : hasBackend() ? `${getBackend() .name}・造件 ${S.diy.length}/${diyPartCap()}・词缀 ${S.diyAf.length}/${diyAffixCap()}`
-    : '未接入：自定义部件与词缀不可用';
-  label(uiLayer, cut(line, 25), 12, 210, 12, st.state === 'error' ? C.red : hasBackend() ? C.green : C.stoneLit);
-  button(g, uiLayer, hits, 216, 189, 36, 19, '造部件', () => openForge('part'),
+  button(g, uiLayer, hits, 204, 208, 40, 19, '造部件', () => openForge('part'),
     { size: 12, enabled: hasBackend(), fill: C.purpleDark, border: C.purple, color: C.white });
-  button(g, uiLayer, hits, 254, 189, 36, 19, '造词缀', () => openForge('affix'),
+  button(g, uiLayer, hits, 246, 208, 40, 19, '造词缀', () => openForge('affix'),
     { size: 12, enabled: hasBackend(), fill: C.purpleDark, border: C.purple, color: C.white });
-  button(g, uiLayer, hits, 292, 189, 34, 19, '图鉴', () => openForge('book'),
+  button(g, uiLayer, hits, 288, 208, 34, 19, '图鉴', () => openForge('book'),
     { size: 12, fill: C.wall, border: C.gold, color: C.gold });
-  label(uiLayer, '一句话口述，叙事者翻成部件或词缀；图鉴查已入册的', 12, 224, 12, C.wall);
+  label(uiLayer, cut(st.state === 'error' ? st.note : `${getBackend()?.name ?? '地牢回声'}自动待命`, 24), 204, 192, 9, st.state === 'error' ? C.red : C.green);
   const items = shopItems();
   const ps = paged('shop', items, 8);
   ps.view.forEach((it, i) => {
@@ -7539,8 +7673,8 @@ function confirmRaidBriefing() {
   const key = `raid-briefing:${no}`;
   if (!S.story.archive.some((x) => x.key === key)) {
     S.story.archive.unshift({ id: S.story.leadNext++, key, sceneId: key, source: '正式战役',
-      title: `第${no}轮・${scene.title}`, summary: scene.body, resolvedRaid: no,
-      outcome: `王座回应：${scene.reply}`, effects: '迎战', refs: [], battleRefs: [] });
+      title: `第${no}轮・${scene.title}`, summary: `${S.playerName}在${S.lairName}收到来报：${scene.body}`, resolvedRaid: no,
+      outcome: `${S.playerName}的王座回应：${scene.reply}`, effects: '迎战', refs: [], battleRefs: [] });
   }
   raidBriefing = null;
   persist(); playSfx('tab');
@@ -7576,6 +7710,16 @@ async function startBattle() {
     setZone('throne');
     say(`${hardTask.title}：${hardTask.summary}`);
     return;
+  }
+  if (S.overtime && loadMode() === 'http' && !S.onlineRaids?.[S.otRaid]) {
+    const onlineRaid = await prepareOnlineOvertimeRaid();
+    if (onlineRaid?.briefing?.body) {
+      raidBriefing = { no: onlineRaid.no, title: onlineRaid.title,
+        body: onlineRaid.briefing.body,
+        reply: onlineRaid.briefing.reply || `${S.lairName}今天照常营业。` };
+      playSfx('tab'); render(); return;
+    }
+    say('线上远征生成失败，本批改用本地加班勇者');
   }
   if (stitch) closeStitch();
   if (!S.overtime && !S.raidBriefingsSeen.includes(S.raidNo)) {
@@ -8572,6 +8716,9 @@ window.__debug = {
   get meta() { return { ...meta }; },
   get title() { return { mode: titleMode, pick: titleDoctrinePick, saveExists, actions: { ...titleActionRects } }; },
   titleNew: () => { startFromTitle(); return screen; },
+  get identityOpen() { return !!identityRoot; },
+  identityStart: (playerName = '测试魔王', lairName = '测试地牢') => { closeIdentitySetup(); beginNewRun(pendingDoctrine, { playerName, lairName }); return screen; },
+  introContinue: () => { finishIntro(); return screen; },
   titleContinue: () => { continueGame(); return screen; },
   titlePick: (id) => { if (DOCTRINES[id]) { titleDoctrinePick = id; render(); } return titleDoctrinePick; },
   titleConfirm: () => { beginNewRun(titleDoctrinePick); return screen; },
@@ -8586,6 +8733,8 @@ window.__debug = {
       race: S.champs.find((c) => c.introGift).race, potential: S.champPot[S.champs.find((c) => c.introGift).uid] ?? 0 } : null }; },
   get bone() { return S.bone; },
   get mana() { return S.mana; },
+  exchange: (direction) => { exchangeConfirm = direction; return exchangeResource(direction); },
+  devOvertime: (no = NORMAL_RAID_COUNT + 1) => { S.overtime = true; S.otRaid = Math.max(NORMAL_RAID_COUNT + 1, Math.round(no)); S.onlineRaids = {}; persist(); render(); return currentRaid(); },
   get detail() { return detailPopup ? { ...detailPopup } : null; },
   openDetail: (title, body) => { openDetailPopup(title, body); return true; },
   closeDetail: () => { closeDetailPopup(); return true; },
@@ -8903,6 +9052,7 @@ window.__debug = {
     };
   },
   storyDraw: async () => { await drawStoryScene(); return window.__debug.storyScene; },
+  storyDrawOffline: async () => { await drawStoryScene(true); return window.__debug.storyScene; },
   storyLeadOpen: (id        ) => openStoryLead(id),
   storyChronicle: (filter = 'all', ref = null, raid = null) => { openChronicle(filter, ref, raid); return chronicleItems().map((x) => x.id); },
   devHeroRelations: (uids) => { recordHeroRelations(uids); persist(); render(); return { ...S.story.relations }; },
@@ -8917,7 +9067,7 @@ window.__debug = {
     resolveExit(c.reply, c.effects, c.next, c.followup ?? storyRun?.scene.followup);
     return true;
   },
-  storySay: (text        ) => { if (storyInput) storyInput.value = text; submitStoryInput(); return true; },
+  storySay: async (text        ) => { if (storyInput) storyInput.value = text; await submitStoryInput(); return true; },
   storyLeave: () => closeStory(),
   storyCredits: (n        ) => { S.story.credits = n; persist(); render(); },
   storyRead: (path        ) => storyBridge.get(path),
@@ -8931,6 +9081,7 @@ window.__debug = {
   llmSetBackend: (b                   ) => { setBackend(b); render(); return getBackend()?.name ?? null; },
   llmEcho: () => { saveMode('echo'); restoreBackend(); render(); return getBackend()?.name ?? null; },
   llmOff: () => { saveMode('off'); restoreBackend(); render(); return getBackend()?.name ?? null; },
+  llmClearConfig: () => { saveCfg(null); restoreBackend(); render(); return loadMode(); },
   get diy() { return S.diy.map((d) => ({ id: d.id, cat: d.cat, brief: d.brief, via: d.via, draft: d.draft, part: partById(d.id) })); },
   get diyAf() { return S.diyAf.map((d) => ({ id: d.id, cat: d.cat, brief: d.brief, via: d.via, draft: d.draft, affix: PART_AFFIXES.find((a) => a.id === d.id) })); },
   closeForge: () => { closeForge(); return true; },

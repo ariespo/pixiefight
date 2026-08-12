@@ -6,6 +6,7 @@ import { createBattle, stepBattle, effectiveThorns, effectiveMitigationMultiplie
 import { newChamp, champStats, tickFatigue } from '../heroes.js';
 import { AFFIX_POWER, POWER_MENU, clampAffixDraft, clampDraft } from '../modules.js';
 import { WORKSHOP_RESEARCH, researchDirectMultiplier, researchEffects, researchPoisonApplication, researchTrapThroughput } from '../research.js';
+import { sanitizeScene } from '../llm.js';
 
 const core = ['game.js', 'battle.js', 'story.js', 'vars.js', 'ui.js', 'heroes.js', 'modules.js', 'gear.js', 'data.js', 'llm.js', 'audio.js', 'research.js'];
 for (const file of core) {
@@ -51,6 +52,19 @@ for (const api of ['requestBattleDialogue', 'requestLiteraryReport', 'requestCon
 for (const task of ['part', 'affix', 'scene', 'dialogue', 'report', 'context', 'heroLore']) {
   if (!llmSource.includes(`promptDirective('${task}')`)) throw new Error(`Editable AI task prompt is not wired: ${task}`);
 }
+for (const task of ['storyReply', 'overtimeRaid']) {
+  if (!llmSource.includes(`promptDirective('${task}')`)) throw new Error(`New AI task prompt is not wired: ${task}`);
+}
+const safeScene = sanitizeScene({ title: '边界检查', text: '测试事件', choices: [
+  { label: '甲', reply: '甲', effects: [{ t: 'res', bone: 999, mana: -999 }] },
+  { label: '乙', reply: '乙', effects: [{ t: 'mod', mod: { id: 'unsafe', raids: 99, monAtkMult: 9, heroAtkMult: 0 } }] },
+  { label: '丙', reply: '丙', effects: [{ t: 'res', bone: -999 }] },
+] }, 'check');
+if (safeScene?.choices.length !== 3 || safeScene.choices[0].effects[0].bone !== 120 || safeScene.choices[0].effects[0].mana !== -40
+  || safeScene.choices[1].effects[0].mod.raids !== 4 || safeScene.choices[1].effects[0].mod.heroAtkMult !== 0.9)
+  throw new Error('AI random-event consequences escaped their gameplay safety envelope.');
+if (sanitizeScene({ text: '少选项', choices: [{ label: '一', reply: '一', effects: [] }] }, 'short'))
+  throw new Error('AI random events must contain exactly three inherent consequence anchors.');
 const setBody = source.match(/const STORY_LEAD_SCENES = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? '';
 const leadIds = [...setBody.matchAll(/'([^']+)'/g)].map((m) => m[1]);
 for (const id of leadIds) if (!ids.has(id)) throw new Error(`Lead references missing scene: ${id}`);

@@ -29,7 +29,9 @@ export const AI_PRESETS = [
 export const AI_PROMPT_TASKS = [
   { id: 'part', name: 'DIY 部件', defaultPrompt: '优先满足玩家描述的战斗定位，让名称、说明、造型与能力形成同一主题。' },
   { id: 'affix', name: 'DIY 词缀', defaultPrompt: '把玩家愿望压缩成鲜明的强化纹路，说明保持简洁、冷幽默。' },
-  { id: 'scene', name: '无主秘闻', defaultPrompt: '事件应当带来艰难但可理解的选择，并与当前经营状态呼应。' },
+  { id: 'scene', name: '随机秘闻事件', defaultPrompt: '随机选择经营事故、荒诞访客、内部纠纷、危险交易或法则异象；事件名称鲜明，正文使用克制的黑色幽默。固有后果必须有利有弊，并严格落在游戏给出的安全数值范围。' },
+  { id: 'storyReply', name: '玩家回应秘闻', defaultPrompt: '把玩家的自由回答当成真实行动来裁定：先叙述世界如何回应，再给出与行动逻辑一致、有得有失且数值克制的后果，不曲解玩家原意。' },
+  { id: 'overtimeRaid', name: '线上无尽远征', defaultPrompt: '生成逐轮升级、职业组合有明确战术主题的勇者远征，并用地牢基层管理者视角的黑色幽默解释他们为何来送命。' },
   { id: 'dialogue', name: '战前台词包', defaultPrompt: '台词要短、能区分角色身份，并体现地下城职场式黑色幽默。' },
   { id: 'report', name: '文学化战报', defaultPrompt: '叙述克制、有画面感，以地牢书记的冷峻口吻串联真实战斗数据。' },
   { id: 'context', name: '上下文秘闻', defaultPrompt: '优先回收人物、设施与旧档案细节，让新事件像长期历史的自然后果。' },
@@ -302,7 +304,7 @@ export function scenePrompt(snap               , brief = '')         {
   const vars = Object.entries(snap.vars).map(([k, v]) => `${k}=${String(v)}`).join(' ') || '（无）';
   return [
     '你是一款 8-bit 地牢经营游戏的叙事者。玩家是地牢主人，勇者是入侵者。只输出 JSON，不要解释。',
-    '写一个短事件：一段正文 + 2~3 个选项，每个选项有回应文字和效果。语气冷幽默、守方视角、避免热血。',
+    '生成一个全新的随机短事件：事件名称 + 一段正文 + 恰好3个固有选项；每个选项必须有预先确定的回应文字和效果。语气黑色幽默、守方视角、避免热血。',
     promptDirective('scene'),
     brief ? `<玩家愿望>${brief}</玩家愿望>` : '',
     `游戏状态：${reads}`,
@@ -318,7 +320,7 @@ export function scenePrompt(snap               , brief = '')         {
     '数值纪律：资源单次 ±120 以内；monHpMult/monAtkMult 在 0.9~1.25；heroAtkMult 在 0.9~1.12（对玩家很敏感）；raids 取 2~4。',
     '',
     '输出格式：',
-    '{"who":"说话者或省略","text":"正文，可用\\n换行","choices":[{"label":"按钮字（≤6字）","reply":"回应文字","effects":[{"t":"res","bone":30}]}]}',
+    '{"title":"事件名称（≤12字）","who":"说话者或省略","text":"正文，可用\\n换行","choices":[{"label":"按钮字（≤6字）","reply":"回应文字","effects":[{"t":"res","bone":30}]}]}',
   ].filter(Boolean).join('\n');
 }
 
@@ -507,9 +509,10 @@ export function sanitizeScene(j     , idHint        )               {
       effects: sanitizeEffects(c.effects, `${idHint}${i}`),
     });
   }
-  if (!choices.length) return null;
+  if (choices.length !== 3) return null;
   return {
     id: `llm-${idHint}`,
+    title: cleanLine(j.title, 24) || '无主秘闻',
     who: j.who ? String(j.who).slice(0, 8) : undefined,
     text,
     choices,
@@ -520,6 +523,51 @@ export async function requestScene(snap               , brief = '')             
   const j = await ask(scenePrompt(snap, brief), 'scene', 12000);
   if (!j) return null;
   return sanitizeScene(j, String(Date.now() % 100000));
+}
+
+export function storyReplyPrompt(snap, scene, answer) {
+  return [
+    '你在裁定《勇者去死！》的一次无主秘闻。只输出 JSON，不要解释。',
+    '玩家没有点击固定选项，而是亲自写下处理方式。根据事件事实和玩家原话生成回应，并决定合理后果。',
+    promptDirective('storyReply'),
+    `事件：${JSON.stringify({ title: scene.title, who: scene.who, text: scene.text, referenceChoices: scene.choices })}`,
+    `<玩家回应>${String(answer).slice(0, 120)}</玩家回应>`,
+    `<当前状态>${JSON.stringify(snap)}</当前状态>`,
+    '允许 effects 类型与随机秘闻相同；资源单次骨币±120、魔质±40；战斗倍率0.85~1.30；持续1~4轮。结果应有因果，不保证讨好玩家。',
+    '输出格式：{"reply":"世界对玩家行动的回应（≤180字）","effects":[{"t":"res","bone":20,"mana":-4}]}',
+  ].join('\n');
+}
+
+export async function requestStoryReply(snap, scene, answer) {
+  const j = await ask(storyReplyPrompt(snap, scene, answer), 'storyReply', 12000);
+  if (!j || typeof j !== 'object') return null;
+  const reply = String(j.reply ?? '').trim().slice(0, 180);
+  return reply ? { reply, effects: sanitizeEffects(j.effects, `reply${Date.now() % 100000}`) } : null;
+}
+
+export function overtimeRaidPrompt(snap) {
+  return [
+    '你为《勇者去死！》生成无尽模式下一批勇者和战前剧情。只输出 JSON，不要解释。',
+    '只能使用给定职业和词缀；难度随批次上升但不能突然翻倍。阵容应有可理解的战术主题。',
+    promptDirective('overtimeRaid'),
+    `<无尽状态>${JSON.stringify(snap)}</无尽状态>`,
+    '职业：knight,archer,cleric,mage,rogue,paladin,berserker,ranger,bard,alchemist,monk,lancer,warlock,captain,inquisitor,swordmaster',
+    '词缀：haste,holywater,shield,brave。members为5至8人，level只能在状态给出的minLevel和maxLevel之间。',
+    '输出格式：{"title":"远征名称","body":"战前剧情（80~220字，黑色幽默）","reply":"魔王的迎战短句","members":[{"cls":"knight","lv":20}],"affixes":["brave"]}',
+  ].join('\n');
+}
+
+export async function requestOvertimeRaid(snap) {
+  const j = await ask(overtimeRaidPrompt(snap), 'overtimeRaid', 15000);
+  if (!j || typeof j !== 'object') return null;
+  const allowedClasses = new Set(['knight','archer','cleric','mage','rogue','paladin','berserker','ranger','bard','alchemist','monk','lancer','warlock','captain','inquisitor','swordmaster']);
+  const members = (Array.isArray(j.members) ? j.members : []).slice(0, 8).map((row) => ({
+    cls: String(row?.cls ?? ''), lv: Math.round(clampNum(row?.lv, snap.minLevel, snap.maxLevel, snap.minLevel)),
+  })).filter((row) => allowedClasses.has(row.cls));
+  const affixes = [...new Set((Array.isArray(j.affixes) ? j.affixes : []).map(String).filter((id) => ['haste','holywater','shield','brave'].includes(id)))].slice(0, 4);
+  if (members.length < 5) return null;
+  return { title: cleanLine(j.title, 24) || `线上远征第${snap.batch}批`, body: String(j.body ?? '').trim().slice(0, 260),
+    reply: cleanLine(j.reply, 40) || '来都来了，工伤自理。', members, affixes };
 }
 
 // ---------- 战前台词包 ----------
@@ -672,7 +720,7 @@ export function makeHttpBackend(cfg         )             {
     name: clean?.model ? `${presetById(clean.provider).name}・${clean.model}` : '外部模型',
     async complete(prompt, opts) {
       if (!clean?.baseUrl || !clean.model) throw new Error('请先刷新并选择模型');
-      const maxTokens = ({ scene: 700, dialogue: 800, report: 1100, context: 800, heroLore: 900, part: 640, affix: 480 })[opts.kind] ?? 480;
+      const maxTokens = ({ scene: 850, storyReply: 650, overtimeRaid: 850, dialogue: 800, report: 1100, context: 800, heroLore: 900, part: 640, affix: 480 })[opts.kind] ?? 480;
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
       try {
@@ -755,26 +803,17 @@ export function saveCfg(c                ) {
 }
 
 ;                                                    
-// 默认档是平台叙事者：玩家开箱即用，不必填接口，也不必先去开关里点一下。
+// 默认使用本地回声；保存了有效外部配置后自动切到 HTTP 模型。
 export function restoreBackend()          {
-  const mode = loadMode();
-  if (mode === 'gp') { setBackend(makePlatformBackend()); return 'gp'; }
-  if (mode === 'echo') { setBackend(makeEchoBackend()); return 'echo'; }
-  if (mode === 'http') {
-    const c = loadCfg();
-    if (c?.model && c.models.includes(c.model)) { setBackend(makeHttpBackend(c)); return 'http'; }
-    setBackend(makePlatformBackend());
-    return 'gp';
-  }
-  setBackend(null);
-  return 'off';
+  const c = loadCfg();
+  if (c?.model && c.models.includes(c.model)) { setBackend(makeHttpBackend(c)); return 'http'; }
+  setBackend(makeEchoBackend());
+  return 'echo';
 }
 export function saveMode(mode         ) {
   try { localStorage.setItem('yqh-llm-mode', mode); } catch { /* 忽略 */ }
 }
 export function loadMode()          {
-  try {
-    const m = localStorage.getItem('yqh-llm-mode');
-    return m === 'echo' || m === 'http' || m === 'off' || m === 'gp' ? m : 'gp';
-  } catch { return 'gp'; }
+  const c = loadCfg();
+  return c?.model && c.models.includes(c.model) ? 'http' : 'echo';
 }
