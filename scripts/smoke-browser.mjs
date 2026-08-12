@@ -200,6 +200,16 @@ try {
     && uiArchitecture.blockerRoute === 'dungeon' && !uiArchitecture.unblockedTasks.some((task) => task.id === 'empty-defense'),
   `UI task blocking or direct navigation is incorrect: ${JSON.stringify(uiArchitecture)}`);
 
+  await page.evaluate(() => { __debug.setTab('throne'); __debug.forceRaid(20); });
+  const affixPoint = await page.evaluate(() => __debug.toScreen(147, 46));
+  await page.mouse.click(affixPoint.x, affixPoint.y);
+  await page.waitForTimeout(50);
+  const raidAffixDetail = await page.evaluate(() => ({ detail: __debug.detail, raid: __debug.currentRaid }));
+  assert(raidAffixDetail.detail?.title === '急行 IV' && raidAffixDetail.detail.body.includes('本轮效果：12秒')
+    && raidAffixDetail.raid.affixDetails.every((affix) => affix.level === 4 && affix.roman === 'IV'),
+  `Raid affix cards or level details are incorrect: ${JSON.stringify(raidAffixDetail)}`);
+  await page.evaluate(() => __debug.closeDetail());
+
   const workshopResearch = await page.evaluate(() => {
     __debug.giveResources(0, 1000);
     __debug.devUtility(0, 'workshop', 3, 100);
@@ -267,6 +277,36 @@ try {
     return __debug.story.archive.length > before && __debug.story.archive[0]?.source === '无主传闻';
   });
   assert(randomArchived, 'A random story was not recorded in the permanent chronicle.');
+
+  const generatedLead = await page.evaluate(async () => {
+    __debug.storyLeave();
+    __debug.storySetProvider({ id: 'generated-test', name: 'generated-test', next: async () => ({
+      id: 'ai-only-scene', text: '一封没有寄件人的账单从王座底下爬了出来。',
+      choices: [{ label: '处理账单', reply: '账单被郑重塞进了别人的抽屉。', effects: [{ t: 'res', bone: 1 }] }],
+    }) });
+    __debug.storyCredits(1);
+    await __debug.storyDraw();
+    const id = __debug.story.leads[0]?.id;
+    __debug.storyLeave();
+    const reopened = __debug.storyLeadOpen(id);
+    const scene = __debug.storyScene;
+    if (reopened) __debug.storyChoose(0);
+    __debug.storySetProvider(null);
+    return { reopened, scene, archived: __debug.story.archive.some((item) => item.sceneId === 'ai-only-scene') };
+  });
+  assert(generatedLead.reopened && generatedLead.scene?.choices?.[0]?.label === '处理账单' && generatedLead.archived,
+    `Generated unowned story lead could not be processed: ${JSON.stringify(generatedLead)}`);
+  const repairedLegacyLead = await page.evaluate(() => {
+    const id = __debug.save.story.leadNext++;
+    __debug.save.story.leads.unshift({ id, key: `legacy-ai:${id}`, sceneId: 'missing-ai-scene', source: '无主传闻',
+      title: '旧版本遗失正文的无主秘闻', context: {}, raidNo: __debug.save.raidNo, dueRaid: __debug.save.raidNo });
+    const opened = __debug.storyLeadOpen(id);
+    const scene = __debug.storyScene;
+    __debug.storyLeave();
+    return { opened, scene };
+  });
+  assert(repairedLegacyLead.opened && repairedLegacyLead.scene?.id !== 'missing-ai-scene',
+    `Legacy unowned story lead was not repaired: ${JSON.stringify(repairedLegacyLead)}`);
   await page.evaluate(() => { __debug.storyLeave(); __debug.forceRaid(5); __debug.setTab('story'); });
   const noCreditPoint = await page.evaluate(() => __debug.toScreen(397, 191));
   await page.mouse.click(noCreditPoint.x, noCreditPoint.y);

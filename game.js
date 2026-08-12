@@ -1,5 +1,5 @@
 import * as PIXI from 'pixi.js';
-import { C, VIEW_W, VIEW_H, MONSTERS, HERO_CLASSES, THEMES, TRAPS, RAIDS, RAID_BRIEFINGS, NORMAL_RAID_COUNT, AFFIXES, AURAS, LEVEL_MULT, UPGRADE_COST, XP_PER_LEVEL, TEXTURES, HERO_LV_MULT, SYNERGY, synergyOf, kindById, registerKinds, unregisterKind, isCustomKind, isEliteKind } from './data.js';
+import { C, VIEW_W, VIEW_H, MONSTERS, HERO_CLASSES, THEMES, TRAPS, RAIDS, RAID_BRIEFINGS, NORMAL_RAID_COUNT, AFFIXES, AURAS, LEVEL_MULT, UPGRADE_COST, XP_PER_LEVEL, TEXTURES, HERO_LV_MULT, SYNERGY, synergyOf, kindById, registerKinds, unregisterKind, isCustomKind, isEliteKind, raidAffixInfo } from './data.js';
 import { GEARS, GEAR_SLOTS, GEAR_CAP, MELT_MANA, REFORGE_MANA, FRAMES, RUNES, TEMPERS, FORGED_CAP, craftCost, craftKind, craftName, frameById, runeById, runesFor, temperById, planValid, registerForged, gearById, gearEff, gearSet,                                                               } from './gear.js';
                                                                                         
 import { createBattle, stepBattle, ROOM_W, affixText, actionProgress, deployUtilityWorker, evacuateUtilityWorker,
@@ -4019,6 +4019,18 @@ function portraitGuideBanner(x, y, w) {
   return 58;
 }
 
+function raidAffixBody(raid, id) {
+  const info = raidAffixInfo(raid, id);
+  if (!info) return '未知词缀。';
+  const levels = info.values.map((value, index) => `${['I', 'II', 'III', 'IV'][index]}　${value}${index + 1 === info.level ? '　← 本轮' : ''}`).join('\n');
+  return `${info.desc}\n\n本轮等级：${info.roman}\n本轮效果：${info.value}\n\n等级变化\n${levels}`;
+}
+
+function openRaidAffix(raid, id) {
+  const info = raidAffixInfo(raid, id);
+  if (info) openDetailPopup(`${info.name} ${info.roman}`, raidAffixBody(raid, id), C.red);
+}
+
 function drawPortraitThrone(x, y, w, h) {
   const raid = currentRaid();
   const economy = dungeonEconomyPreview();
@@ -4042,7 +4054,7 @@ function drawPortraitThrone(x, y, w, h) {
       label(portraitLayer, `${cls.name}・Lv${selectedEnemy.lv}`, x + 24, bodyY + 18, 19, cls.role === '首领' ? C.gold : C.white);
       label(portraitLayer, `战场定位：${cls.role}`, x + 24, bodyY + 48, 14, C.red);
       boundedText(portraitLayer, cls.intel, x + 24, bodyY + 76, w - 48, Math.max(120, h - 190), 14, C.bone);
-      button(portraitGfx, portraitLayer, portraitHits, x + 20, bodyY + h - 108, w - 40, 40, '完整敌情百科', () => openDetailPopup(`${cls.name}・敌情`, `${cls.intel}\n\n等级：${selectedEnemy.lv}\n定位：${cls.role}\n本轮词缀：${raid.affixes.length ? affixText(raid.affixes) : '无'}`, C.red), { size: 14, border: C.red, color: C.red });
+      button(portraitGfx, portraitLayer, portraitHits, x + 20, bodyY + h - 108, w - 40, 40, '完整敌情百科', () => openDetailPopup(`${cls.name}・敌情`, `${cls.intel}\n\n等级：${selectedEnemy.lv}\n定位：${cls.role}\n本轮词缀：${raid.affixes.length ? affixText(raid.affixes, raid) : '无'}`, C.red), { size: 14, border: C.red, color: C.red });
     }
     return;
   }
@@ -4061,7 +4073,17 @@ function drawPortraitThrone(x, y, w, h) {
     portraitHits.add(cx, cy, cardW, 76, () => { selectedEntity = { type: 'enemy', index: i }; inspectorView = 'summary'; render(); });
   });
   const rows = Math.ceil(raid.members.length / cols);
-  const infoY = y + 38 + rows * 82;
+  let infoY = y + 38 + rows * 82;
+  if (raid.affixes.length) {
+    label(portraitLayer, '本轮词缀・点击查看规则', x + 8, infoY, 14, C.red);
+    const affixW = Math.floor((w - 16 - (raid.affixes.length - 1) * 6) / raid.affixes.length);
+    raid.affixes.forEach((id, i) => {
+      const info = raidAffixInfo(raid, id);
+      button(portraitGfx, portraitLayer, portraitHits, x + 8 + i * (affixW + 6), infoY + 24, affixW, 38,
+        `${info?.name ?? id} ${info?.roman ?? ''}`, () => openRaidAffix(raid, id), { size: 13, fill: C.redDark, border: C.red, color: C.white });
+    });
+    infoY += 72;
+  }
   label(portraitLayer, `本轮事务 ${tasks.length}`, x + 8, infoY, 16, tasks.some((task) => task.blocking) ? C.red : tasks.length ? C.gold : C.green);
   const pg = portraitPage(tasks, 'portrait-ui-tasks', Math.max(2, Math.min(4, Math.floor((h - (infoY - y) - 44) / 58))));
   pg.view.forEach((task, i) => {
@@ -4953,7 +4975,14 @@ function pageThrone(g               ) {
   const dualTraps = researchEffects(S.workshopResearch).dualTraps;
   const trapCount = S.rooms.reduce((n, r) => n + (r.trap !== 'none' ? 1 : 0) + (dualTraps && r.trap2 !== 'none' ? 1 : 0), 0);
   label(uiLayer, `敌情・${raid.title}`, 10, 42, 12, C.white);
-  label(uiLayer, `${raid.members.length}名・${raid.affixes.length ? affixText(raid.affixes) : '无词缀'}`, 190, 42, 11, raid.affixes.length ? C.red : C.stoneLit);
+  if (raid.affixes.length) {
+    const width = Math.floor((184 - (raid.affixes.length - 1) * 3) / raid.affixes.length);
+    raid.affixes.forEach((id, i) => {
+      const info = raidAffixInfo(raid, id);
+      button(g, uiLayer, hits, 126 + i * (width + 3), 38, width, 17, `${info?.name ?? id} ${info?.roman ?? ''}`,
+        () => openRaidAffix(raid, id), { size: raid.affixes.length >= 4 ? 8 : 9, fill: C.redDark, border: C.red, color: C.white });
+    });
+  } else label(uiLayer, `${raid.members.length}名・无词缀`, 214, 42, 10, C.stoneLit);
   panelF(g, uiLayer, 'inset', 8, 56, 306, 76, C.ink);
   const gap = Math.min(56, Math.floor(286 / Math.max(1, raid.members.length)));
   raid.members.forEach((m, i) => {
@@ -4991,7 +5020,7 @@ function pageThrone(g               ) {
     label(uiLayer, `${cls.name}・Lv${selectedEnemy.lv}`, 328, 65, 12, cls.role === '首领' ? C.gold : C.white);
     label(uiLayer, `定位：${cls.role}`, 328, 84, 10, C.red);
     boundedText(uiLayer, cls.intel, 328, 101, 138, 70, 10, C.bone, { maxLines: uiDensity === 'expert' ? 6 : 4 });
-    button(g, uiLayer, hits, 328, 177, 138, 22, '完整敌情', () => openDetailPopup(`${cls.name}・完整敌情`, `${cls.intel}\n\n等级：${selectedEnemy.lv}\n定位：${cls.role}\n本轮词缀：${raid.affixes.length ? affixText(raid.affixes) : '无'}`, C.red), { size: 11, border: C.red, color: C.red });
+    button(g, uiLayer, hits, 328, 177, 138, 22, '完整敌情', () => openDetailPopup(`${cls.name}・完整敌情`, `${cls.intel}\n\n等级：${selectedEnemy.lv}\n定位：${cls.role}\n本轮词缀：${raid.affixes.length ? affixText(raid.affixes, raid) : '无'}`, C.red), { size: 11, border: C.red, color: C.red });
   } else {
     const doctrineSeal = S.doctrine === 'default' ? 1.25 : S.doctrine === 'economy' ? 0.8 : 1;
     const sealEff = Math.max(25, Math.round((sealMax() + battleMods().sealAdd) * doctrineSeal));
@@ -5001,7 +5030,7 @@ function pageThrone(g               ) {
     boundedText(uiLayer, tasks[0]?.summary ?? '可以直接迎战；也可以继续优化阵容。', 328, 119, 138, 48, 10, C.stoneLit, { maxLines: 4 });
     if (uiDensity === 'expert') label(uiLayer, `秘闻修正 ${S.story.mods.length}・评价 ${S.best[raid.no] || 0}/3`, 328, 168, 9, C.gold);
   }
-  button(g, uiLayer, hits, 328, 202, 66, 24, '完整百科', () => openDetailPopup('本轮作战百科', `敌军：${raid.members.map((m) => `${HERO_CLASSES[m.cls].name} Lv${m.lv}`).join('、')}\n词缀：${raid.affixes.length ? affixText(raid.affixes) : '无'}\n\n布防：${placed}名守军，${trapCount}个陷阱\n预计产出：${economy.bone}骨币、${economy.mana}魔质\n\n本轮事务：\n${tasks.map((task) => `【${task.title}】${task.summary} 原因：${task.reason}`).join('\n') || '无'}`, C.gold), { size: 10, border: C.gold, color: C.gold });
+  button(g, uiLayer, hits, 328, 202, 66, 24, '完整百科', () => openDetailPopup('本轮作战百科', `敌军：${raid.members.map((m) => `${HERO_CLASSES[m.cls].name} Lv${m.lv}`).join('、')}\n词缀：${raid.affixes.length ? affixText(raid.affixes, raid) : '无'}\n\n布防：${placed}名守军，${trapCount}个陷阱\n预计产出：${economy.bone}骨币、${economy.mana}魔质\n\n本轮事务：\n${tasks.map((task) => `【${task.title}】${task.summary} 原因：${task.reason}`).join('\n') || '无'}`, C.gold), { size: 10, border: C.gold, color: C.gold });
   const doctrineSeal = S.doctrine === 'default' ? 1.25 : S.doctrine === 'economy' ? 0.8 : 1;
   void doctrineSeal;
   button(g, uiLayer, hits, 398, 202, 68, 24, blocked ? '先处理' : battlePrepBusy ? '准备中' : '迎战', () => void startBattle(),
@@ -5770,7 +5799,14 @@ async function enrichContextStory(run, lead, sc) {
 
 function openStoryLead(id) {
   const lead = S.story.leads.find((x) => x.id === id);
-  const sc = lead && sceneById(lead.sceneId);
+  let sc = lead && (lead.scene ?? sceneById(lead.sceneId));
+  // 早期版本只保存 AI 无主秘闻的临时 id，刷新后无法在本地剧情表找回正文。
+  // 对这类旧线索就地补成一条当前条件可用的本地秘闻，避免“处理”静默无响应。
+  if (lead && !sc && lead.source === '无主传闻') {
+    const pool = SCENES.filter((scene) => !scene.chained && !(scene.once && S.story.seen.includes(scene.id)) && testConds(storyBridge, scene.when));
+    sc = pool[Math.floor(storyRng() * pool.length)] ?? null;
+    if (sc) { lead.sceneId = sc.id; lead.title = cut(fillText(sc.text, storyBridge).replace(/\n/g, ' '), 18); persist(); }
+  }
   if (!lead || !sc || (lead.dueRaid ?? 0) > S.raidNo) return false;
   storyRun = { scene: sc, log: [], pending: null, leadId: lead.id, context: { ...lead.context } };
   const run = storyRun;
@@ -6071,7 +6107,8 @@ async function drawStoryScene() {
     S.story.credits -= 1;
     const id = S.story.leadNext++;
     const lead = { id, key: `random:${S.raidNo}:${sc.id}:${id}`, sceneId: sc.id, source: '无主传闻',
-      title: cut(fillText(sc.text, storyBridge).replace(/\n/g, ' '), 18), context: {}, raidNo: S.raidNo, dueRaid: S.raidNo };
+      title: cut(fillText(sc.text, storyBridge).replace(/\n/g, ' '), 18), context: {}, raidNo: S.raidNo, dueRaid: S.raidNo,
+      ...(sceneById(sc.id) ? {} : { scene: structuredClone(sc) }) };
     S.story.leads.unshift(lead);
     openStoryLead(id);
   } finally {
@@ -8544,6 +8581,7 @@ window.__debug = {
   get mana() { return S.mana; },
   get detail() { return detailPopup ? { ...detailPopup } : null; },
   openDetail: (title, body) => { openDetailPopup(title, body); return true; },
+  closeDetail: () => { closeDetailPopup(); return true; },
   uiBounds: () => boundedTextAudit(),
   layerText: () => ({
     ui: uiLayer.children.filter((node) => node instanceof PIXI.Text).map((node) => node.text),
@@ -8824,7 +8862,8 @@ window.__debug = {
   devTheme: (room        , id         ) => { if (!(id in THEMES)) return false; if (!S.themes.includes(id)) S.themes.push(id); S.rooms[room].theme = id; persist(); render(); return true; },
   devLevel: (uid        , lv        ) => { const m = S.monsters.find((x) => x.uid === uid); if (m) m.lv = lv; persist(); render(); },
   get overtime() { return { on: S.overtime, otRaid: S.otRaid }; },
-  get currentRaid() { const r = currentRaid(); return { no: r.no, title: r.title, members: r.members.length, affixes: r.affixes }; },
+  get currentRaid() { const r = currentRaid(); return { no: r.no, title: r.title, members: r.members.length, affixes: [...r.affixes],
+    affixDetails: r.affixes.map((id) => raidAffixInfo(r, id)) }; },
   devDev: (sealLv        , trapLv        ) => { S.sealLv = sealLv; S.trapLv = trapLv; persist(); render(); return { sealMax: sealMax(), trapPower: trapPower() }; },
   get customs() { return S.customs.map((d) => ({ ...d, derived: deriveKind(d) })); },
   get stitch() { return stitch ? { parts: { ...stitch.parts }, affixes: { ...stitch.affixes }, name: stitch.name, cat: stitch.cat, editUid: stitch.editUid } : null; },

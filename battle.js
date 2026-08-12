@@ -1,5 +1,5 @@
 // 全自动战斗模拟：房间逐间推进，产出可解释事件流与战报。
-import { kindById, HERO_CLASSES, LEVEL_MULT, HERO_LV_MULT, TRAPS, AFFIXES, AURAS, synergyOf } from './data.js';
+import { kindById, HERO_CLASSES, LEVEL_MULT, HERO_LV_MULT, TRAPS, AFFIXES, AURAS, synergyOf, raidAffixInfo } from './data.js';
 import { graftKind } from './modules.js';
 import { rollLoot, gearById } from './gear.js';
 import { researchDirectMultiplier, researchPoisonApplication } from './research.js';
@@ -326,9 +326,15 @@ export function createBattle(raid         , rooms           , insts             
     }
   }
   const affixes = raid.affixes;
-  if (affixes.includes('brave')) heroes.forEach((h) => (h.atk = Math.round(h.atk * 1.15)));
-  if (affixes.includes('shield')) heroes.forEach((h) => (h.shield = Math.round(h.maxHp * 0.25)));
-  const limit = Math.max(8, (affixes.includes('haste') ? 12 : 18) + mod.roomLimitAdd);
+  const brave = affixes.includes('brave') ? raidAffixInfo(raid, 'brave')?.level ?? 1 : 0;
+  const shield = affixes.includes('shield') ? raidAffixInfo(raid, 'shield')?.level ?? 1 : 0;
+  const haste = affixes.includes('haste') ? raidAffixInfo(raid, 'haste')?.level ?? 1 : 0;
+  const braveMult = [1, 1.08, 1.15, 1.24, 1.35][brave];
+  const shieldMult = [0, 0.12, 0.18, 0.25, 0.33][shield];
+  const hasteLimit = [18, 15, 14, 13, 12][haste];
+  if (brave) heroes.forEach((h) => (h.atk = Math.round(h.atk * braveMult)));
+  if (shield) heroes.forEach((h) => (h.shield = Math.round(h.maxHp * shieldMult)));
+  const limit = Math.max(8, hasteLimit + mod.roomLimitAdd);
   const sealCap = Math.max(25, (opts.sealMax ?? 100) + mod.sealAdd);
   const b         = {
     rooms: rt, heroes, raid, affixes,
@@ -1052,7 +1058,8 @@ function applyBurn(tgt      , dps        , dur        ) {
 }
 
 function applyPoison(b        , tgt      , dps        , dur        ) {
-  const holy = b.affixes.includes('holywater') ? 0.5 : 1;
+  const holyLevel = b.affixes.includes('holywater') ? raidAffixInfo(b.raid, 'holywater')?.level ?? 1 : 0;
+  const holy = [1, 0.8, 0.65, 0.5, 0.35][holyLevel];
   const mult = tgt.side === 'hero' ? b.research.poisonApplyMult : 1;
   const scaled = dps * mult;
   if (tgt.side === 'hero' && b.research.poisonStackCap > 1) {
@@ -2505,6 +2512,9 @@ function finish(b        ) {
   log(b, win ? `守住地牢！封印剩余${seal}` : `封印被击破，勇者攻入王座`, win ? 'good' : 'bad');
 }
 
-export function affixText(ids           ) {
-  return ids.map((a) => `${AFFIXES[a].name}（${AFFIXES[a].desc}）`).join('，');
+export function affixText(ids           , raid = null) {
+  return ids.map((a) => {
+    const info = raid ? raidAffixInfo(raid, a) : null;
+    return info ? `${info.name} ${info.roman}（${info.desc} 当前：${info.value}）` : `${AFFIXES[a].name}（${AFFIXES[a].desc}）`;
+  }).join('，');
 }

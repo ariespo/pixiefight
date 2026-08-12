@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { SCENES } from '../story.js';
-import { TEXTURES, RAIDS, RAID_BRIEFINGS, NORMAL_RAID_COUNT } from '../data.js';
+import { TEXTURES, RAIDS, RAID_BRIEFINGS, NORMAL_RAID_COUNT, raidAffixInfo } from '../data.js';
 import { createBattle, stepBattle, effectiveThorns, effectiveMitigationMultiplier, armorMultiplier } from '../battle.js';
 import { newChamp, champStats, tickFatigue } from '../heroes.js';
 import { AFFIX_POWER, POWER_MENU, clampAffixDraft, clampDraft } from '../modules.js';
@@ -58,6 +58,15 @@ for (const name of TEXTURES) if (!existsSync(`assets/${name}.png`)) throw new Er
 if (NORMAL_RAID_COUNT !== 20 || RAIDS.length !== 20) throw new Error('The standard campaign must contain exactly 20 raids.');
 if (RAID_BRIEFINGS.length !== 20 || new Set(RAID_BRIEFINGS.map((x) => x.no)).size !== 20)
   throw new Error('Every standard raid must have one unique pre-battle briefing.');
+const affixRoom = { theme: 'stone', trap: 'none', front: 1, back: null, leader: null, flank: null };
+const affixMonster = [{ uid: 1, kind: 'slime', lv: 1, xp: 0 }];
+const affixRaid = (level) => ({ no: 20, title: `affix-${level}`, members: [{ cls: 'knight', lv: 1 }],
+  affixes: ['haste', 'shield', 'brave', 'holywater'], affixLevels: { haste: level, shield: level, brave: level, holywater: level }, reward: { bone: 0, mana: 0 } });
+const affixOne = createBattle(affixRaid(1), [structuredClone(affixRoom)], structuredClone(affixMonster), { seed: 1 });
+const affixFour = createBattle(affixRaid(4), [structuredClone(affixRoom)], structuredClone(affixMonster), { seed: 1 });
+if (!(affixFour.heroes[0].atk > affixOne.heroes[0].atk && affixFour.heroes[0].shield > affixOne.heroes[0].shield
+  && affixFour.roomLimit < affixOne.roomLimit && raidAffixInfo(affixRaid(4), 'holywater')?.value === '缩短65%'))
+  throw new Error('Raid affix levels I-IV do not produce increasing numerical effects.');
 if (!(effectiveThorns(2) < 0.85 && effectiveThorns(2) > effectiveThorns(1) && effectiveThorns(1) < 1))
   throw new Error('Thorns diminishing returns are not monotonic and safely capped.');
 if (!(effectiveMitigationMultiplier(0) > 0.14 && armorMultiplier(1000000) > 0.20))

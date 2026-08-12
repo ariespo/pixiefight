@@ -323,11 +323,23 @@ export const HERO_CLASSES                            = {
 
                                                                  
 export const AFFIXES                                                  = {
-  haste: { name: '急行', desc: '每房战斗时限缩短至12秒' },
-  holywater: { name: '圣水', desc: '中毒持续时间减半' },
-  shield: { name: '群体护盾', desc: '入场时全队获得一次护盾' },
-  brave: { name: '悍勇', desc: '全队攻击+15%' },
+  haste: { name: '急行', desc: '压缩每个房间的作战时限。', values: ['15秒', '14秒', '13秒', '12秒'] },
+  holywater: { name: '圣水', desc: '缩短勇者受到的中毒持续时间。', values: ['缩短20%', '缩短35%', '缩短50%', '缩短65%'] },
+  shield: { name: '群体护盾', desc: '勇者进入地牢时获得生命上限比例的护盾。', values: ['12%', '18%', '25%', '33%'] },
+  brave: { name: '悍勇', desc: '提高全体勇者的攻击力。', values: ['+8%', '+15%', '+24%', '+35%'] },
 };
+
+export const AFFIX_ROMAN = ['I', 'II', 'III', 'IV'];
+export function raidAffixLevel(raid, id) {
+  const explicit = Number(raid?.affixLevels?.[id]);
+  if (Number.isFinite(explicit)) return Math.max(1, Math.min(4, Math.round(explicit)));
+  const no = Math.max(1, Number(raid?.no) || 1);
+  return no <= 10 ? 1 : no <= 14 ? 2 : no <= 17 ? 3 : 4;
+}
+export function raidAffixInfo(raid, id) {
+  const def = AFFIXES[id], level = raidAffixLevel(raid, id);
+  return def ? { id, ...def, level, roman: AFFIX_ROMAN[level - 1], value: def.values[level - 1] } : null;
+}
 
                        
              
