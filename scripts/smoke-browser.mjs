@@ -92,6 +92,18 @@ try {
   const aiCfg = await page.evaluate(() => __debug.llm);
   assert(aiCfg.mode === 'http' && aiCfg.cfg?.provider === 'custom' && aiCfg.cfg?.baseUrl === 'https://api.example.test/v1'
     && aiCfg.cfg?.model === 'test-model-b' && aiCfg.cfg?.models.length === 2, 'AI settings did not persist the refreshed model selection.');
+  await page.evaluate(() => __debug.novelPromptsOpen());
+  assert(await page.locator('#novel-prompt-manager nav button').count() === 3, 'Novel prompt manager did not separate daily, mission and memory pipelines.');
+  await page.click('#novel-prompt-manager .npm-add');
+  const lastNovelEntry = page.locator('#novel-prompt-manager .npm-entry').last();
+  await lastNovelEntry.locator('[data-name]').fill('自动化风格条目');
+  await lastNovelEntry.locator('[data-content]').fill('小说自动化测试：每次提到报表时保持严肃。');
+  await lastNovelEntry.locator('[data-up]').click();
+  await page.click('#novel-prompt-manager [data-npm="save"]');
+  const novelPromptStructure = await page.evaluate(() => __debug.novelPrompts.novelTurn);
+  assert(novelPromptStructure.some((entry) => entry.name === '自动化风格条目')
+    && novelPromptStructure.at(-2)?.name === '自动化风格条目', `Novel prompt entry was not added/reordered: ${JSON.stringify(novelPromptStructure)}`);
+  await page.click('#novel-prompt-manager [data-npm="close"]');
   await page.evaluate(() => __debug.aiSettingsOpen());
   await page.click('[data-ai="tab-prompts"]');
   await page.selectOption('[data-ai="prompt-task"]', 'part');
@@ -141,6 +153,11 @@ try {
   assert(aiPanelBox && aiPanelBox.x >= 0 && aiPanelBox.y >= 0 && aiPanelBox.x + aiPanelBox.width <= 390
     && aiPanelBox.y + aiPanelBox.height <= 844, 'AI settings panel exceeds the portrait viewport.');
   await page.evaluate(() => __debug.aiSettingsClose());
+  await page.evaluate(() => __debug.novelPromptsOpen());
+  const novelPromptBox = await page.locator('#novel-prompt-manager .npm-card').boundingBox();
+  assert(novelPromptBox && novelPromptBox.x >= 0 && novelPromptBox.y >= 0 && novelPromptBox.x + novelPromptBox.width <= 390
+    && novelPromptBox.y + novelPromptBox.height <= 844, 'Novel prompt manager exceeds the portrait viewport.');
+  await page.evaluate(() => __debug.novelPromptsClose());
   await page.setViewportSize({ width: 1280, height: 720 });
 
   const onboarding = await page.evaluate(async () => {
@@ -613,6 +630,8 @@ try {
   const novelDaily = await page.evaluate(() => ({ novel: __debug.novel, tasks: __debug.uiTasks }));
   assert(novelDaily.novel.choices.length === 3 && novelDaily.tasks.some((task) => task.id === 'novel-mission' && task.blocking),
     `Novel daily chapter did not expose three choices or block unsigned battle: ${JSON.stringify(novelDaily)}`);
+  assert(requestedPrompt.includes('小说自动化测试') && requestedPrompt.indexOf('小说自动化测试') < requestedPrompt.indexOf('互动选项'),
+    'Novel request did not use the independently ordered prompt entries.');
   await page.evaluate(async () => {
     for (let i = 0; i < 3; i++) await __debug.novelSay(__debug.novel.choices[0]);
   });

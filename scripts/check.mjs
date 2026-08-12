@@ -57,8 +57,10 @@ for (const task of ['storyReply', 'overtimeRaid']) {
   if (!llmSource.includes(`promptDirective('${task}')`)) throw new Error(`New AI task prompt is not wired: ${task}`);
 }
 for (const task of ['novelTurn', 'novelMission', 'novelSummary']) {
-  if (!llmSource.includes(`promptDirective('${task}')`)) throw new Error(`Novel AI task prompt is not wired: ${task}`);
+  if (!llmSource.includes(`novelPromptDirective('${task}')`)) throw new Error(`Structured novel prompt pipeline is not wired: ${task}`);
 }
+for (const contract of ['NOVEL_PROMPT_PIPELINES', 'loadNovelPromptStructure', 'saveNovelPromptStructure', 'resetNovelPromptStructure'])
+  if (!llmSource.includes(`function ${contract}`) && !llmSource.includes(`const ${contract}`)) throw new Error(`Novel prompt manager contract is missing: ${contract}`);
 const novelTurn = sanitizeNovelTurn({ body: '账房在战后递来一张仍然活着的报表。', choices: ['签字', '退回', '问责'],
   facts: { relations: ['账房开始怀疑魔王识字'], threads: ['报表为何会呼吸'] } });
 if (!novelTurn || novelTurn.choices.length !== 3) throw new Error('Novel daily turn contract rejected a valid three-choice response.');

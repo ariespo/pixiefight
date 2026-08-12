@@ -7,10 +7,10 @@ import { createBattle, stepBattle, ROOM_W, affixText, actionProgress, deployUtil
                                                                       
 import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, PART_BUDGET, DIY_AFFIX_CAP, affixDraftCost, affixPowerById, allLooks, registerDiyAffixes, GRAFT_CAP, GRAFT_MANA, GRAFT_PULL_MANA, graftCostOf, graftKind, legendaryPartCount, AFFIX_CAP, STITCH_MANA, CUSTOM_CAP, DIY_CAP, POWER_MENU, autoName, boneCost, deriveKind, draftCost, partById, registerDiy, affixById, selectedAffixes, unlockedParts, manaCost as affixMana, powerById } from './modules.js';
                                                                                                                           
-import { AI_PRESETS, AI_PROMPT_TASKS, getBackend, hasBackend, llmStatus, loadCfg, loadMode, loadPromptOverrides, normalizeBaseUrl, presetById, refreshModels,
+import { AI_PRESETS, AI_PROMPT_TASKS, NOVEL_PROMPT_PIPELINES, getBackend, hasBackend, llmStatus, loadCfg, loadMode, loadPromptOverrides, loadNovelPromptStructure, normalizeBaseUrl, presetById, refreshModels,
   requestAffix, requestBattleDialogue, requestContextStory, requestHeroLore, requestLiteraryReport, requestPart,
   requestStoryReply, requestOvertimeRaid, requestNovelTurn, requestNovelMission, requestNovelSummary,
-  restoreBackend, saveCfg, saveMode, savePromptOverrides, setBackend, requestScene as llmScene } from './llm.js';
+  resetNovelPromptStructure, restoreBackend, saveCfg, saveMode, saveNovelPromptStructure, savePromptOverrides, setBackend, requestScene as llmScene } from './llm.js';
                                         
                                            
 import { applyEffects, fillText, getProvider, requestScene, sceneById, setProvider, testConds, localProvider, SCENES } from './story.js';
@@ -3029,6 +3029,7 @@ const FORGE_INPUT = { x: 108, y: 58, w: 250, h: 18 };
 
 let aiSettingsRoot = null;
 let saveManagerRoot = null;
+let novelPromptRoot = null;
 
 function closeSaveManager() {
   if (saveManagerRoot) saveManagerRoot.remove();
@@ -3089,6 +3090,64 @@ async function openSaveManager() {
   root.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.key === 'Escape') closeSaveManager(); });
 }
 
+function closeNovelPromptManager() {
+  if (novelPromptRoot) novelPromptRoot.remove();
+  novelPromptRoot = null; render();
+}
+
+function openNovelPromptManager() {
+  closeNovelPromptManager();
+  const draft = loadNovelPromptStructure();
+  let active = NOVEL_PROMPT_PIPELINES[0].id;
+  const root = document.createElement('div'); root.id = 'novel-prompt-manager';
+  root.style.cssText = 'position:fixed;inset:0;z-index:84;display:flex;align-items:center;justify-content:center;padding:12px;box-sizing:border-box;background:rgba(7,5,12,.92);font-family:monospace;color:#eadcae;';
+  const card = document.createElement('div'); card.className = 'npm-card';
+  card.innerHTML = `<header><div><b>小说提示词编排器</b><small>按顺序组合多个独立条目；只影响之后的新生成内容</small></div><button data-npm="close">关闭</button></header><div class="npm-locked"><b>锁定核心规则</b>　玩家代理权、事实边界、JSON契约、职业/词缀白名单与数值上限始终优先，不能在这里删除或覆盖。</div><nav></nav><main></main><footer><button data-npm="reset">恢复全部默认</button><span data-npm="status"></span><button data-npm="save">保存结构</button></footer>`;
+  const css = document.createElement('style');
+  css.textContent = '#novel-prompt-manager .npm-card{width:min(820px,97vw);max-height:calc(100vh - 24px);overflow:hidden;display:grid;grid-template-rows:auto auto auto minmax(180px,1fr) auto;box-sizing:border-box;padding:16px;border:3px solid #8f6fc4;box-shadow:0 0 0 3px #21172d,0 12px 40px #000;background:#191423}#novel-prompt-manager button,#novel-prompt-manager input,#novel-prompt-manager textarea{box-sizing:border-box;border:1px solid #76698a;border-radius:0;background:#272033;color:#f1e5bd;font:13px monospace;padding:7px;outline:none}#novel-prompt-manager button{cursor:pointer;min-height:34px}#novel-prompt-manager button:disabled{opacity:.38;cursor:default}#novel-prompt-manager header{display:flex;align-items:center;justify-content:space-between;gap:12px}#novel-prompt-manager header b{display:block;color:#e2bd64;font-size:20px}#novel-prompt-manager header small{display:block;color:#918aa0;margin-top:4px}#novel-prompt-manager .npm-locked{font-size:12px;line-height:1.5;color:#c5b9cf;border:1px solid #55466d;background:#100d17;padding:8px;margin:10px 0}#novel-prompt-manager nav{display:grid;grid-template-columns:repeat(3,1fr);gap:7px;margin-bottom:9px}#novel-prompt-manager nav button.active{border-color:#e2bd64;color:#e2bd64}#novel-prompt-manager main{overflow:auto;padding-right:3px}#novel-prompt-manager .npm-entry{display:grid;grid-template-columns:38px minmax(120px,190px) 1fr auto;gap:7px;align-items:start;border:1px solid #484054;background:#100d17;padding:8px;margin-bottom:7px}#novel-prompt-manager .npm-order{color:#e2bd64;text-align:center;padding-top:9px}#novel-prompt-manager input{width:100%;height:38px}#novel-prompt-manager textarea{width:100%;min-height:72px;resize:vertical;line-height:1.45}#novel-prompt-manager .npm-actions{display:grid;grid-template-columns:38px 38px;gap:5px}#novel-prompt-manager .npm-actions .wide{grid-column:1/3}#novel-prompt-manager .npm-add{width:100%;border-style:dashed;color:#b89be1;margin-bottom:5px}#novel-prompt-manager footer{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;margin-top:10px}#novel-prompt-manager footer span{font-size:12px;color:#918aa0;text-align:center}@media(max-width:600px){#novel-prompt-manager{padding:6px}#novel-prompt-manager .npm-card{max-height:calc(100vh - 12px);padding:10px}#novel-prompt-manager header b{font-size:17px}#novel-prompt-manager .npm-entry{grid-template-columns:28px 1fr auto}#novel-prompt-manager .npm-entry textarea{grid-column:2/4}#novel-prompt-manager footer{grid-template-columns:1fr 1fr}#novel-prompt-manager footer span{grid-column:1/3;grid-row:1}#novel-prompt-manager nav button{font-size:12px;padding:5px}}';
+  const nav = card.querySelector('nav'), main = card.querySelector('main'), status = card.querySelector('[data-npm="status"]');
+  const stash = () => {
+    const entries = draft[active] ?? [];
+    main.querySelectorAll('.npm-entry').forEach((row, index) => {
+      if (!entries[index]) return;
+      entries[index].name = row.querySelector('[data-name]').value.slice(0, 24);
+      entries[index].content = row.querySelector('[data-content]').value.slice(0, 2000);
+    });
+  };
+  const draw = () => {
+    nav.replaceChildren();
+    for (const pipeline of NOVEL_PROMPT_PIPELINES) {
+      const buttonNode = document.createElement('button'); buttonNode.textContent = `${pipeline.name} · ${(draft[pipeline.id] ?? []).length}`;
+      buttonNode.className = pipeline.id === active ? 'active' : '';
+      buttonNode.onclick = () => { stash(); active = pipeline.id; draw(); }; nav.appendChild(buttonNode);
+    }
+    main.replaceChildren(); const entries = draft[active] ?? (draft[active] = []);
+    entries.forEach((entry, index) => {
+      const row = document.createElement('div'); row.className = 'npm-entry';
+      row.innerHTML = `<div class="npm-order">${index + 1}</div><input data-name maxlength="24" aria-label="条目名称"><textarea data-content maxlength="2000" aria-label="提示词内容"></textarea><div class="npm-actions"><button data-up title="上移">↑</button><button data-down title="下移">↓</button><button class="wide" data-toggle>${entry.enabled === false ? '已停用' : '已启用'}</button><button class="wide" data-delete>${entry.custom ? '删除条目' : '移除条目'}</button></div>`;
+      row.querySelector('[data-name]').value = entry.name; row.querySelector('[data-content]').value = entry.content;
+      row.querySelector('[data-up]').disabled = index === 0; row.querySelector('[data-down]').disabled = index === entries.length - 1;
+      row.querySelector('[data-up]').onclick = () => { stash(); [entries[index - 1], entries[index]] = [entries[index], entries[index - 1]]; draw(); };
+      row.querySelector('[data-down]').onclick = () => { stash(); [entries[index + 1], entries[index]] = [entries[index], entries[index + 1]]; draw(); };
+      row.querySelector('[data-toggle]').onclick = () => { stash(); entry.enabled = entry.enabled === false; draw(); };
+      row.querySelector('[data-delete]').onclick = () => { stash(); entries.splice(index, 1); draw(); };
+      main.appendChild(row);
+    });
+    const add = document.createElement('button'); add.className = 'npm-add'; add.textContent = '＋ 新增提示词条目';
+    add.onclick = () => { stash(); entries.push({ id: `custom-${Date.now().toString(36)}`, name: '新条目', content: '写下这一段提示词的职责和要求。', enabled: true, custom: true }); draw(); main.scrollTop = main.scrollHeight; };
+    main.appendChild(add);
+  };
+  card.querySelector('[data-npm="save"]').onclick = () => { stash(); const ok = saveNovelPromptStructure(draft); status.textContent = ok ? '已保存；下一次生成按当前顺序组合。' : '保存失败，请检查浏览器存储权限。'; status.style.color = ok ? '#67d391' : '#ed6b6b'; };
+  card.querySelector('[data-npm="reset"]').onclick = () => {
+    if (!confirm('恢复三类小说提示词的默认结构？自定义条目也会被清除。')) return;
+    const reset = resetNovelPromptStructure(); for (const key of Object.keys(draft)) delete draft[key]; Object.assign(draft, reset); active = NOVEL_PROMPT_PIPELINES[0].id; status.textContent = '已恢复默认结构。'; draw();
+  };
+  card.querySelector('[data-npm="close"]').onclick = closeNovelPromptManager;
+  root.addEventListener('click', (event) => { if (event.target === root) closeNovelPromptManager(); });
+  root.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.key === 'Escape') closeNovelPromptManager(); });
+  root.append(css, card); document.body.appendChild(root); novelPromptRoot = root; draw();
+}
+
 function toggleUiDensity() {
   uiDensity = uiDensity === 'expert' ? 'standard' : 'expert';
   localStorage.setItem(UI_DENSITY_KEY, uiDensity);
@@ -3133,6 +3192,7 @@ function openAISettings() {
       </div>
     </div>
     <div data-ai="panel-prompts" style="display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px;border:1px solid #55466d;background:#100d17"><span style="font-size:12px;color:#bca9d3">小说战役使用独立的多条目编排器。</span><button data-ai="novel-prompts" type="button">打开小说编排器</button></div>
       <label>AI 任务<select data-ai="prompt-task"></select></label>
       <label>任务提示词<textarea data-ai="prompt-text" maxlength="2000" rows="10" spellcheck="false"></textarea></label>
       <div style="font-size:12px;line-height:1.55;color:#918aa0">这里控制文风、侧重点和创作偏好。JSON 格式、字段白名单、事实边界与数值上限由游戏锁定，不能通过提示词绕过。</div>
@@ -3176,6 +3236,7 @@ function openAISettings() {
   el('tab-connection').addEventListener('click', () => { stashPrompt(); showSettingsTab('connection'); });
   el('tab-prompts').addEventListener('click', () => showSettingsTab('prompts'));
   el('tab-interface').addEventListener('click', () => { stashPrompt(); showSettingsTab('interface'); });
+  el('novel-prompts').addEventListener('click', () => { closeAISettings(); openNovelPromptManager(); });
   el('density').addEventListener('click', () => { toggleUiDensity(); el('density').textContent = `当前：${uiDensity === 'expert' ? '专家信息' : '标准摘要'}`; });
   promptTask.addEventListener('change', (event) => {
     const prior = event.target.dataset.prior;
@@ -4831,6 +4892,7 @@ function drawPortraitStoryRun(x, y, w, h) {
 
 function drawPortraitNovel(x, y, w, h) {
   const n = S.novel;
+  button(portraitGfx, portraitLayer, portraitHits, x + w - 136, y + 2, 124, 36, '提示词编排', openNovelPromptManager, { size: 13, border: C.purple, color: C.purple });
   if (!n.enabled) {
     labelC(portraitLayer, '小说战役', x + w / 2, y + 16, 20, C.gold);
     panelF(portraitGfx, portraitLayer, 'scroll', x + 8, y + 54, w - 16, Math.max(150, h - 122), 0xE7D7A1);
@@ -6797,6 +6859,7 @@ function submitNovelInput(value = null) {
 
 function pageNovel(g) {
   const n = S.novel;
+  button(g, uiLayer, hits, 380, 40, 82, 18, '提示词编排', openNovelPromptManager, { size: 9, border: C.purple, color: C.purple });
   if (!n.enabled) {
     panelF(g, uiLayer, 'scroll', 22, 56, 436, 154, 0xE7D7A1);
     labelC(uiLayer, '小说战役', 240, 70, 17, C.ink);
@@ -9447,6 +9510,9 @@ window.__debug = {
   novelEnable: () => { enableNovelCampaign(); return S.novel.enabled; },
   novelSay: async (value) => { await runNovelTurn(value); return structuredClone(S.novel); },
   novelIssue: async () => { await issueNovelMission(); return structuredClone(S.novel.pendingMission); },
+  get novelPrompts() { return loadNovelPromptStructure(); },
+  novelPromptsOpen: () => { openNovelPromptManager(); return !!novelPromptRoot; },
+  novelPromptsClose: () => { closeNovelPromptManager(); return !novelPromptRoot; },
   get diy() { return S.diy.map((d) => ({ id: d.id, cat: d.cat, brief: d.brief, via: d.via, draft: d.draft, part: partById(d.id) })); },
   get diyAf() { return S.diyAf.map((d) => ({ id: d.id, cat: d.cat, brief: d.brief, via: d.via, draft: d.draft, affix: PART_AFFIXES.find((a) => a.id === d.id) })); },
   closeForge: () => { closeForge(); return true; },

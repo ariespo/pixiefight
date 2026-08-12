@@ -36,9 +36,6 @@ export const AI_PROMPT_TASKS = [
   { id: 'report', name: '文学化战报', defaultPrompt: '叙述克制、有画面感，以地牢书记的冷峻口吻串联真实战斗数据。' },
   { id: 'context', name: '上下文秘闻', defaultPrompt: '优先回收人物、设施与旧档案细节，让新事件像长期历史的自然后果。' },
   { id: 'heroLore', name: '英雄档案', defaultPrompt: '性格与背景应互相解释，并从战绩和既有经历中提炼独有矛盾。' },
-  { id: 'novelTurn', name: '小说战役・日常', defaultPrompt: '延续既有角色关系与伏笔，写一段有生活质感的地下城日常；黑色幽默应来自制度、处境和人物选择，而不是堆砌俏皮话。' },
-  { id: 'novelMission', name: '小说战役・任务', defaultPrompt: '把当前日常中的矛盾自然转成一次勇者入侵，阵容和任务目标应有明确主题，并让风险与奖励相称。' },
-  { id: 'novelSummary', name: '小说战役・记忆', defaultPrompt: '压缩旧章时保留人物关系、承诺、未解决矛盾、重要地点和因果，不添加原文中没有发生的事实。' },
 ];
 
 const PROMPT_KEY = 'yqh-ai-task-prompts-v1';
@@ -57,6 +54,11 @@ export function savePromptOverrides(value) {
       const valueText = String(value?.[task.id] ?? '').trim().slice(0, 2000);
       if (valueText && valueText !== task.defaultPrompt) out[task.id] = valueText;
     }
+    // 独立编排器尚未首次保存时，保留旧版三个小说单文本提示，供编排器迁成自定义条目。
+    if (!localStorage.getItem('yqh-novel-prompt-structure-v1')) {
+      const prior = JSON.parse(localStorage.getItem(PROMPT_KEY) || '{}');
+      for (const id of ['novelTurn', 'novelMission', 'novelSummary']) if (typeof prior[id] === 'string' && prior[id].trim()) out[id] = prior[id];
+    }
     localStorage.setItem(PROMPT_KEY, JSON.stringify(out));
     return true;
   } catch { return false; }
@@ -67,6 +69,82 @@ export function taskPrompt(id) {
   return loadPromptOverrides()[id] || task.defaultPrompt;
 }
 const promptDirective = (id) => `<玩家可编辑任务提示词>${taskPrompt(id)}</玩家可编辑任务提示词>`;
+
+export const NOVEL_PROMPT_PIPELINES = [
+  { id: 'novelTurn', name: '日常剧情', entries: [
+    { id: 'turn-tone', name: '文风与气质', content: '采用地下城经营者视角的克制黑色幽默。笑点来自制度、处境与人物选择，不堆砌网络俏皮话。' },
+    { id: 'turn-continuity', name: '人物与连续性', content: '优先延续已有关系、承诺、矛盾和未解决伏笔；让登场角色根据自己的经历主动行动。' },
+    { id: 'turn-daily', name: '日常场景', content: '本段以战后生活、经营摩擦、人物关系或地下城琐事为主，不要每次都立刻转入战斗。' },
+    { id: 'turn-choice', name: '互动选项', content: '三个选项应代表明显不同但都合理的态度或行动方向，并为自由输入保留空间。' },
+  ] },
+  { id: 'novelMission', name: '任务签发', entries: [
+    { id: 'mission-bridge', name: '剧情转场', content: '把当前日常中的矛盾自然转成一次勇者入侵，不凭空丢出与前文无关的敌人。' },
+    { id: 'mission-tactics', name: '战术主题', content: '敌方阵容、词缀和任务目标应形成可理解的战术主题，并与当前地牢防线产生针对关系。' },
+    { id: 'mission-stakes', name: '风险与回报', content: '任务风险和奖励应相称；高奖励需要清楚、可验证且更困难的目标。' },
+    { id: 'mission-prose', name: '任务文书', content: '用荒诞但清楚的王国公文、远征理由或基层管理事故解释敌人为何来袭。' },
+  ] },
+  { id: 'novelSummary', name: '长期记忆', entries: [
+    { id: 'summary-facts', name: '事实优先', content: '只压缩已经发生的事实，不补写原文中不存在的行动、对白或结果。' },
+    { id: 'summary-people', name: '人物关系', content: '保留关系变化、承诺、背叛、共同经历和角色对彼此态度的依据。' },
+    { id: 'summary-threads', name: '伏笔与因果', content: '保留未解决矛盾、重要地点、物件、长期目标以及事件之间的因果。' },
+    { id: 'summary-compress', name: '压缩规则', content: '删除重复修辞和无后续意义的细节，让摘要适合作为后续章节的可靠背景。' },
+  ] },
+];
+const NOVEL_PROMPT_KEY = 'yqh-novel-prompt-structure-v1';
+const cloneNovelDefaults = () => Object.fromEntries(NOVEL_PROMPT_PIPELINES.map((pipeline) => [pipeline.id,
+  pipeline.entries.map((entry) => ({ ...entry, enabled: true, custom: false }))]));
+
+function sanitizeNovelPromptEntries(raw, defaults = []) {
+  if (!Array.isArray(raw)) return defaults.map((entry) => ({ ...entry }));
+  const seen = new Set(), out = [];
+  for (const item of raw.slice(0, 24)) {
+    if (!item || typeof item !== 'object') continue;
+    let id = String(item.id ?? '').replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40);
+    if (!id || seen.has(id)) id = `custom-${Date.now().toString(36)}-${out.length}`;
+    seen.add(id);
+    const name = String(item.name ?? '未命名条目').replace(/[\r\n]+/g, ' ').trim().slice(0, 24) || '未命名条目';
+    const content = String(item.content ?? '').trim().slice(0, 2000);
+    if (!content) continue;
+    out.push({ id, name, content, enabled: item.enabled !== false, custom: item.custom !== false && !defaults.some((entry) => entry.id === id) });
+  }
+  return out.length ? out : defaults.map((entry) => ({ ...entry }));
+}
+
+export function loadNovelPromptStructure() {
+  const defaults = cloneNovelDefaults();
+  try {
+    const raw = JSON.parse(localStorage.getItem(NOVEL_PROMPT_KEY) || 'null');
+    if (raw && typeof raw === 'object') {
+      for (const pipeline of NOVEL_PROMPT_PIPELINES) defaults[pipeline.id] = sanitizeNovelPromptEntries(raw[pipeline.id], defaults[pipeline.id]);
+      return defaults;
+    }
+    const legacy = JSON.parse(localStorage.getItem(PROMPT_KEY) || '{}');
+    for (const pipeline of NOVEL_PROMPT_PIPELINES) if (typeof legacy[pipeline.id] === 'string' && legacy[pipeline.id].trim()) {
+      defaults[pipeline.id].push({ id: `legacy-${pipeline.id}`, name: '旧版创作偏好', content: legacy[pipeline.id].trim().slice(0, 2000), enabled: true, custom: true });
+    }
+  } catch { /* 使用默认结构 */ }
+  return defaults;
+}
+
+export function saveNovelPromptStructure(value) {
+  try {
+    const defaults = cloneNovelDefaults(), out = {};
+    for (const pipeline of NOVEL_PROMPT_PIPELINES) out[pipeline.id] = sanitizeNovelPromptEntries(value?.[pipeline.id], defaults[pipeline.id]);
+    localStorage.setItem(NOVEL_PROMPT_KEY, JSON.stringify(out));
+    return true;
+  } catch { return false; }
+}
+
+export function resetNovelPromptStructure() {
+  try { localStorage.removeItem(NOVEL_PROMPT_KEY); return loadNovelPromptStructure(); } catch { return cloneNovelDefaults(); }
+}
+
+export function novelPromptDirective(id) {
+  const pipeline = NOVEL_PROMPT_PIPELINES.find((item) => item.id === id);
+  const entries = loadNovelPromptStructure()[id] ?? [];
+  return [`<小说提示词结构 功能="${pipeline?.name ?? id}">`, ...entries.filter((entry) => entry.enabled)
+    .map((entry, index) => `<条目 顺序="${index + 1}" 名称="${entry.name}">${entry.content}</条目>`), '</小说提示词结构>'].join('\n');
+}
 
 export function presetById(id) {
   return AI_PRESETS.find((item) => item.id === id) ?? AI_PRESETS[AI_PRESETS.length - 1];
@@ -586,7 +664,7 @@ export function novelTurnPrompt(snap, action = '') {
   return [
     '你是中文像素地牢经营游戏《勇者去死！》的小说战役叙事者。只输出 JSON，不要解释。',
     NOVEL_HARD_RULES,
-    promptDirective('novelTurn'),
+    novelPromptDirective('novelTurn'),
     `<权威游戏事实>${JSON.stringify(snap.game)}</权威游戏事实>`,
     `<旧章摘要>${String(snap.history?.summary ?? '').slice(0, 6000)}</旧章摘要>`,
     `<叙事事实>${JSON.stringify(snap.history?.facts ?? {})}</叙事事实>`,
@@ -615,7 +693,7 @@ export function novelMissionPrompt(snap) {
   return [
     '你为《勇者去死！》小说战役签发下一场勇者入侵。只输出 JSON，不要解释。',
     NOVEL_HARD_RULES,
-    promptDirective('novelMission'),
+    novelPromptDirective('novelMission'),
     `<权威状态与数值边界>${JSON.stringify(snap)}</权威状态与数值边界>`,
     '只能使用状态中allowedClasses、allowedAffixes和objectives列出的值。members必须为5至8人，等级必须在minLevel和maxLevel之间。',
     'protectFacility的floor、protectUnit的key必须来自状态候选。rewardMult为1.15至1.60。penalty只能是resource或temporary。',
@@ -631,7 +709,7 @@ export function novelSummaryPrompt(snap) {
   return [
     '你为《勇者去死！》维护小说战役的长期记忆。只输出 JSON，不要解释。',
     NOVEL_HARD_RULES,
-    promptDirective('novelSummary'),
+    novelPromptDirective('novelSummary'),
     `<旧摘要>${String(snap.summary ?? '').slice(0, 6000)}</旧摘要>`,
     `<待压缩原文>${JSON.stringify(snap.entries ?? [])}</待压缩原文>`,
     `<已有事实>${JSON.stringify(snap.facts ?? {})}</已有事实>`,
