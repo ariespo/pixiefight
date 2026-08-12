@@ -7,8 +7,9 @@ import { newChamp, champStats, tickFatigue } from '../heroes.js';
 import { AFFIX_POWER, POWER_MENU, clampAffixDraft, clampDraft } from '../modules.js';
 import { WORKSHOP_RESEARCH, researchDirectMultiplier, researchEffects, researchPoisonApplication, researchTrapThroughput } from '../research.js';
 import { sanitizeScene } from '../llm.js';
+import { evaluateNovelMission, freshNovelState, sanitizeNovelMission, sanitizeNovelTurn } from '../novel.js';
 
-const core = ['game.js', 'battle.js', 'story.js', 'vars.js', 'ui.js', 'heroes.js', 'modules.js', 'gear.js', 'data.js', 'llm.js', 'audio.js', 'research.js'];
+const core = ['game.js', 'battle.js', 'story.js', 'vars.js', 'ui.js', 'heroes.js', 'modules.js', 'gear.js', 'data.js', 'llm.js', 'audio.js', 'research.js', 'novel.js', 'save-store.js'];
 for (const file of core) {
   const out = spawnSync(process.execPath, ['--check', file], { encoding: 'utf8' });
   if (out.status !== 0) throw new Error(`${file} syntax failed\n${out.stderr}`);
@@ -55,6 +56,20 @@ for (const task of ['part', 'affix', 'scene', 'dialogue', 'report', 'context', '
 for (const task of ['storyReply', 'overtimeRaid']) {
   if (!llmSource.includes(`promptDirective('${task}')`)) throw new Error(`New AI task prompt is not wired: ${task}`);
 }
+for (const task of ['novelTurn', 'novelMission', 'novelSummary']) {
+  if (!llmSource.includes(`promptDirective('${task}')`)) throw new Error(`Novel AI task prompt is not wired: ${task}`);
+}
+const novelTurn = sanitizeNovelTurn({ body: '账房在战后递来一张仍然活着的报表。', choices: ['签字', '退回', '问责'],
+  facts: { relations: ['账房开始怀疑魔王识字'], threads: ['报表为何会呼吸'] } });
+if (!novelTurn || novelTurn.choices.length !== 3) throw new Error('Novel daily turn contract rejected a valid three-choice response.');
+const missionSnap = { batch: 1, no: 21, minLevel: 20, maxLevel: 23, floors: 4, facilityFloors: [1, 2], defenders: [{ key: 'hero:9', name: '账房巫妖' }] };
+const mission = sanitizeNovelMission({ title: '报表讨伐令', body: '王国决定消灭会呼吸的报表。',
+  members: [{ cls: 'captain', lv: 999 }, { cls: 'knight', lv: 21 }, { cls: 'cleric', lv: 21 }, { cls: 'mage', lv: 21 }, { cls: 'rogue', lv: 21 }],
+  affixes: ['brave', 'illegal'], objective: { type: 'protectFacility', floor: 1 }, rewardMult: 9, penalty: 'resource' }, missionSnap);
+if (!mission || mission.members[0].lv !== 23 || mission.affixes.includes('illegal') || mission.rewardMult !== 1.6)
+  throw new Error(`Novel mission escaped its local envelope: ${JSON.stringify(mission)}`);
+const missionResult = evaluateNovelMission(mission, { win: true, time: 80, rooms: [{ i: 1, broken: false }] });
+if (!missionResult.complete || freshNovelState().dailyTurns !== 0) throw new Error('Novel mission evaluation or fresh state is invalid.');
 const safeScene = sanitizeScene({ title: '边界检查', text: '测试事件', choices: [
   { label: '甲', reply: '甲', effects: [{ t: 'res', bone: 999, mana: -999 }] },
   { label: '乙', reply: '乙', effects: [{ t: 'mod', mod: { id: 'unsafe', raids: 99, monAtkMult: 9, heroAtkMult: 0 } }] },

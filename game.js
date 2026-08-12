@@ -9,12 +9,17 @@ import { CATS, PARTS, AFFIXES as PART_AFFIXES, AFFIX_POWER, PART_BUDGET, DIY_AFF
                                                                                                                           
 import { AI_PRESETS, AI_PROMPT_TASKS, getBackend, hasBackend, llmStatus, loadCfg, loadMode, loadPromptOverrides, normalizeBaseUrl, presetById, refreshModels,
   requestAffix, requestBattleDialogue, requestContextStory, requestHeroLore, requestLiteraryReport, requestPart,
-  requestStoryReply, requestOvertimeRaid, restoreBackend, saveCfg, saveMode, savePromptOverrides, setBackend, requestScene as llmScene } from './llm.js';
+  requestStoryReply, requestOvertimeRaid, requestNovelTurn, requestNovelMission, requestNovelSummary,
+  restoreBackend, saveCfg, saveMode, savePromptOverrides, setBackend, requestScene as llmScene } from './llm.js';
                                         
                                            
 import { applyEffects, fillText, getProvider, requestScene, sceneById, setProvider, testConds, localProvider, SCENES } from './story.js';
                                                                       
 import { READ_PATHS, foldMods, modSummary } from './vars.js';
+import { appendNovelEntry, evaluateNovelMission, freshNovelState, mergeNovelFacts, recentNovelContext,
+  sanitizeNovelMission, sanitizeNovelState, sanitizeNovelSummary, sanitizeNovelTurn } from './novel.js';
+import { clearSlot, exportSlot, flushAutosave, getActiveSlot, importIntoSlot, initSaveStore, listSlots,
+  loadSlot, loadSnapshot, queueAutosave, saveSnapshot, setActiveSlot } from './save-store.js';
                                                                         
 import { CHAMP_CAP, CHAMP_LV_CAP, CHEM_INFO, HEAL_MANA, HERO_REST_ROUNDS, HERO_SORTIE_LIMIT, POT_MULT, POT_NAME, REROLL_MANA, REST_MANA, RESPEC_MANA,
   REROLL_TRAIT_BONE, REROLL_TRAIT_MANA, TALENTS, TALENT_CAP, TALENT_TIERS, TIER_LV, TRAITS, WOUND_CAP,
@@ -185,18 +190,19 @@ function freshSave(selectedDoctrine = 'default')       {
     vault: [], forged: [], fgNext: 1,
     story: { vars: {}, mods: [], unlocks: [], seen: [], credits: 1, leads: [], archive: [], leadNext: 1,
       relations: {}, exiles: [], exileNext: 1 },
+    novel: freshNovelState(),
   };
 }
 
 let S       = freshSave();
 let meta = loadMeta();
-let saveExists = !!localStorage.getItem(SAVE_KEY);
+let saveExists = false;
+let saveSlots = [];
 
-function loadSave() {
+function installSave(raw) {
   try {
-    const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return;
-    const p = JSON.parse(raw)                 ;
+    const p = typeof raw === 'string' ? JSON.parse(raw) : raw;
     const base = freshSave();
     const sourceFloors = Array.isArray(p.floors) && p.floors.length
       ? p.floors
@@ -218,6 +224,13 @@ function loadSave() {
   syncDiy();
   syncCustoms();
   seedExistingFacilityLeads();
+}
+
+async function loadSave() {
+  const raw = await loadSlot(getActiveSlot());
+  if (raw) installSave(raw);
+  saveSlots = await listSlots();
+  saveExists = !!saveSlots.find((slot) => slot.slot === getActiveSlot())?.exists;
 }
 
 // 自定义词缀与 DIY 部件同一套：存档只存草案，读档重新注册进 AFFIXES
@@ -259,6 +272,7 @@ function sanitizeSave() {
   S.playerName = String(S.playerName || S.story?.vars?.playerName || LORD_NAMES[0]).trim().slice(0, 12) || LORD_NAMES[0];
   S.lairName = String(S.lairName || S.story?.vars?.lairName || LAIR_NAMES[0]).trim().slice(0, 16) || LAIR_NAMES[0];
   S.onlineRaids = S.onlineRaids && typeof S.onlineRaids === 'object' ? S.onlineRaids : {};
+  S.novel = sanitizeNovelState(S.novel);
   S.introSeen = !!S.introSeen || S.raidNo > 1 || S.overtime;
   S.reports = Array.isArray(S.reports) ? S.reports.filter((report) => report && typeof report.raidNo === 'number').slice(0, 5) : [];
   for (const report of S.reports) if (report.aiState === 'pending') report.aiState = report.literary ? 'done' : 'fallback';
@@ -492,14 +506,15 @@ function syncCustoms() {
 }
 let saveFlash = 0;
 function persist() {
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify(S)); saveExists = true; saveFlash = 1.2; } catch { /* 忽略写入失败 */ }
+  saveExists = true; saveFlash = 1.2;
+  void queueAutosave(S).catch(() => { say('自动存档写入失败，请检查浏览器存储空间'); });
 }
 
-function exportSave() {
+async function exportSave() {
   try {
-    const data = localStorage.getItem(SAVE_KEY);
+    const data = await exportSlot();
     if (!data) { say('没有可导出的存档'); return; }
-    const blob = new Blob([data], { type: 'application/json' });
+    const blob = new Blob([JSON.stringify(data)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     const ts = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
@@ -521,9 +536,8 @@ function importSave() {
     const file = input.files?.[0];
     if (!file) return;
     try {
-      const text = await file.text();
-      JSON.parse(text);
-      localStorage.setItem(SAVE_KEY, text);
+      const text = await file.text(), parsed = JSON.parse(text);
+      await importIntoSlot(parsed);
       say('存档导入成功，即将刷新');
       setTimeout(() => location.reload(), 800);
     } catch { say('导入失败：文件格式错误'); }
@@ -1065,6 +1079,13 @@ const seatedChampUids = () => S.rooms.map((r) => r.leader).filter((u)           
 const roomOfChamp = (uid        ) => S.rooms.findIndex((r) => r.leader === uid);
 function currentRaid()          {
   if (!S.overtime && S.raidNo <= NORMAL_RAID_COUNT) return RAIDS[S.raidNo - 1];
+  if (S.novel?.enabled && S.novel.pendingMission && !S.novel.pendingMission.resolved
+    && S.novel.pendingMission.issuedRaid === S.otRaid) {
+    const mission = S.novel.pendingMission;
+    const base = makeOvertimeRaid(S.otRaid);
+    return { no: S.otRaid, title: mission.title, members: mission.members, affixes: mission.affixes,
+      reward: base.reward, novel: true, missionId: mission.id, briefing: { body: mission.body, reply: `${S.playerName}批准了这张不太吉利的出差单。` } };
+  }
   if (S.onlineRaids?.[S.otRaid]) return S.onlineRaids[S.otRaid];
   return makeOvertimeRaid(S.otRaid);
 }
@@ -1084,7 +1105,7 @@ function makeOvertimeRaid(no        )          {
 }
 
 async function prepareOnlineOvertimeRaid() {
-  if (!S.overtime || loadMode() !== 'http' || S.onlineRaids?.[S.otRaid]) return null;
+  if (!S.overtime || S.novel?.enabled || loadMode() !== 'http' || S.onlineRaids?.[S.otRaid]) return null;
   const batch = Math.max(1, S.otRaid - NORMAL_RAID_COUNT), fallback = makeOvertimeRaid(S.otRaid);
   battlePrepBusy = true; say('线上叙事者正在签发本批勇者的出差单…'); render();
   try {
@@ -1153,12 +1174,16 @@ const UI_DENSITY_KEY = 'yqh-ui-density-v1';
 const UI_SHELL_TOUR_KEY = 'yqh-ui-shell-tour-v1';
 let armySection = 'mob';
 let archiveSection = 'report';
+let novelBusy = false;
+let novelEnableConfirm = false;
+let novelInputRect = null;
 let selectedEntity = null;
 let inspectorView = 'summary';
 let desktopSystemMenu = false;
 let uiDensity = localStorage.getItem(UI_DENSITY_KEY) === 'expert' ? 'expert' : 'standard';
 let uiShellTourStep = localStorage.getItem(UI_SHELL_TOUR_KEY) === 'done' ? 4 : 0;
 const activeZone = () => PAGE_ZONE[tab] ?? 'throne';
+const novelAvailable = () => !!S.overtime && loadMode() === 'http';
 const pageName = (page) => NAV_ZONES.find((item) => item.id === (PAGE_ZONE[page] ?? page))?.name
   ?? TABS.find((item) => item.id === page)?.name ?? page;
 const zoneOpen = (id) => id === 'army' ? featureOpen('mob') : id === 'archive' ? featureOpen('report') : featureOpen(id);
@@ -1370,6 +1395,10 @@ function uiTasks() {
     id, severity, title, summary, reason, page, target, blocking: severity === 'block',
   });
   if (!roundTeachingComplete()) add('block', 'teaching', '完成本轮教学', '阅读当前高光步骤后才可迎战。', '新机制尚未确认', ROUND_TUTORIALS[S.raidNo]?.[Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0))]?.page ?? 'throne');
+  if (S.overtime && S.novel?.enabled && loadMode() !== 'http')
+    add('block', 'novel-api', '小说战役等待叙事者', '重新接入有效API后才能继续签发任务与迎战。', '小说战役已经接管本档，但当前外部模型不可用', 'story', { type: 'novel' });
+  else if (S.overtime && S.novel?.enabled && (!S.novel.pendingMission || S.novel.pendingMission.resolved))
+    add('block', 'novel-mission', '尚未签发小说任务', '进入档案的小说页，完成日常或直接签发下一次入侵。', '小说战役要求每场战斗都有对应章节', 'story', { type: 'novel' });
   const activeDefense = S.rooms.reduce((n, room) => n + [room.front, room.back, room.flank].filter((uid) => uid != null).length
     + (room.leader != null && (!(champById(room.leader)?.restTurns || 0) || heroForcedThisRaid(champById(room.leader))) ? 1 : 0), 0);
   if (activeDefense <= 0) add('block', 'empty-defense', '地牢完全空防', '至少部署一名可出战守军，否则入侵者会直达王座。', '当前有效布防为0', 'dungeon', { kind: 'slot', room: 0, which: 'front' });
@@ -1411,6 +1440,7 @@ function navigateUiTask(task) {
   if (task.target?.type === 'research') {
     setTab('shop'); openWorkshopResearch(); chooseResearchGroup(task.target.id); return;
   }
+  if (task.target?.type === 'novel') { setArchiveSection('novel'); return; }
   setTab(task.page);
 }
 const uiBattleBlocked = () => uiTasks().some((task) => task.blocking);
@@ -1831,7 +1861,8 @@ async function boot() {
   modalLayer.addChild(modalGfx);
   portraitLayer.addChild(portraitGfx);
 
-  loadSave();
+  await initSaveStore();
+  await loadSave();
   restoreBackend();
   setProvider(hybridProvider);
   setMuted(S.muted);
@@ -1843,6 +1874,8 @@ async function boot() {
   window.addEventListener('orientationchange', scheduleLayout);
   window.visualViewport?.addEventListener('resize', scheduleLayout);
   window.visualViewport?.addEventListener('scroll', scheduleLayout);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') void flushAutosave(); });
+  window.addEventListener('pagehide', () => { void flushAutosave(); });
   bindInput();
   render();
 
@@ -2170,18 +2203,23 @@ function pageForZone(zone) {
   }
   if (zone === 'archive') {
     if (guidePage === 'story' || guidePage === 'report') return featureOpen(guidePage) ? guidePage : 'report';
-    return archiveSection === 'story' && featureOpen('story') ? 'story' : 'report';
+    return ['story', 'chronicle', 'novel'].includes(archiveSection) && featureOpen('story') ? 'story' : 'report';
   }
   return zone;
 }
 function setZone(zone) { setTab(pageForZone(zone)); }
 function setArchiveSection(section) {
+  if (section === 'novel' && !novelAvailable()) {
+    if (S.novel?.enabled) { say('小说战役需要重新接入外部API'); openAISettings(); }
+    return;
+  }
   archiveSection = section;
   if (section === 'report') setTab('report');
   else {
     storyView = section === 'chronicle' ? 'chronicle' : 'dashboard';
-    portraitStoryView = section === 'chronicle' ? 'archive' : 'leads';
+    portraitStoryView = section === 'chronicle' ? 'archive' : section === 'novel' ? 'novel' : 'leads';
     setTab('story');
+    if (section === 'novel' && S.novel?.enabled && (S.novel.phase === 'resolution' || (!S.novel.entries.length && S.novel.phase === 'idle'))) void runNovelTurn();
   }
 }
 function setTab(t     ) {
@@ -2241,6 +2279,7 @@ function clearUi() {
 }
 
 function render() {
+  novelInputRect = null;
   portraitChromeKey = '';
   if (nameInput) nameInput.style.display = screen === 'manage' && (stitch || smith) && !detailPopup ? 'block' : 'none';
   if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !detailPopup ? 'block' : 'none';
@@ -2264,6 +2303,7 @@ function render() {
     return;
   }
   if (!featureOpen(tab)) tab = 'throne';
+  if (archiveSection === 'novel' && !novelAvailable()) { archiveSection = 'report'; tab = 'report'; }
   uiLayer.visible = true;
   clearUi();
   resetBoundedTextAudit();
@@ -2988,6 +3028,66 @@ let forgeInput                          = null;
 const FORGE_INPUT = { x: 108, y: 58, w: 250, h: 18 };
 
 let aiSettingsRoot = null;
+let saveManagerRoot = null;
+
+function closeSaveManager() {
+  if (saveManagerRoot) saveManagerRoot.remove();
+  saveManagerRoot = null;
+  render();
+}
+
+function saveTime(value) {
+  if (!value) return '空';
+  try { return new Date(value).toLocaleString('zh-CN', { hour12: false }); } catch { return '已有记录'; }
+}
+
+async function openSaveManager() {
+  closeSaveManager();
+  await flushAutosave();
+  saveSlots = await listSlots();
+  const active = getActiveSlot();
+  const root = document.createElement('div');
+  root.id = 'save-manager-overlay';
+  root.style.cssText = 'position:fixed;inset:0;z-index:82;display:flex;align-items:center;justify-content:center;padding:12px;box-sizing:border-box;background:rgba(8,6,14,.9);font-family:monospace;color:#eadcae;';
+  const card = document.createElement('div');
+  card.style.cssText = 'width:min(720px,96vw);max-height:calc(100vh - 24px);overflow:auto;box-sizing:border-box;padding:16px;border:3px solid #b28a43;box-shadow:0 0 0 3px #21172d,0 12px 40px #000;background:#191423;';
+  card.innerHTML = `<div class="sm-head"><div><b>地下城档案柜</b><small>3个战役档 · 每档3个手动快照</small></div><button data-sm="close">关闭</button></div><div class="sm-slots"></div><div class="sm-note">自动档会持续更新；手动快照只有明确点击保存才会覆盖。读取快照会恢复当前自动进度。</div>`;
+  const css = document.createElement('style');
+  css.textContent = '#save-manager-overlay button{box-sizing:border-box;border:1px solid #76698a;border-radius:0;background:#272033;color:#f1e5bd;font:13px monospace;min-height:34px;padding:6px 9px;cursor:pointer}#save-manager-overlay button:disabled{opacity:.4;cursor:default}#save-manager-overlay .sm-head{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}#save-manager-overlay .sm-head b{display:block;color:#e2bd64;font-size:20px}#save-manager-overlay .sm-head small{display:block;color:#918aa0;margin-top:4px}#save-manager-overlay .sm-slot{border:1px solid #484054;background:#100d17;padding:10px;margin:8px 0}#save-manager-overlay .sm-slot.active{border-color:#e2bd64}#save-manager-overlay .sm-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}#save-manager-overlay .sm-title{font-size:15px;color:#e2bd64}#save-manager-overlay .sm-meta{font-size:12px;color:#aaa0b5;margin:5px 0 9px;line-height:1.5}#save-manager-overlay .sm-shots{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}#save-manager-overlay .sm-shot{border:1px solid #36303f;padding:7px;min-width:0}#save-manager-overlay .sm-shot div{font-size:11px;color:#918aa0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:6px}#save-manager-overlay .sm-shot-actions{display:grid;grid-template-columns:1fr 1fr;gap:5px}#save-manager-overlay .sm-note{font-size:12px;color:#918aa0;line-height:1.5;margin-top:10px}@media(max-width:540px){#save-manager-overlay .sm-shots{grid-template-columns:1fr}#save-manager-overlay .sm-shot{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}#save-manager-overlay .sm-shot div{margin:0}}';
+  const slotsRoot = card.querySelector('.sm-slots');
+  for (const slot of saveSlots) {
+    const row = document.createElement('div'); row.className = `sm-slot${slot.slot === active ? ' active' : ''}`;
+    const progress = slot.exists ? `${slot.playerName} · ${slot.lairName} · ${slot.overtime ? `加班${slot.otRaid - NORMAL_RAID_COUNT}` : `第${slot.raidNo}轮`}${slot.novel ? ' · 小说战役' : ''}` : '空档位';
+    row.innerHTML = `<div class="sm-row"><span class="sm-title">${slot.slot === active ? '◆ ' : ''}档位 ${slot.slot}</span><button data-slot="${slot.slot}">${slot.slot === active ? '当前档' : slot.exists ? '读取自动档' : '选为新档'}</button></div><div class="sm-meta">${progress}<br>${saveTime(slot.updatedAt)}</div><div class="sm-shots"></div>`;
+    const select = row.querySelector('[data-slot]'); select.disabled = slot.slot === active;
+    select.addEventListener('click', async () => {
+      if (slot.exists && !confirm(`读取档位${slot.slot}的自动档？当前档未做手动快照的未来进度将不会保留。`)) return;
+      setActiveSlot(slot.slot); await flushAutosave(); location.reload();
+    });
+    const shots = row.querySelector('.sm-shots');
+    for (const shot of slot.snapshots) {
+      const box = document.createElement('div'); box.className = 'sm-shot';
+      box.innerHTML = `<div>快照${shot.index} · ${shot.exists ? `${shot.overtime ? `加班${shot.otRaid - NORMAL_RAID_COUNT}` : `第${shot.raidNo}轮`} · ${saveTime(shot.updatedAt)}` : '空'}</div><span class="sm-shot-actions"><button data-save>保存</button><button data-load ${shot.exists ? '' : 'disabled'}>读取</button></span>`;
+      const canWrite = slot.slot === active && screen === 'manage' && !battlePrepBusy && !novelBusy;
+      box.querySelector('[data-save]').disabled = !canWrite;
+      box.querySelector('[data-save]').addEventListener('click', async () => {
+        if (shot.exists && !confirm(`覆盖档位${slot.slot}的快照${shot.index}？`)) return;
+        await saveSnapshot(shot.index, S, slot.slot); say(`已写入快照${shot.index}`); closeSaveManager(); void openSaveManager();
+      });
+      box.querySelector('[data-load]').addEventListener('click', async () => {
+        if (!confirm(`读取快照${shot.index}？它会成为档位${slot.slot}当前的自动进度。`)) return;
+        const state = await loadSnapshot(shot.index, slot.slot); if (!state) return;
+        setActiveSlot(slot.slot); await queueAutosave(state, slot.slot); await flushAutosave(); location.reload();
+      });
+      shots.appendChild(box);
+    }
+    slotsRoot.appendChild(row);
+  }
+  root.append(css, card); document.body.appendChild(root); saveManagerRoot = root;
+  card.querySelector('[data-sm="close"]').addEventListener('click', closeSaveManager);
+  root.addEventListener('click', (event) => { if (event.target === root) closeSaveManager(); });
+  root.addEventListener('keydown', (event) => { event.stopPropagation(); if (event.key === 'Escape') closeSaveManager(); });
+}
 
 function toggleUiDensity() {
   uiDensity = uiDensity === 'expert' ? 'standard' : 'expert';
@@ -3942,7 +4042,8 @@ function openIdentitySetup(doctrineId = 'default') {
   lord.focus();
 }
 
-function beginNewRun(doctrineId = 'default', identity = null) {
+async function beginNewRun(doctrineId = 'default', identity = null) {
+  await clearSlot(getActiveSlot());
   S = freshSave(doctrineId);
   S.playerName = identity?.playerName || randomIdentity('lord');
   S.lairName = identity?.lairName || randomIdentity('lair');
@@ -3999,6 +4100,7 @@ function buildTitle() {
   throne.alpha = 0.72; overlay.addChild(throne);
   labelC(overlay, GAME_NAME, 240, 20, 25, C.gold);
   labelC(overlay, '经营黑暗 · 守住王座', 240, 50, 11, C.bone);
+  button(g, overlay, hits, 390, 8, 82, 22, `档位 ${getActiveSlot()}`, () => void openSaveManager(), { size: 10, border: C.gold, color: C.gold });
   const bg = new PIXI.Graphics(); overlay.addChild(bg);
   if (titleMode === 'main') {
     panelF(bg, overlay, 'scroll', 132, 80, 216, 160, C.wall);
@@ -4060,11 +4162,10 @@ function drawTopBar(g               ) {
     button(g, uiLayer, hits, 204, 6, 56, 22, '怪物', () => setTab('mob'), { size: 11, fill: tab === 'mob' ? C.wallLit : C.wall, border: tab === 'mob' ? C.gold : C.stoneLit, color: C.white });
     if (featureOpen('hero')) button(g, uiLayer, hits, 262, 6, 56, 22, '英雄', () => setTab('hero'), { size: 11, fill: tab === 'hero' ? C.wallLit : C.wall, border: tab === 'hero' ? C.gold : C.stoneLit, color: C.white });
   } else if (activeZone() === 'archive') {
-    button(g, uiLayer, hits, 204, 6, 36, 22, '战报', () => setArchiveSection('report'), { size: 10, fill: archiveSection === 'report' ? C.wallLit : C.wall, border: archiveSection === 'report' ? C.gold : C.stoneLit, color: C.white });
-    if (featureOpen('story')) {
-      button(g, uiLayer, hits, 242, 6, 36, 22, '秘闻', () => setArchiveSection('story'), { size: 10, fill: archiveSection === 'story' ? C.wallLit : C.wall, border: archiveSection === 'story' ? C.gold : C.stoneLit, color: C.white });
-      button(g, uiLayer, hits, 280, 6, 38, 22, '编年', () => setArchiveSection('chronicle'), { size: 10, fill: archiveSection === 'chronicle' ? C.wallLit : C.wall, border: archiveSection === 'chronicle' ? C.gold : C.stoneLit, color: C.white });
-    }
+    const sections = featureOpen('story') ? [['report', '战报'], ['story', '秘闻'], ['chronicle', '编年'], ...(novelAvailable() ? [['novel', '小说']] : [])] : [['report', '战报']];
+    const start = sections.length === 4 ? 188 : 204, sw = sections.length === 4 ? 31 : 36;
+    sections.forEach(([id, name], i) => button(g, uiLayer, hits, start + i * (sw + 2), 6, sw, 22, name, () => setArchiveSection(id),
+      { size: 10, fill: archiveSection === id ? C.wallLit : C.wall, border: archiveSection === id ? C.gold : C.stoneLit, color: C.white }));
   } else label(uiLayer, NAV_ZONES.find((item) => item.id === activeZone())?.name ?? '', 224, 12, 12, C.stoneLit);
   const tasks = uiTasks(), blocked = tasks.some((task) => task.blocking);
   button(g, uiLayer, hits, 324, 6, 70, 22, `事务 ${tasks.length}`, () => { selectedEntity = { type: 'tasks' }; setZone('throne'); },
@@ -4077,9 +4178,10 @@ let confirmNew = false;
 
 function drawDesktopSystemMenu(g) {
   if (!desktopSystemMenu) return;
-  panelF(g, uiLayer, 'stone', 330, 36, 146, 198, C.wall);
+  panelF(g, uiLayer, 'stone', 330, 36, 146, 225, C.wall);
   label(uiLayer, '系统菜单', 342, 44, 12, C.gold);
   const actions = [
+    ['档位与主动存档', () => void openSaveManager(), C.gold],
     ['导出存档', exportSave, C.bone], ['导入存档', importSave, C.bone],
     [S.muted ? '开启声音' : '关闭声音', toggleMute, C.purple],
     [`信息：${uiDensity === 'expert' ? '专家' : '标准'}`, toggleUiDensity, C.gold],
@@ -4087,7 +4189,7 @@ function drawDesktopSystemMenu(g) {
     [confirmNew ? '确认开始新档' : '开始新档', requestNewGame, confirmNew ? C.red : C.gold],
   ];
   actions.forEach(([name, action, color], i) => button(g, uiLayer, hits, 340, 62 + i * 27, 126, 23, name, action,
-    { size: 11, fill: i === 5 && confirmNew ? C.redDark : C.ink, border: color, color: i === 5 && confirmNew ? C.white : color }));
+    { size: 11, fill: i === 6 && confirmNew ? C.redDark : C.ink, border: color, color: i === 6 && confirmNew ? C.white : color }));
 }
 
 function portraitPage(items, key, per) {
@@ -4727,7 +4829,57 @@ function drawPortraitStoryRun(x, y, w, h) {
   }
 }
 
+function drawPortraitNovel(x, y, w, h) {
+  const n = S.novel;
+  if (!n.enabled) {
+    labelC(portraitLayer, '小说战役', x + w / 2, y + 16, 20, C.gold);
+    panelF(portraitGfx, portraitLayer, 'scroll', x + 8, y + 54, w - 16, Math.max(150, h - 122), 0xE7D7A1);
+    boundedText(portraitLayer, '开启后，叙事者会把这座地牢写成长篇互动故事。每章最多三次日常对话，随后签发一场真实入侵；战果成为下一章不可修改的事实。\n\n本模式将接管当前加班档。', x + 26, y + 74, w - 52, Math.max(100, h - 170), 14, C.ink);
+    button(portraitGfx, portraitLayer, portraitHits, x + 20, y + h - 56, w - 40, 46,
+      novelEnableConfirm ? '确认开启并接管加班档' : '开启小说战役', enableNovelCampaign,
+      { size: 16, fill: novelEnableConfirm ? C.redDark : C.purpleDark, border: novelEnableConfirm ? C.red : C.purple, color: C.white });
+    return;
+  }
+  const entries = n.entries, latest = Math.max(0, entries.length - 1); n.page = Math.max(0, Math.min(latest, n.page));
+  const entry = entries[n.page], current = n.page >= latest;
+  label(portraitLayer, `第${entry?.chapter ?? n.chapter}章`, x + 14, y + 8, 17, C.gold);
+  label(portraitLayer, `第${n.page + 1}/${Math.max(1, entries.length)}页 · 日常${n.dailyTurns}/3`, x + w - 162, y + 12, 13, C.stoneLit);
+  const decisionH = current && !n.pendingMission ? (n.dailyTurns < 3 ? 244 : 62) : n.pendingMission ? 112 : 58;
+  const storyH = Math.max(118, h - decisionH - 50);
+  panelF(portraitGfx, portraitLayer, 'scroll', x + 8, y + 42, w - 16, storyH, 0xE7D7A1);
+  if (entry) {
+    label(portraitLayer, entry.role === 'player' ? `【${S.playerName}】` : entry.role === 'battle' ? '【战斗记录】' : '【地牢叙事者】', x + 24, y + 58, 14,
+      entry.role === 'player' ? C.purple : entry.role === 'battle' ? C.redDark : C.ink);
+    const pages = paginateText(entry.text, w - 52, storyH - 48, 14);
+    const inner = portraitPage(pages, `novel-entry-${entry.id}`, 1);
+    boundedText(portraitLayer, inner.view[0] ?? '', x + 24, y + 84, w - 48, storyH - 52, 14, C.ink);
+    if (inner.pages > 1) portraitPager(`novel-entry-${entry.id}`, inner.page, inner.pages, x + 18, y + storyH - 2, w - 36);
+  } else labelC(portraitLayer, novelBusy ? '叙事者正在落笔…' : '等待第一章', x + w / 2, y + 100, 15, C.ink);
+  const navY = y + 46 + storyH;
+  button(portraitGfx, portraitLayer, portraitHits, x + 8, navY, 52, 38, '◀', () => { n.page = Math.max(0, n.page - 1); render(); }, { enabled: n.page > 0, size: 16 });
+  button(portraitGfx, portraitLayer, portraitHits, x + w - 60, navY, 52, 38, '▶', () => { n.page = Math.min(latest, n.page + 1); render(); }, { enabled: n.page < latest, size: 16 });
+  if (!current) button(portraitGfx, portraitLayer, portraitHits, x + 70, navY, w - 140, 38, '返回最新页', () => { n.page = latest; render(); }, { size: 14, border: C.gold, color: C.gold });
+  else if (n.pendingMission && !n.pendingMission.resolved) {
+    boundedText(portraitLayer, `${n.pendingMission.title}：${n.pendingMission.objectiveText} · 奖励×${n.pendingMission.rewardMult.toFixed(2)}`, x + 72, navY + 2, w - 144, 34, 13, C.red);
+    button(portraitGfx, portraitLayer, portraitHits, x + 8, navY + 48, w - 16, 46, '前往王座备战', () => setTab('throne'), { size: 16, fill: C.greenDark, border: C.green, color: C.white });
+  } else if (n.dailyTurns < 3) {
+    const actionable = n.phase === 'daily' && !novelBusy;
+    n.choices.slice(0, 3).forEach((choice, i) => button(portraitGfx, portraitLayer, portraitHits, x + 8, navY + 46 + i * 44, w - 16, 38, cut(choice, 34), () => submitNovelInput(choice),
+      { size: 13, enabled: actionable, fill: C.wallLit, border: C.purple, color: C.white }));
+    novelInputRect = { x: x + 8, y: navY + 180, w: w - 118, h: 42 };
+    portraitGfx.roundRect(novelInputRect.x, novelInputRect.y, novelInputRect.w, novelInputRect.h, 4).fill(C.ink).stroke({ width: 1, color: C.purple, alignment: 0 });
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 102, navY + 180, 94, 42, '发送', () => submitNovelInput(), { size: 14, enabled: actionable, fill: C.purpleDark, border: C.purple, color: C.white });
+    button(portraitGfx, portraitLayer, portraitHits, x + 8, navY + 228, w - 16, 42, '签发新任务', () => void issueNovelMission(), { size: 15, enabled: !novelBusy && entries.length > 0, fill: C.redDark, border: C.red, color: C.white });
+  } else {
+    novelInputRect = null;
+    button(portraitGfx, portraitLayer, portraitHits, x + 8, navY + 46, w - 16, 46, '日常结束 · 必须签发新任务', () => void issueNovelMission(),
+      { size: 15, enabled: !novelBusy, fill: C.redDark, border: C.red, color: C.white });
+  }
+  if (n.error) boundedText(portraitLayer, n.error, x + 16, y + h - 24, w - 32, 20, 11, C.red);
+}
+
 function drawPortraitStory(x, y, w, h) {
+  if (archiveSection === 'novel') { drawPortraitNovel(x, y, w, h); return; }
   if (storyRun) { drawPortraitStoryRun(x, y, w, h); return; }
   const leads = availableStoryLeads(), archive = S.story.archive;
   const isArchive = archiveSection === 'chronicle';
@@ -4787,6 +4939,7 @@ function drawPortraitNativeManage() {
   } else if (portraitMobileMenu) {
     label(portraitLayer, '系统菜单', contentX + 18, pageY + 4, 18, C.gold);
     const menuItems = [
+      ['档位与主动存档', () => void openSaveManager(), C.gold],
       ['导出存档', exportSave, C.bone], ['导入存档', importSave, C.bone],
       [S.muted ? '开启声音' : '关闭声音', toggleMute, C.purple],
       [`信息密度：${uiDensity === 'expert' ? '专家' : '标准'}`, toggleUiDensity, C.gold],
@@ -4795,9 +4948,9 @@ function drawPortraitNativeManage() {
     ];
     menuItems.forEach(([name, action, color], i) => {
       const by = pageY + 38 + i * 54;
-      if (i === 5) menuNewY = by;
+      if (i === 6) menuNewY = by;
       button(portraitGfx, portraitLayer, portraitHits, contentX + 18, by, contentW - 36, 46, name, action,
-        { size: 16, fill: i === 5 && confirmNew ? C.redDark : C.wall, border: color, color: i === 5 && confirmNew ? C.white : color });
+        { size: 16, fill: i === 6 && confirmNew ? C.redDark : C.wall, border: color, color: i === 6 && confirmNew ? C.white : color });
     });
   } else {
     if (guide) {
@@ -4811,7 +4964,7 @@ function drawPortraitNativeManage() {
         () => setTab(id), { size: 14, fill: tab === id ? C.wallLit : C.wall, border: tab === id ? C.gold : C.stoneLit, color: C.white }));
       pageY += 42;
     } else if (activeZone() === 'archive') {
-      const sections = featureOpen('story') ? [['report', '战报'], ['story', '秘闻'], ['chronicle', '编年史']] : [['report', '战报']];
+      const sections = featureOpen('story') ? [['report', '战报'], ['story', '秘闻'], ['chronicle', '编年史'], ...(novelAvailable() ? [['novel', '小说']] : [])] : [['report', '战报']];
       const sw = Math.floor((contentW - 18 - (sections.length - 1) * 6) / sections.length);
       sections.forEach(([id, name], i) => button(portraitGfx, portraitLayer, portraitHits, contentX + 6 + i * (sw + 6), pageY, sw, 36, name,
         () => setArchiveSection(id), { size: 14, fill: archiveSection === id ? C.wallLit : C.wall, border: archiveSection === id ? C.gold : C.stoneLit, color: C.white }));
@@ -4884,6 +5037,7 @@ function drawPortraitTitle() {
   throne.alpha = 0.65; portraitLayer.addChild(throne);
   labelC(portraitLayer, GAME_NAME, w / 2, artTop, Math.max(25, Math.min(36, w * 0.085)), C.gold);
   labelC(portraitLayer, '经营黑暗 · 守住王座', w / 2, artTop + 45, 14, C.bone);
+  button(portraitGfx, portraitLayer, portraitHits, w - 104, artTop + 78, 86, 38, `档位 ${getActiveSlot()}`, () => void openSaveManager(), { size: 14, border: C.gold, color: C.gold });
   const margin = 18;
   if (titleMode === 'main') {
     const panelY = Math.max(255, Math.round(h * 0.36));
@@ -6331,7 +6485,10 @@ function ensureStoryInput() {
   el.style.cssText = 'position:fixed;z-index:9;box-sizing:border-box;background:#241c33;color:#e7d7a1;border:1px solid #7a7490;outline:none;font-family:inherit;padding:0 4px;touch-action:manipulation;user-select:text;-webkit-user-select:text;';
   el.addEventListener('keydown', (e) => {
     e.stopPropagation();
-    if (e.key === 'Enter') submitStoryInput();
+    if (e.key === 'Enter') {
+      if (archiveSection === 'novel') submitNovelInput();
+      else submitStoryInput();
+    }
   });
   document.body.appendChild(el);
   storyInput = el;
@@ -6344,11 +6501,14 @@ function removeStoryInput() {
 
 function syncStoryInput() {
   const spec = storyRun?.scene.input;
-  if (screen === 'manage' && tab === 'story' && spec && !stitch && !forge) {
+  const novelInputOpen = screen === 'manage' && tab === 'story' && archiveSection === 'novel' && S.novel?.enabled
+    && S.novel.phase === 'daily' && S.novel.dailyTurns < 3 && S.novel.page >= S.novel.entries.length - 1 && !novelBusy && !S.novel.pendingMission;
+  if (screen === 'manage' && tab === 'story' && (spec || novelInputOpen) && !stitch && !forge) {
     ensureStoryInput();
     if (storyInput) {
-      storyInput.maxLength = spec.max;
-      storyInput.placeholder = spec.placeholder;
+      storyInput.maxLength = novelInputOpen ? 500 : spec.max;
+      storyInput.placeholder = novelInputOpen ? '自由输入…' : spec.placeholder;
+      if (novelInputOpen && storyInput.value !== S.novel.draft) storyInput.value = S.novel.draft ?? '';
       storyInput.style.display = 'block';
       positionStoryInput();
     }
@@ -6359,6 +6519,16 @@ function syncStoryInput() {
 
 function positionStoryInput() {
   if (!storyInput) return;
+  if (archiveSection === 'novel' && novelInputRect) {
+    if (portraitNativeManage()) {
+      const canvasRect = app.canvas.getBoundingClientRect(), sx = canvasRect.width / app.screen.width, sy = canvasRect.height / app.screen.height;
+      storyInput.style.left = `${Math.round(canvasRect.left + novelInputRect.x * sx)}px`;
+      storyInput.style.top = `${Math.round(canvasRect.top + novelInputRect.y * sy)}px`;
+      storyInput.style.width = `${Math.round(novelInputRect.w * sx)}px`; storyInput.style.height = `${Math.max(38, Math.round(novelInputRect.h * sy))}px`;
+      storyInput.style.fontSize = '16px'; return;
+    }
+    positionDomInput(storyInput, novelInputRect); return;
+  }
   if (portraitNativeManage() && portraitStoryInputRect) {
     const canvasRect = app.canvas.getBoundingClientRect();
     const sx = canvasRect.width / app.screen.width, sy = canvasRect.height / app.screen.height;
@@ -6525,7 +6695,156 @@ function drawChronicle(g) {
   }, { size: 9, border: C.gold, color: C.gold });
 }
 
+function novelGameSnapshot() {
+  const chem = chemistry(S.champs, seatedChampUids()).map;
+  return {
+    playerName: S.playerName, lairName: S.lairName, chapter: S.novel.chapter, raid: S.otRaid,
+    resources: { bone: S.bone, mana: S.mana, relic: S.relic }, doctrine: doctrine().name,
+    dungeon: S.floors.map((floor, i) => ({ floor: i + 1, theme: floor.battle.theme, trap: floor.battle.trap,
+      facility: utilityDef(floor.utility).name, facilityLevel: floor.utility.level, condition: floor.utility.condition,
+      defenders: [['front', floor.battle.front], ['back', floor.battle.back], ['flank', floor.battle.flank]].map(([row, uid]) => {
+        const inst = instById(uid); return inst ? { row, name: instKind(inst).name, level: inst.lv } : null;
+      }).filter(Boolean), leader: champById(floor.battle.leader)?.name ?? null })),
+    monsters: S.monsters.map((inst) => { const kind = instKind(inst); return { key: `monster:${inst.uid}`, name: kind.name, level: inst.lv,
+      deployedFloor: S.rooms.findIndex((room) => [room.front, room.back, room.flank].includes(inst.uid)) + 1,
+      hp: kind.hp, atk: kind.atk, def: kind.def, speed: kind.spd, skill: kind.skill, passive: kind.passive ?? '' }; }),
+    heroes: S.champs.map((champ) => { const stat = statOf(champ, chem); return { key: `hero:${champ.uid}`, name: champ.name, race: champ.race,
+      level: champ.lv, hp: stat.hp, atk: stat.atk, def: stat.def, speed: stat.spd, traits: champ.traits, talents: champ.talents,
+      gear: champ.gear, title: titleOf(champ)?.name ?? '', restTurns: champ.restTurns ?? 0, wounds: champ.wounds ?? 0,
+      personality: champ.aiLore?.personality ?? champ.personality ?? '', background: champ.aiLore?.background ?? champ.background ?? '' }; }),
+    recentReports: S.reports.slice(0, 3).map((report) => ({ raid: report.raidNo, title: report.title, win: report.win,
+      time: Math.round(report.time), breaches: report.rooms.filter((room) => room.broken).length, summary: report.literary?.summary ?? report.firstCause })),
+  };
+}
+
+function novelRequestSnapshot() { return { game: novelGameSnapshot(), history: recentNovelContext(S.novel) }; }
+
+function novelMissionSnapshot() {
+  const batch = Math.max(1, S.otRaid - NORMAL_RAID_COUNT), game = novelGameSnapshot();
+  return {
+    ...novelRequestSnapshot(), batch, no: S.otRaid, minLevel: 18 + batch * 2, maxLevel: 21 + batch * 2,
+    floors: S.floors.length,
+    facilityFloors: S.floors.map((floor, index) => floor.utility.kind !== 'none' && floor.utility.condition > 0 ? index : null).filter((x) => x != null),
+    defenders: [...S.monsters.map((inst) => ({ key: `monster:${inst.uid}`, name: instKind(inst).name })),
+      ...S.champs.map((champ) => ({ key: `hero:${champ.uid}`, name: champ.name }))],
+    allowedClasses: ['knight','archer','cleric','mage','rogue','paladin','berserker','ranger','bard','alchemist','monk','lancer','warlock','captain','inquisitor','swordmaster'],
+    allowedAffixes: ['haste', 'holywater', 'shield', 'brave'],
+    objectives: ['win', 'protectFacility', 'breachLimit', 'protectUnit', 'timeLimit'],
+    baseReward: makeOvertimeRaid(S.otRaid).reward, game,
+  };
+}
+
+async function refreshNovelSummary() {
+  const old = S.novel.entries.filter((entry) => entry.chapter > (S.novel.summarizedThrough ?? 0) && entry.chapter < S.novel.chapter - 2);
+  if (!old.length) return;
+  try {
+    const result = sanitizeNovelSummary(await requestNovelSummary({ summary: S.novel.summary, facts: S.novel.facts,
+      entries: old.slice(-36).map((entry) => ({ chapter: entry.chapter, role: entry.role, text: entry.text })) }));
+    if (!result) return;
+    S.novel.summary = result.summary; S.novel.facts = mergeNovelFacts(S.novel.facts, result.facts);
+    S.novel.summarizedThrough = old.reduce((max, entry) => Math.max(max, entry.chapter), S.novel.summarizedThrough ?? 0); persist();
+  } catch (error) { console.warn('小说旧章摘要失败，保留原文', error); }
+}
+
+async function runNovelTurn(action = '') {
+  if (novelBusy || !novelAvailable()) return;
+  if (action && S.novel.dailyTurns >= 3) { say('本章日常已经结束，只能签发新任务'); return; }
+  const resolving = !action && S.novel.phase === 'resolution';
+  novelBusy = true; S.novel.error = ''; S.novel.draft = action;
+  if (resolving) S.novel.pendingMission = null;
+  persist(); render();
+  try {
+    const result = sanitizeNovelTurn(await requestNovelTurn(novelRequestSnapshot(), action));
+    if (!result) { S.novel.error = '叙事者没有返回完整正文与三个选项，请重试。'; say(S.novel.error); return; }
+    if (action) { appendNovelEntry(S.novel, 'player', action); S.novel.dailyTurns = Math.min(3, S.novel.dailyTurns + 1); }
+    appendNovelEntry(S.novel, 'narrator', result.body);
+    S.novel.facts = mergeNovelFacts(S.novel.facts, result.facts); S.novel.choices = result.choices;
+    S.novel.phase = 'daily'; S.novel.draft = ''; S.novel.error = ''; persist(); playSfx('tab');
+    if (S.novel.chapter > 3) void refreshNovelSummary();
+  } catch (error) {
+    if (resolving) S.novel.phase = 'resolution';
+    S.novel.error = `叙事者暂时失联：${String(error?.message ?? error).slice(0, 80)}`; say(S.novel.error);
+  } finally { novelBusy = false; render(); }
+}
+
+function enableNovelCampaign() {
+  if (!novelAvailable() || S.novel.enabled) return;
+  if (!novelEnableConfirm) { novelEnableConfirm = true; say('再次点击确认：小说战役将接管当前加班档的所有后续迎战'); render(); return; }
+  novelEnableConfirm = false; S.novel = { ...freshNovelState(), enabled: true, phase: 'idle' }; persist();
+  void runNovelTurn();
+}
+
+async function issueNovelMission() {
+  if (novelBusy || !S.novel.enabled || !novelAvailable()) return;
+  novelBusy = true; S.novel.phase = 'mission'; S.novel.error = ''; persist(); render();
+  try {
+    const snap = novelMissionSnapshot();
+    const mission = sanitizeNovelMission(await requestNovelMission(snap), snap);
+    if (!mission) { S.novel.phase = 'daily'; S.novel.error = '任务公文不完整或越过数值边界，请重新签发。'; say(S.novel.error); return; }
+    S.novel.pendingMission = mission; S.novel.phase = 'ready'; S.novel.choices = [];
+    appendNovelEntry(S.novel, 'narrator', `【任务签发：${mission.title}】\n${mission.body}\n\n任务目标：${mission.objectiveText}`);
+    persist(); playSfx('buy'); setTab('throne'); selectedEntity = null; say(`任务已签发：${mission.objectiveText}`);
+  } catch (error) {
+    S.novel.phase = 'daily'; S.novel.error = `签发失败：${String(error?.message ?? error).slice(0, 80)}`; say(S.novel.error);
+  } finally { novelBusy = false; render(); }
+}
+
+function submitNovelInput(value = null) {
+  const raw = String(value ?? storyInput?.value ?? S.novel.draft ?? '').trim().slice(0, 500);
+  if (!raw) { say('至少写下一句行动或回答'); return; }
+  S.novel.draft = raw; persist(); void runNovelTurn(raw);
+}
+
+function pageNovel(g) {
+  const n = S.novel;
+  if (!n.enabled) {
+    panelF(g, uiLayer, 'scroll', 22, 56, 436, 154, 0xE7D7A1);
+    labelC(uiLayer, '小说战役', 240, 70, 17, C.ink);
+    boundedText(uiLayer, '开启后，叙事者会把这座地牢的英雄、魔物、设施和战绩写成长篇互动故事。每章最多三次日常对话，随后必须签发一场真实入侵；战果会成为下一章无法涂改的事实。\n\n本模式将接管当前加班档，断开API时无法迎战。', 42, 100, 396, 88, 11, C.ink);
+    button(g, uiLayer, hits, 132, 214, 216, 20, novelEnableConfirm ? '确认开启并接管加班档' : '开启小说战役', enableNovelCampaign,
+      { size: 11, fill: novelEnableConfirm ? C.redDark : C.purpleDark, border: novelEnableConfirm ? C.red : C.purple, color: C.white });
+    return;
+  }
+  const entries = n.entries, latest = Math.max(0, entries.length - 1); n.page = Math.max(0, Math.min(latest, n.page));
+  const entry = entries[n.page];
+  panelF(g, uiLayer, 'scroll', 8, 56, 304, 142, 0xE7D7A1);
+  label(uiLayer, `第${entry?.chapter ?? n.chapter}章 · 第${n.page + 1}/${Math.max(1, entries.length)}页`, 18, 42, 10, C.gold);
+  if (entry) {
+    label(uiLayer, entry.role === 'player' ? `【${S.playerName}】` : entry.role === 'battle' ? '【战斗记录】' : '【地牢叙事者】', 20, 66, 10,
+      entry.role === 'player' ? C.purple : entry.role === 'battle' ? C.redDark : C.ink);
+    const textPages = paginateText(entry.text, 280, 86, 10), key = `novel-desktop-${entry.id}`;
+    const subPage = Math.max(0, Math.min(textPages.length - 1, Math.round(pageState[key] || 0))); pageState[key] = subPage;
+    boundedText(uiLayer, textPages[subPage] ?? '', 20, 82, 280, 86, 10, C.ink);
+    pager(g, key, textPages.length, 96, 179, 128, '段 ');
+  } else labelC(uiLayer, novelBusy ? '叙事者正在翻开第一章…' : '等待第一章', 160, 118, 11, C.ink);
+  button(g, uiLayer, hits, 16, 202, 42, 20, '◀', () => { n.page = Math.max(0, n.page - 1); render(); }, { enabled: n.page > 0, size: 12 });
+  button(g, uiLayer, hits, 264, 202, 42, 20, '▶', () => { n.page = Math.min(latest, n.page + 1); render(); }, { enabled: n.page < latest, size: 12 });
+  if (n.page < latest) button(g, uiLayer, hits, 92, 202, 138, 20, '返回最新页', () => { n.page = latest; render(); }, { size: 10, border: C.gold, color: C.gold });
+  panelF(g, uiLayer, 'stone', 318, 38, 158, 196, C.wall);
+  label(uiLayer, `第${n.chapter}章 · 日常${n.dailyTurns}/3`, 328, 46, 11, C.gold);
+  const actionable = n.page >= latest && n.phase === 'daily' && n.dailyTurns < 3 && !novelBusy && !n.pendingMission;
+  if (n.pendingMission && !n.pendingMission.resolved) {
+    label(uiLayer, cut(n.pendingMission.title, 14), 328, 68, 11, C.red);
+    boundedText(uiLayer, `目标：${n.pendingMission.objectiveText}\n奖励倍率：×${n.pendingMission.rewardMult.toFixed(2)}`, 328, 88, 138, 52, 10, C.bone);
+    button(g, uiLayer, hits, 328, 172, 138, 26, '前往王座备战', () => setTab('throne'), { size: 11, fill: C.greenDark, border: C.green, color: C.white });
+  } else if (n.page < latest) boundedText(uiLayer, '正在翻阅已经发生的内容。历史不可编辑；回溯请读取手动快照。', 328, 74, 138, 70, 10, C.stoneLit);
+  else {
+    n.choices.slice(0, 3).forEach((choice, i) => button(g, uiLayer, hits, 328, 66 + i * 28, 138, 24, cut(choice, 18), () => submitNovelInput(choice),
+      { size: 9, enabled: actionable, fill: C.wallLit, border: C.purple, color: C.white }));
+    if (actionable) {
+      novelInputRect = { x: 328, y: 152, w: 102, h: 22 };
+      frame(uiLayer, 'inset', 326, 150, 106, 26, { tint: C.stoneLit });
+      button(g, uiLayer, hits, 436, 152, 30, 22, '发送', () => submitNovelInput(), { size: 9, fill: C.purpleDark, border: C.purple, color: C.white });
+    } else novelInputRect = null;
+    if (novelBusy) label(uiLayer, n.phase === 'mission' ? '正在签发任务…' : '叙事者正在写…', 328, 154, 10, C.purple);
+    if (n.error) boundedText(uiLayer, n.error, 328, 178, 138, 22, 9, C.red);
+    button(g, uiLayer, hits, 328, 202, 138, 24, n.dailyTurns >= 3 ? '必须签发新任务' : '签发新任务', () => void issueNovelMission(),
+      { size: 10, enabled: !novelBusy && n.entries.length > 0, fill: C.redDark, border: C.red, color: C.white });
+  }
+}
+
 function pageStory(g               ) {
+  if (archiveSection === 'novel') { pageNovel(g); return; }
   if (!storyRun) {
     if (storyView === 'chronicle') { drawChronicle(g); return; }
     label(uiLayer, '秘闻线索', 10, 42, 12, C.white);
@@ -7711,7 +8030,8 @@ async function startBattle() {
     say(`${hardTask.title}：${hardTask.summary}`);
     return;
   }
-  if (S.overtime && loadMode() === 'http' && !S.onlineRaids?.[S.otRaid]) {
+  await flushAutosave();
+  if (S.overtime && !S.novel?.enabled && loadMode() === 'http' && !S.onlineRaids?.[S.otRaid]) {
     const onlineRaid = await prepareOnlineOvertimeRaid();
     if (onlineRaid?.briefing?.body) {
       raidBriefing = { no: onlineRaid.no, title: onlineRaid.title,
@@ -8294,6 +8614,34 @@ async function enrichLiteraryReport(report) {
   }
 }
 
+function settleNovelMission(report, battleResult) {
+  const n = S.novel, mission = n?.pendingMission;
+  if (!n?.enabled || !mission || mission.resolved || mission.issuedRaid !== report.raidNo) return null;
+  const outcome = evaluateNovelMission(mission, report);
+  let bonusBone = 0, bonusMana = 0, lostBone = 0, lostMana = 0, temporary = false;
+  if (outcome.complete) {
+    bonusBone = Math.max(0, Math.round((battleResult.bone ?? 0) * (mission.rewardMult - 1)));
+    bonusMana = Math.max(0, Math.round((battleResult.mana ?? 0) * (mission.rewardMult - 1)));
+    S.bone += bonusBone; S.mana += bonusMana; battleResult.bone += bonusBone; battleResult.mana += bonusMana;
+  } else if (mission.penalty === 'temporary') {
+    temporary = true;
+    S.story.mods.push({ id: `novel-penalty-${report.raidNo}`, name: '任务违约金', raids: 2,
+      monHpMult: 0.95, monAtkMult: 0.95, monSpdAdd: 0, heroHpMult: 1.05, heroAtkMult: 1.08,
+      sealAdd: 0, trapMult: 1, roomLimitAdd: 0 });
+  } else {
+    lostBone = Math.min(120, Math.floor(S.bone * 0.10)); lostMana = Math.min(40, Math.floor(S.mana * 0.10));
+    S.bone -= lostBone; S.mana -= lostMana;
+  }
+  mission.resolved = true; mission.outcome = { ...outcome, bonusBone, bonusMana, lostBone, lostMana, temporary };
+  n.lastResolvedRaid = report.raidNo; n.phase = 'resolution'; n.dailyTurns = 0; n.choices = []; n.draft = ''; n.error = '';
+  const resultText = outcome.complete
+    ? `【任务完成：${mission.title}】\n${outcome.reason}。额外结算${bonusBone}骨币、${bonusMana}魔质。`
+    : `【任务失败：${mission.title}】\n${outcome.reason}。${temporary ? '违约记录令未来两次入侵更难处理。' : `损失${lostBone}骨币、${lostMana}魔质。`}`;
+  appendNovelEntry(n, 'battle', resultText); n.chapter += 1;
+  report.novel = { missionId: mission.id, title: mission.title, objective: mission.objectiveText, ...mission.outcome };
+  return report.novel;
+}
+
 function finishBattle() {
   const b = battle ;
   const r = b.result ;
@@ -8385,6 +8733,11 @@ function finishBattle() {
     storyEchoes: S.story.archive.filter((x) => x.resolvedRaid === b.raid.no).slice(0, 3)
       .map((x) => ({ id: x.id, sceneId: x.sceneId, title: x.title, outcome: x.outcome })),
   };
+  report.defenders = b.rooms.flatMap((room) => room.mons.map((unit) => ({
+    key: unit.champUid ? `hero:${unit.champUid}` : `monster:${unit.monsterUid}`, name: unit.name, alive: !!unit.alive,
+  }))).filter((unit) => !unit.key.endsWith('undefined'));
+  settleNovelMission(report, r);
+  report.bone = r.bone; report.mana = r.mana;
   report.storyRefs = [...new Set([
     ...report.storyConsequences.map((x) => x.originLeadId), ...report.storyEchoes.map((x) => x.id),
   ].filter((x) => typeof x === 'number'))];
@@ -8706,7 +9059,7 @@ function drawRotateHint() {
 
 // 只读调试钩子（自测用）
 window.__debug = {
-  get rawSave() { return localStorage.getItem(SAVE_KEY); },
+  get rawSave() { return JSON.stringify(S); },
   get screen() { return screen; },
   get paused() { return paused; },
   get battleSpeed() { return speed; },
@@ -8717,11 +9070,11 @@ window.__debug = {
   get title() { return { mode: titleMode, pick: titleDoctrinePick, saveExists, actions: { ...titleActionRects } }; },
   titleNew: () => { startFromTitle(); return screen; },
   get identityOpen() { return !!identityRoot; },
-  identityStart: (playerName = '测试魔王', lairName = '测试地牢') => { closeIdentitySetup(); beginNewRun(pendingDoctrine, { playerName, lairName }); return screen; },
+  identityStart: async (playerName = '测试魔王', lairName = '测试地牢') => { closeIdentitySetup(); await beginNewRun(pendingDoctrine, { playerName, lairName }); return screen; },
   introContinue: () => { finishIntro(); return screen; },
   titleContinue: () => { continueGame(); return screen; },
   titlePick: (id) => { if (DOCTRINES[id]) { titleDoctrinePick = id; render(); } return titleDoctrinePick; },
-  titleConfirm: () => { beginNewRun(titleDoctrinePick); return screen; },
+  titleConfirm: async () => { await beginNewRun(titleDoctrinePick); return screen; },
   get progression() { return { raid: S.raidNo, tutorialStep: tutorialData().step,
     visibleTabs: visibleZones().map((item) => item.id), visiblePages: visibleTabs().map((item) => item.id), guide: roundGuide(), deploymentReady: tutorialDeploymentReady(),
     enemyClasses: currentRaid().members.map((member) => member.cls), teachingComplete: roundTeachingComplete(),
@@ -9030,7 +9383,7 @@ window.__debug = {
   setStitchName: (n        ) => { if (stitch) { stitch.name = n; stitch.auto = false; if (nameInput) nameInput.value = n; render(); } },
   confirmStitch: () => confirmStitch(),
   dismantle: (uid        ) => dismantle(uid),
-  reloadSave: () => { S = freshSave(); loadSave(); for (const d of S.customs) buildCustomTex(d); sel = null; render(); },
+  reloadSave: async () => { S = freshSave(); await loadSave(); for (const d of S.customs) buildCustomTex(d); sel = null; render(); return true; },
   get story() {
     return {
       vars: { ...S.story.vars }, mods: S.story.mods.map((m) => ({ ...m, summary: modSummary(m) })),
@@ -9075,6 +9428,13 @@ window.__debug = {
   storySetProvider: (p                      ) => { setProvider(p ?? hybridProvider); render(); return getProvider().id; },
   // ---- LLM 外壳 / DIY 造件 ----
   get llm() { return { mode: loadMode(), backend: getBackend()?.name ?? null, status: llmStatus(), cfg: loadCfg() }; },
+  get saves() { return { active: getActiveSlot(), slots: saveSlots }; },
+  saveSlotsRefresh: async () => { saveSlots = await listSlots(); return saveSlots; },
+  saveSnapshot: async (index) => saveSnapshot(index, S),
+  loadSnapshot: async (index) => { const state = await loadSnapshot(index); if (!state) return false; await queueAutosave(state); await flushAutosave(); installSave(state); render(); return true; },
+  switchSlot: async (slot) => { await flushAutosave(); setActiveSlot(slot); const state = await loadSlot(slot); S = freshSave(); if (state) installSave(state); saveSlots = await listSlots(); saveExists = !!state; render(); return getActiveSlot(); },
+  clearActiveSlot: async () => { await clearSlot(getActiveSlot()); S = freshSave(); saveExists = false; saveSlots = await listSlots(); screen = 'title'; titleMode = meta.clears > 0 ? 'doctrine' : 'main'; render(); return true; },
+  restoreRaw: async (raw) => { const state = typeof raw === 'string' ? JSON.parse(raw) : raw; await queueAutosave(state); await flushAutosave(); installSave(state); render(); return true; },
   aiSettingsOpen: () => { openAISettings(); return !!aiSettingsRoot; },
   aiSettingsClose: () => { closeAISettings(); return !aiSettingsRoot; },
   get aiPrompts() { return { tasks: AI_PROMPT_TASKS.map((task) => ({ ...task })), overrides: loadPromptOverrides() }; },
@@ -9082,6 +9442,11 @@ window.__debug = {
   llmEcho: () => { saveMode('echo'); restoreBackend(); render(); return getBackend()?.name ?? null; },
   llmOff: () => { saveMode('off'); restoreBackend(); render(); return getBackend()?.name ?? null; },
   llmClearConfig: () => { saveCfg(null); restoreBackend(); render(); return loadMode(); },
+  get novel() { return structuredClone(S.novel); },
+  novelOpen: () => { setArchiveSection('novel'); return archiveSection; },
+  novelEnable: () => { enableNovelCampaign(); return S.novel.enabled; },
+  novelSay: async (value) => { await runNovelTurn(value); return structuredClone(S.novel); },
+  novelIssue: async () => { await issueNovelMission(); return structuredClone(S.novel.pendingMission); },
   get diy() { return S.diy.map((d) => ({ id: d.id, cat: d.cat, brief: d.brief, via: d.via, draft: d.draft, part: partById(d.id) })); },
   get diyAf() { return S.diyAf.map((d) => ({ id: d.id, cat: d.cat, brief: d.brief, via: d.via, draft: d.draft, affix: PART_AFFIXES.find((a) => a.id === d.id) })); },
   closeForge: () => { closeForge(); return true; },

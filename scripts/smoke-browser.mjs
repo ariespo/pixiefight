@@ -38,6 +38,7 @@ try {
   await page.fill('[data-id="lord"]', '测试魔王');
   await page.fill('[data-id="lair"]', '自动化地牢');
   await page.click('[data-confirm]');
+  await page.waitForFunction(() => __debug.screen === 'intro', null, { timeout: 10000 });
   assert(await page.evaluate(() => __debug.screen === 'intro' && __debug.save.playerName === '测试魔王' && __debug.save.lairName === '自动化地牢'), 'Named new game did not open its personalized intro.');
   await page.evaluate(() => __debug.introContinue());
   assert(await page.evaluate(() => __debug.screen === 'manage'), 'Opening story did not enter management mode.');
@@ -54,7 +55,13 @@ try {
     const prompt = body.messages?.at(-1)?.content ?? '';
     requestedPrompt = prompt;
     let content;
-    if (prompt.includes('战前台词包')) content = { opening: [{ key: 'hero:剑士', text: '这次差旅没有返程票。' }], units: [
+    if (prompt.includes('小说战役签发下一场')) content = { title: '会计骑士催缴队', body: '王国会计发现地下城从未申报活体报表，决定带队现场核销。',
+      members: [{ cls: 'captain', lv: 23 }, { cls: 'knight', lv: 22 }, { cls: 'cleric', lv: 22 }, { cls: 'mage', lv: 22 }, { cls: 'rogue', lv: 22 }],
+      affixes: ['brave'], objective: { type: 'breachLimit', maxBreaches: 1 }, rewardMult: 1.4, penalty: 'resource' };
+    else if (prompt.includes('小说战役叙事者')) content = { body: '战后的账房里，巫妖把伤亡名单订成了员工手册。新来的幽灵坚持要求补发入职日期。',
+      choices: ['补签昨天', '承认工龄', '把手册埋回去'], facts: { relations: ['幽灵开始信任巫妖'], promises: [], threads: ['员工手册仍会翻页'], places: ['战后账房'] } };
+    else if (prompt.includes('维护小说战役的长期记忆')) content = { summary: '地牢的员工手册开始自行记录伤亡。', facts: { relations: ['幽灵开始信任巫妖'], promises: [], threads: ['员工手册仍会翻页'], places: ['战后账房'] } };
+    else if (prompt.includes('战前台词包')) content = { opening: [{ key: 'hero:剑士', text: '这次差旅没有返程票。' }], units: [
       { key: 'hero:剑士', attack: ['报销单先斩了。'], skill: ['为了最低工资！'], reaction: ['这不在保险范围。'], heal: [], special: [] },
       { key: 'mon:史莱姆', attack: ['黏住再算账。'], skill: [], reaction: ['桶又要漏了。'], heal: [], special: [] },
     ] };
@@ -125,10 +132,8 @@ try {
   });
   assert(onlineRaid.briefing?.title === '线上报销远征' && onlineRaid.briefing.body.includes('差旅报销单')
     && onlineRaid.raid.affixes.includes('brave'), `AI overtime raid was not generated before battle: ${JSON.stringify(onlineRaid)}`);
-  await page.evaluate((raw) => localStorage.setItem('yqh-save-v2', raw), beforeOnlineSave);
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.__gpReady && window.__debug, null, { timeout: 20000 });
-  await page.evaluate(() => __debug.titleContinue());
+  await page.evaluate(async (raw) => { await __debug.restoreRaw(raw); }, beforeOnlineSave);
+  await page.evaluate(() => __debug.backManage());
   await page.evaluate(() => __debug.closeForge());
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => __debug.aiSettingsOpen());
@@ -302,14 +307,16 @@ try {
     'Forced law-limit story did not apply and archive its permanent tradeoff.');
 
   // A deliberately sparse legacy save must be upgraded, not rejected.
-  await page.evaluate(() => localStorage.setItem('yqh-save-v2', JSON.stringify({ bone: 321, mana: 17, raidNo: 4, story: { archive: [] } })));
-  await page.reload({ waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => window.__gpReady && window.__debug, null, { timeout: 20000 });
-  assert(await page.evaluate(() => __debug.screen === 'title' && __debug.title.saveExists), 'Existing save did not expose Continue on the title screen.');
-  await page.evaluate(() => __debug.titleContinue());
+  await page.evaluate(async () => { await __debug.restoreRaw({ bone: 321, mana: 17, raidNo: 4, story: { archive: [] } }); });
   const legacy = await page.evaluate(() => ({ bone: __debug.bone, mana: __debug.mana, floors: __debug.floors.length, story: __debug.story }));
   assert(legacy.bone === 321 && legacy.mana === 17, 'Legacy resources were not preserved.');
   assert(legacy.floors > 0 && legacy.story.relations && Array.isArray(legacy.story.exiles), 'Legacy save was not upgraded to the current schema.');
+  const snapshotRoundTrip = await page.evaluate(async () => {
+    await __debug.saveSnapshot(1); const before = __debug.bone; __debug.giveResources(77, 0); await __debug.loadSnapshot(1);
+    return { before, after: __debug.bone, slots: await __debug.saveSlotsRefresh() };
+  });
+  assert(snapshotRoundTrip.after === snapshotRoundTrip.before && snapshotRoundTrip.slots[0].snapshots[0].exists,
+    `Manual snapshot was overwritten or could not restore the active auto save: ${JSON.stringify(snapshotRoundTrip)}`);
 
   const randomArchived = await page.evaluate(async () => {
     const before = __debug.story.archive.length;
@@ -479,7 +486,7 @@ try {
       const point = await page.evaluate(() => __debug.toScreen(438, 17));
       assert(point.x < viewport.width && point.y < viewport.height, 'Landscape system-menu button is outside the viewport.');
       await page.mouse.click(point.x, point.y);
-      const newPoint = await page.evaluate(() => __debug.toScreen(403, 208));
+      const newPoint = await page.evaluate(() => __debug.toScreen(403, 235));
       await page.mouse.click(newPoint.x, newPoint.y);
       assert(await page.evaluate(() => __debug.newGameConfirm), 'Landscape new-game button did not receive the click.');
       await page.evaluate(() => __debug.cancelNewGame());
@@ -600,9 +607,30 @@ try {
   await page.waitForTimeout(80);
   assert(await page.evaluate(() => __debug.overtime.on && __debug.screen === 'manage'), 'Large-screen overtime action did not receive the click.');
 
+  // API-only novel campaign: immutable daily prose signs a locally constrained raid contract and blocks bypassing it.
+  await page.evaluate(() => { __debug.novelOpen(); __debug.novelEnable(); __debug.novelEnable(); });
+  await page.waitForFunction(() => __debug.novel.enabled && __debug.novel.entries.length > 0, null, { timeout: 20000 });
+  const novelDaily = await page.evaluate(() => ({ novel: __debug.novel, tasks: __debug.uiTasks }));
+  assert(novelDaily.novel.choices.length === 3 && novelDaily.tasks.some((task) => task.id === 'novel-mission' && task.blocking),
+    `Novel daily chapter did not expose three choices or block unsigned battle: ${JSON.stringify(novelDaily)}`);
+  await page.evaluate(async () => {
+    for (let i = 0; i < 3; i++) await __debug.novelSay(__debug.novel.choices[0]);
+  });
+  assert(await page.evaluate(() => __debug.novel.dailyTurns === 3), 'Novel chapter did not enforce the three-turn daily limit.');
+  const novelMission = await page.evaluate(async () => await __debug.novelIssue());
+  assert(novelMission?.members.length === 5 && novelMission?.objective.type === 'breachLimit' && novelMission.rewardMult === 1.4,
+    `Novel mission was not generated through the local contract: ${JSON.stringify(novelMission)}`);
+  assert(await page.evaluate(() => !__debug.uiTasks.some((task) => task.id === 'novel-mission')),
+    'A signed novel mission still blocked the battle.' );
+  await page.evaluate(async () => { __debug.setTab('throne'); await __debug.startBattle(); __debug.runBattleToEnd(); });
+  const novelSettlement = await page.evaluate(() => ({ report: __debug.reports[0]?.novel, novel: __debug.novel }));
+  assert(novelSettlement.report?.missionId === novelMission.id && novelSettlement.novel.phase === 'resolution'
+    && novelSettlement.novel.chapter === 2 && novelSettlement.novel.entries.some((entry) => entry.role === 'battle'),
+  `Novel battle result did not return to the next chapter: ${JSON.stringify(novelSettlement)}`);
+
   // Native portrait onboarding must be playable without exposing or clicking the hidden desktop canvas.
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.evaluate(() => localStorage.removeItem('yqh-save-v2'));
+  await page.evaluate(async () => { await __debug.switchSlot(2); await __debug.clearActiveSlot(); });
   await page.reload();
   await page.waitForFunction(() => window.__gpReady && window.__debug?.viewport()?.portrait);
   const clickPortraitAction = async (name) => {
@@ -613,7 +641,7 @@ try {
   };
   await clickPortraitAction('titleNew');
   assert(await page.evaluate(() => __debug.identityOpen), 'Portrait new game did not open identity registration.');
-  await page.evaluate(() => { __debug.identityStart('竖屏魔王', '竖屏地牢'); __debug.introContinue(); });
+  await page.evaluate(async () => { await __debug.identityStart('竖屏魔王', '竖屏地牢'); __debug.introContinue(); });
   assert(await page.evaluate(() => __debug.viewport().nativePortrait), 'Portrait new game did not enter the native management layout.');
   await clickPortraitAction('nav-mob');
   await clickPortraitAction('recruit-slime');
@@ -638,8 +666,8 @@ try {
   // The permanent clear marker must unlock exactly four doctrines on future new games.
   await page.evaluate(() => {
     localStorage.setItem('yqh-meta-v1', JSON.stringify({ clears: 1 }));
-    localStorage.removeItem('yqh-save-v2');
   });
+  await page.evaluate(async () => { await __debug.switchSlot(3); await __debug.clearActiveSlot(); });
   await page.reload();
   await page.waitForFunction(() => window.__gpReady && window.__debug?.screen === 'title');
   await page.evaluate(() => __debug.titleNew());
@@ -647,9 +675,22 @@ try {
   assert(doctrineTitle.title.mode === 'doctrine'
     && ['default', 'swarm', 'elite', 'economy'].every((id) => doctrineTitle.actions[`doctrine-${id}`]),
   'A permanent clear did not unlock all four starting doctrines.');
-  await page.evaluate(() => { __debug.titlePick('economy'); __debug.titleConfirm(); __debug.introContinue(); });
+  await page.evaluate(async () => { __debug.titlePick('economy'); await __debug.titleConfirm(); __debug.introContinue(); });
   assert(await page.evaluate(() => __debug.screen === 'manage' && __debug.save.doctrine === 'economy'),
     'The selected starting doctrine was not persisted into the new run.');
+
+  // A clean browser profile migrates the former localStorage singleton into slot 1 without deleting the source key.
+  const migrationContext = await browser.newContext({ viewport: { width: 800, height: 450 } });
+  const migrationPage = await migrationContext.newPage();
+  await migrationPage.addInitScript(() => {
+    localStorage.setItem('yqh-save-v2', JSON.stringify({ bone: 456, mana: 23, raidNo: 7, playerName: '迁移魔王', lairName: '迁移地牢', story: { archive: [] } }));
+  });
+  await migrationPage.goto(url, { waitUntil: 'domcontentloaded' });
+  await migrationPage.waitForFunction(() => window.__gpReady && window.__debug, null, { timeout: 20000 });
+  const migrated = await migrationPage.evaluate(() => ({ save: __debug.save, slots: __debug.saves, legacy: localStorage.getItem('yqh-save-v2') }));
+  assert(migrated.save.bone === 456 && migrated.save.mana === 23 && migrated.slots.active === 1
+    && migrated.slots.slots[0]?.exists && migrated.legacy, `Legacy singleton was not safely copied into slot 1: ${JSON.stringify(migrated)}`);
+  await migrationContext.close();
 
   assert(errors.length === 0, `Browser errors:\n${errors.join('\n')}`);
   console.log('Browser smoke passed: boot, legacy save, story/facility flows, battle/report links, constrained text, landscape touch targets and portrait controls.');
