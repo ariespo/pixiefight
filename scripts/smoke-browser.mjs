@@ -92,6 +92,31 @@ try {
   const aiCfg = await page.evaluate(() => __debug.llm);
   assert(aiCfg.mode === 'http' && aiCfg.cfg?.provider === 'custom' && aiCfg.cfg?.baseUrl === 'https://api.example.test/v1'
     && aiCfg.cfg?.model === 'test-model-b' && aiCfg.cfg?.models.length === 2, 'AI settings did not persist the refreshed model selection.');
+  const firstApiTour = await page.evaluate(() => __debug.onlineModeTour);
+  assert(firstApiTour.open && firstApiTour.count === 1 && firstApiTour.step === '0',
+    `First successful API connection did not open the online-mode tutorial: ${JSON.stringify(firstApiTour)}`);
+  for (let i = 0; i < 6; i++) await page.click('#online-mode-tour [data-tour="next"]');
+  const completedApiTour = await page.evaluate(() => __debug.onlineModeTour);
+  assert(!completedApiTour.open && completedApiTour.step === 'done', 'Online-mode tutorial did not complete and persist its one-time state.');
+  const customDeletion = await page.evaluate(async () => {
+    const original = __debug.rawSave;
+    const fixture = JSON.parse(original);
+    fixture.raidNo = 5; fixture.bone = 9999; fixture.mana = 9999; fixture.relic = 99; fixture.monsterCap = 14;
+    await __debug.restoreRaw(fixture);
+    __debug.openStitch(); __debug.setStitchName('待删图纸'); __debug.confirmStitch();
+    const custom = __debug.customs.at(-1);
+    const unit = __debug.monsters.find((monster) => monster.kind === custom?.id);
+    const blockedWhileOwned = custom ? !__debug.deleteCustomKind(custom.id) : false;
+    if (unit) __debug.dismantle(unit.uid);
+    const blueprintKeptAfterDismissal = !!__debug.customs.find((item) => item.id === custom?.id);
+    const firstDeleteIsConfirmation = custom ? !__debug.deleteCustomKind(custom.id) : false;
+    const secondDeleteRemoves = custom ? __debug.deleteCustomKind(custom.id) : false;
+    const removed = !__debug.customs.some((item) => item.id === custom?.id);
+    await __debug.restoreRaw(original);
+    return { blockedWhileOwned, blueprintKeptAfterDismissal, firstDeleteIsConfirmation, secondDeleteRemoves, removed };
+  });
+  assert(customDeletion.blockedWhileOwned && customDeletion.blueprintKeptAfterDismissal && customDeletion.firstDeleteIsConfirmation
+    && customDeletion.secondDeleteRemoves && customDeletion.removed, `Custom recruit blueprint deletion is unsafe or incomplete: ${JSON.stringify(customDeletion)}`);
   await page.evaluate(() => __debug.novelPromptsOpen());
   assert(await page.locator('#novel-prompt-manager nav button').count() === 3, 'Novel prompt manager did not separate daily, mission and memory pipelines.');
   await page.click('#novel-prompt-manager .npm-add');
@@ -623,6 +648,18 @@ try {
   await page.mouse.click(endingButton.x, endingButton.y);
   await page.waitForTimeout(80);
   assert(await page.evaluate(() => __debug.overtime.on && __debug.screen === 'manage'), 'Large-screen overtime action did not receive the click.');
+  const overtimeFacilityReset = await page.evaluate(() => {
+    __debug.giveResources(5000, 5000);
+    __debug.devUtility(0, 'none');
+    __debug.devOvertime(21);
+    const built = __debug.confirmUtilityBuild(0, 'mana-well');
+    const blocked = __debug.devUpgradeUtility(0);
+    __debug.devOvertime(22);
+    const nextBatch = __debug.devUpgradeUtility(0);
+    return { built: built.level, blocked: blocked.level, nextBatch: nextBatch.level, action: nextBatch.facilityActionRaid };
+  });
+  assert(overtimeFacilityReset.built === 1 && overtimeFacilityReset.blocked === 1 && overtimeFacilityReset.nextBatch === 2
+    && overtimeFacilityReset.action === 22, `Facility action did not reset on the next overtime raid: ${JSON.stringify(overtimeFacilityReset)}`);
 
   // API-only novel campaign: immutable daily prose signs a locally constrained raid contract and blocks bypassing it.
   await page.evaluate(() => { __debug.novelOpen(); __debug.novelEnable(); __debug.novelEnable(); });

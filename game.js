@@ -738,7 +738,9 @@ function utilityUpgradeCost(u) {
   return doctrineCost('facility', Math.round(d.bone * mult), Math.round(d.mana * mult));
 }
 
-function facilityActionAvailable() { return S.dungeon.facilityActionRaid !== S.raidNo; }
+// 正式战役以 raidNo 计轮；加班模式只推进 otRaid。设施行动必须跟随真实的
+// 下一场入侵编号，否则通关后 S.raidNo 固定为 20，会永久显示“本轮已建设”。
+function facilityActionAvailable() { return S.dungeon.facilityActionRaid !== currentRaidIdentity(); }
 
 function buildUtility(floorIndex, kind) {
   const floor = S.floors[floorIndex], d = UTILITY_KINDS[kind];
@@ -748,7 +750,7 @@ function buildUtility(floorIndex, kind) {
   if (S.bone < cost.bone || S.mana < cost.mana) { say('建造资源不足'); return; }
   S.bone -= cost.bone; S.mana -= cost.mana;
   floor.utility = freshUtilityRoom({ kind, level: 1, condition: 100, workerUid: null, trainTargets: [] });
-  S.dungeon.facilityActionRaid = S.raidNo;
+  S.dungeon.facilityActionRaid = currentRaidIdentity();
   addFacilityHistory(floorIndex, 'built', `${d.name}建成`);
   if (kind === 'healing') S.dungeon.healingCharges = Math.min(6, S.dungeon.healingCharges + 1);
   queueStoryLead(`facility:${floorIndex}:${kind}`, `facility-${kind}`, '设施异闻', `${floorIndex + 1}层・${d.name}`,
@@ -763,7 +765,7 @@ function upgradeUtility(floorIndex) {
   const cost = utilityUpgradeCost(u);
   if (S.bone < cost.bone || S.mana < cost.mana) { say('升级资源不足'); return; }
   S.bone -= cost.bone; S.mana -= cost.mana; u.level++;
-  S.dungeon.facilityActionRaid = S.raidNo;
+  S.dungeon.facilityActionRaid = currentRaidIdentity();
   u.upgradeCount = (u.upgradeCount || 0) + 1;
   addFacilityHistory(floorIndex, 'upgrade', `扩建至Lv${u.level}`);
   refreshFacilityIdentity(floorIndex);
@@ -1172,6 +1174,8 @@ const NAV_ZONES = [
 const PAGE_ZONE = { throne: 'throne', dungeon: 'dungeon', hero: 'army', mob: 'army', shop: 'shop', report: 'archive', story: 'archive' };
 const UI_DENSITY_KEY = 'yqh-ui-density-v1';
 const UI_SHELL_TOUR_KEY = 'yqh-ui-shell-tour-v1';
+const API_CONNECT_COUNT_KEY = 'yqh-ai-connect-count-v1';
+const ONLINE_MODE_TOUR_KEY = 'yqh-online-mode-tour-v1';
 let armySection = 'mob';
 let archiveSection = 'report';
 let novelBusy = false;
@@ -1182,6 +1186,7 @@ let inspectorView = 'summary';
 let desktopSystemMenu = false;
 let uiDensity = localStorage.getItem(UI_DENSITY_KEY) === 'expert' ? 'expert' : 'standard';
 let uiShellTourStep = localStorage.getItem(UI_SHELL_TOUR_KEY) === 'done' ? 4 : 0;
+let onlineTourPending = false;
 const activeZone = () => PAGE_ZONE[tab] ?? 'throne';
 const novelAvailable = () => !!S.overtime && loadMode() === 'http';
 const pageName = (page) => NAV_ZONES.find((item) => item.id === (PAGE_ZONE[page] ?? page))?.name
@@ -1506,6 +1511,7 @@ let raidBriefing = null;                             // 正式战役战前章回
 let lawAudit = null;                                 // 属性触及法则极限时强制触发的永久处罚秘闻
 let relicForgeConfirm = false;                       // 英雄遗物熔铸二次确认
 let monDetailMode = false;                             // 已招募魔物卡片默认/详情切换
+let customDeleteConfirm = '';                         // 自定义兵种图纸删除二次确认
 let lastSelInstUid        = null;                      // 用于切换魔物实例时重置详情模式
 let reportIdx = 0;
 let battle                = null;
@@ -1864,6 +1870,7 @@ async function boot() {
   await initSaveStore();
   await loadSave();
   restoreBackend();
+  bootstrapOnlineModeTour();
   setProvider(hybridProvider);
   setMuted(S.muted);
   initAudio();
@@ -2232,6 +2239,7 @@ function setTab(t     ) {
   if (forge) closeForge();
   if (graft) closeGraft();
   relicForgeConfirm = false;
+  customDeleteConfirm = '';
   tab = t;
   const guideItem = (ROUND_TUTORIALS[S.raidNo] ?? [])[Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0))];
   if (t === 'story' && guideItem?.page === 'story' && guideItem.target === 'storyArea') storyView = 'dashboard';
@@ -3030,6 +3038,122 @@ const FORGE_INPUT = { x: 108, y: 58, w: 250, h: 18 };
 let aiSettingsRoot = null;
 let saveManagerRoot = null;
 let novelPromptRoot = null;
+let onlineModeTourRoot = null;
+
+const ONLINE_MODE_TOUR_STEPS = [
+  {
+    title: '外部叙事者已接通',
+    body: '从现在起，带有“AI”标记的创作会请求你选择的模型。接口失败不会吞掉操作次数，也不会让半截回复进入存档。',
+    points: ['每次请求可能产生服务商费用', '断网时经营与战斗仍可继续，依赖 AI 的操作会明确提示重试'],
+  },
+  {
+    title: '秘闻变成双向调查',
+    body: '追查无主秘闻时，你可以自己写处理方式；叙事者会回应，但真正的资源和状态变化仍由本地白名单校验。',
+    points: ['未接入 API 时仍提供三个固定选项', '接入后开放自由输入与 AI 随机事件'],
+  },
+  {
+    title: '战斗开始记住上下文',
+    body: '战前台词、文学化战报和上下文秘闻会参考当前地牢、参战角色与近期历史，让同一支队伍逐渐拥有自己的口吻。',
+    points: ['战斗数值与胜负仍由本地规则决定', '英雄档案可用“AI 来重构优化”润色性格与背景'],
+  },
+  {
+    title: '工坊开放创作协助',
+    body: 'DIY 部件与词缀可以让模型先给出草案。能力、预算、分数上限和可写入字段仍由游戏校验，模型不能凭一句话造出无敌部件。',
+    points: ['切换 DIY 标签会保留各自草稿', '普通任务提示词可在“设置 → 提示词”中调整'],
+  },
+  {
+    title: '通关后的线上远征',
+    body: '进入加班阶段后，叙事者会为每次迎战包装新敌人与剧情；敌人职业、数量、等级和奖励都会经过本地平衡器。',
+    points: ['没有有效的在线任务时不会直接开战', 'API 失效时会引导你重新接入，而不是生成空白敌人'],
+  },
+  {
+    title: '小说战役与提示词管理',
+    body: '通关后，“档案 → 小说”会开放任务—经营—战斗闭环。小说的日常、任务和记忆拥有独立的结构化提示词管理器。',
+    points: ['API Key 只保存在当前浏览器，不进入存档导出', 'AI 只能写叙事草案，不能直接删除角色、设施或改写战斗结果'],
+  },
+];
+
+function apiConnectCount() {
+  try { return Math.max(0, Math.round(Number(localStorage.getItem(API_CONNECT_COUNT_KEY)) || 0)); }
+  catch { return 0; }
+}
+
+function recordSuccessfulApiConnection() {
+  const count = apiConnectCount();
+  try { localStorage.setItem(API_CONNECT_COUNT_KEY, String(count + 1)); } catch { /* 浏览器禁用存储时仅跳过一次性检测 */ }
+  if (count !== 0) return false;
+  try { if (localStorage.getItem(ONLINE_MODE_TOUR_KEY) !== 'done') localStorage.setItem(ONLINE_MODE_TOUR_KEY, '0'); } catch { /* 同上 */ }
+  onlineTourPending = true;
+  return true;
+}
+
+function bootstrapOnlineModeTour() {
+  if (loadMode() !== 'http' || apiConnectCount() > 0) return;
+  recordSuccessfulApiConnection();
+}
+
+function closeOnlineModeTour(complete = false) {
+  if (onlineModeTourRoot) onlineModeTourRoot.remove();
+  onlineModeTourRoot = null;
+  if (complete) {
+    onlineTourPending = false;
+    try { localStorage.setItem(ONLINE_MODE_TOUR_KEY, 'done'); } catch { /* 无本地存储时本次会话仍可关闭 */ }
+  }
+}
+
+function openOnlineModeTour(stepOverride = null) {
+  if (screen !== 'manage' || loadMode() !== 'http') { onlineTourPending = true; return false; }
+  closeOnlineModeTour(false);
+  let stored = 0;
+  try {
+    const raw = localStorage.getItem(ONLINE_MODE_TOUR_KEY);
+    if (raw === 'done') { onlineTourPending = false; return false; }
+    stored = Math.max(0, Math.min(ONLINE_MODE_TOUR_STEPS.length - 1, Math.round(Number(raw) || 0)));
+  } catch { /* 从第一步开始 */ }
+  let step = stepOverride == null ? stored : Math.max(0, Math.min(ONLINE_MODE_TOUR_STEPS.length - 1, stepOverride));
+  const rootNode = document.createElement('div');
+  rootNode.id = 'online-mode-tour';
+  rootNode.style.cssText = 'position:fixed;inset:0;z-index:110;display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;background:rgba(3,2,8,.91);font-family:monospace;color:#eadcae';
+  const card = document.createElement('div');
+  card.style.cssText = 'width:min(520px,96vw);max-height:calc(100vh - 28px);overflow:auto;box-sizing:border-box;padding:20px;border:3px solid #e2bd64;background:#191423;box-shadow:0 0 0 3px #3a2b18,0 0 30px rgba(226,189,100,.3),0 16px 50px #000;animation:online-tour-pulse 1.5s ease-in-out infinite alternate';
+  const css = document.createElement('style');
+  css.textContent = '@keyframes online-tour-pulse{from{border-color:#9b7932}to{border-color:#ffe49a}}#online-mode-tour button{box-sizing:border-box;min-height:42px;border:1px solid #76698a;background:#272033;color:#f1e5bd;font:14px monospace;padding:8px;cursor:pointer}#online-mode-tour button:focus{outline:1px solid #e2bd64;border-color:#e2bd64}';
+  const paint = () => {
+    const item = ONLINE_MODE_TOUR_STEPS[step];
+    const dots = ONLINE_MODE_TOUR_STEPS.map((_, i) => `<span style="display:inline-block;width:${i === step ? 18 : 7}px;height:7px;margin-right:5px;background:${i <= step ? '#e2bd64' : '#484054'}"></span>`).join('');
+    card.innerHTML = `<div style="font-size:12px;color:#918aa0">首次接入导览 · ${step + 1}/${ONLINE_MODE_TOUR_STEPS.length}</div>
+      <div style="margin:8px 0 12px">${dots}</div>
+      <div style="font-size:22px;color:#e2bd64;margin-bottom:12px">${item.title}</div>
+      <div style="font-size:14px;line-height:1.75;color:#eadcae">${item.body}</div>
+      <div style="margin:14px 0;padding:10px 12px;border-left:3px solid #8f6fc4;background:#100d17;font-size:13px;line-height:1.7;color:#bca9d3">${item.points.map((point) => `◆ ${point}`).join('<br>')}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:8px;margin-top:16px">
+        <button data-tour="skip">跳过导览</button><button data-tour="back" ${step === 0 ? 'disabled' : ''}>上一步</button>
+        <button data-tour="next" style="border-color:#e2bd64;background:#59451f">${step === ONLINE_MODE_TOUR_STEPS.length - 1 ? '完成导览' : '下一步'}</button>
+      </div>`;
+    card.querySelector('[data-tour="skip"]').onclick = () => closeOnlineModeTour(true);
+    card.querySelector('[data-tour="back"]').onclick = () => { step = Math.max(0, step - 1); try { localStorage.setItem(ONLINE_MODE_TOUR_KEY, String(step)); } catch { /* 忽略 */ } paint(); };
+    card.querySelector('[data-tour="next"]').onclick = () => {
+      if (step >= ONLINE_MODE_TOUR_STEPS.length - 1) { closeOnlineModeTour(true); return; }
+      step++;
+      try { localStorage.setItem(ONLINE_MODE_TOUR_KEY, String(step)); } catch { /* 忽略 */ }
+      paint();
+    };
+    card.querySelector('[data-tour="next"]').focus();
+  };
+  rootNode.append(css, card);
+  document.body.appendChild(rootNode);
+  onlineModeTourRoot = rootNode;
+  onlineTourPending = true;
+  paint();
+  return true;
+}
+
+function maybeOpenOnlineModeTour() {
+  if (!onlineTourPending) {
+    try { onlineTourPending = apiConnectCount() > 0 && localStorage.getItem(ONLINE_MODE_TOUR_KEY) !== 'done'; } catch { /* 忽略 */ }
+  }
+  if (onlineTourPending && screen === 'manage') setTimeout(() => openOnlineModeTour(), 0);
+}
 
 function closeSaveManager() {
   if (saveManagerRoot) saveManagerRoot.remove();
@@ -3324,7 +3448,9 @@ function openAISettings() {
     if (!model.value || refreshedSignature !== signature()) { invalidate(); return; }
     const ok = saveCfg({ provider: provider.value, protocol: protocol.value, baseUrl: url.value, key: key.value, model: model.value, models });
     if (!ok) { setStatusText('保存失败，请检查浏览器存储权限。', 'error'); return; }
+    const firstConnection = recordSuccessfulApiConnection();
     restoreBackend(); playSfx('buy'); closeAISettings(); say(`AI 已启用：${model.value}`);
+    if (firstConnection) maybeOpenOnlineModeTour();
   });
   el('sound').addEventListener('click', () => { toggleMute(); el('sound').textContent = S.muted ? '开启声音' : '关闭声音'; });
   el('close').addEventListener('click', closeAISettings);
@@ -4043,16 +4169,46 @@ function dismantle(uid        ) {
   }
   S.monsters = S.monsters.filter((m) => m.uid !== uid);
   S.bone += refund;
-  if (isCustomKind(inst.kind) && !S.monsters.some((m) => m.kind === inst.kind)) {
-    S.customs = S.customs.filter((d) => d.id !== inst.kind);
-    unregisterKind(inst.kind);
-    syncCustoms();
-  }
   sel = null;
   playSfx('break');
   persist();
   say(`拆解${k.name}，返还${refund}骨币`);
   render();
+}
+
+function deleteCustomKind(kindId        ) {
+  const def = S.customs.find((item) => item.id === kindId);
+  if (!def || !isCustomKind(kindId)) return false;
+  const owned = S.monsters.filter((item) => item.kind === kindId).length;
+  if (owned > 0) {
+    customDeleteConfirm = '';
+    say(`仍有${owned}只${def.name}在编制中；请先遣散，图纸不会再随最后一只怪物自动消失`);
+    render();
+    return false;
+  }
+  if (customDeleteConfirm !== kindId) {
+    customDeleteConfirm = kindId;
+    say(`再次点击“确认删除”，永久移除${def.name}的招募图纸`);
+    render();
+    return false;
+  }
+  customDeleteConfirm = '';
+  S.customs = S.customs.filter((item) => item.id !== kindId);
+  unregisterKind(kindId);
+  syncCustoms();
+  const texKey = `tex-${kindId}`;
+  const old = TEX[texKey];
+  if (old && 'destroy' in old) staleTex.push(old);
+  delete TEX[texKey];
+  if (sel?.kind === 'monkind' && sel.id === kindId) sel = null;
+  if (selectedEntity?.type === 'monster-kind' && selectedEntity.id === kindId) selectedEntity = null;
+  pageState['mob-kinds'] = 0;
+  pageState['portrait-mob-recruit'] = 0;
+  playSfx('break');
+  persist();
+  say(`已删除${def.name}的招募图纸`);
+  render();
+  return true;
 }
 
 function addTestResources() {
@@ -4064,6 +4220,7 @@ function toggleMute() {
 }
 
 function clearTransientUi() {
+  closeOnlineModeTour(false);
   sel = null; heroSel = null; detailPopup = null; researchModal = null; raidBriefing = null; lawAudit = null; stitch = null; forge = null; graft = null; smith = null;
   selectedEntity = null; inspectorView = 'summary'; desktopSystemMenu = false;
   armySection = 'mob'; archiveSection = 'report';
@@ -4118,7 +4275,7 @@ async function beginNewRun(doctrineId = 'default', identity = null) {
   say(`${S.playerName}已接管${S.lairName}`);
 }
 
-function finishIntro() { S.introSeen = true; screen = 'manage'; persist(); playMusic('bgm-manage'); scheduleLayout(); render(); }
+function finishIntro() { S.introSeen = true; screen = 'manage'; persist(); playMusic('bgm-manage'); scheduleLayout(); render(); maybeOpenOnlineModeTour(); }
 
 function continueGame() {
   if (!saveExists) { titleMode = meta.clears > 0 ? 'doctrine' : 'main'; render(); return; }
@@ -4126,6 +4283,7 @@ function continueGame() {
   clearTransientUi();
   screen = 'manage'; tab = featureOpen(tab) ? tab : 'throne'; portraitPane = 0;
   playMusic('bgm-manage'); scheduleLayout(); render();
+  maybeOpenOnlineModeTour();
 }
 
 function startFromTitle() {
@@ -4410,10 +4568,19 @@ function drawPortraitMob(x, y, w, h) {
       portraitLayer.addChild(portraitEffect(sprite(k.tex, x + 38, cy + 55, 44), false, k.id === sel?.id, k.id.length * 13));
       label(portraitLayer, k.name, x + 70, cy + 8, 15, isEliteKind(k.id) ? C.gold : C.white);
       label(portraitLayer, `${k.row === 'front' ? '前排' : k.row === 'back' ? '后排' : '任意排'}・${cut(k.skill, 10)}`, x + 70, cy + 31, 12, C.stoneLit);
-      button(portraitGfx, portraitLayer, portraitHits, x + w - 112, cy + 11, 96, 38,
-        eliteLocked ? `第${k.eliteMin}轮` : `招募 ${rq.cost}骨`, () => recruit(k.id),
-        { size: 13, enabled: !eliteLocked && S.bone >= rq.cost && S.monsters.length < monsterCap(), fill: C.greenDark, border: C.green, color: C.white });
-      portraitActionMap[`recruit-${k.id}`] = { x: x + w - 112, y: cy + 11, w: 96, h: 38 };
+      const custom = isCustomKind(k.id);
+      const recruitX = custom ? x + w - 128 : x + w - 112;
+      const recruitW = custom ? 68 : 96;
+      button(portraitGfx, portraitLayer, portraitHits, recruitX, cy + 11, recruitW, 38,
+        eliteLocked ? `第${k.eliteMin}轮` : custom ? `招 ${rq.cost}骨` : `招募 ${rq.cost}骨`, () => recruit(k.id),
+        { size: custom ? 11 : 13, enabled: !eliteLocked && S.bone >= rq.cost && S.monsters.length < monsterCap(), fill: C.greenDark, border: C.green, color: C.white });
+      portraitActionMap[`recruit-${k.id}`] = { x: recruitX, y: cy + 11, w: recruitW, h: 38 };
+      if (custom) {
+        button(portraitGfx, portraitLayer, portraitHits, x + w - 56, cy + 11, 42, 38,
+          customDeleteConfirm === k.id ? '确认' : '删除', () => deleteCustomKind(k.id),
+          { size: 11, fill: C.ink, border: C.red, color: C.red });
+        portraitActionMap[`delete-${k.id}`] = { x: x + w - 56, y: cy + 11, w: 42, h: 38 };
+      }
     });
     portraitPager('portrait-mob-recruit', pg.page, pg.pages, x + 8, y + h - 38, w - 16);
   } else {
@@ -5865,9 +6032,12 @@ function drawSidePanel(g               ) {
       () => openDetailPopup(`技能・${k.skill}`, k.skillDesc, C.purple),
       { size: 12, fill: C.ink, border: C.purple, color: C.purple });
 
-    button(g, uiLayer, hits, 340, 176, 130, 18, `${isCustomKind(k.id) ? '再缝一只' : '招募'} ${rq.cost}骨${rq.discount ? `(-${Math.round(rq.discount * 100)}%)` : ''}`,
+    const custom = isCustomKind(k.id);
+    button(g, uiLayer, hits, 340, 176, custom ? 82 : 130, 18, `${custom ? '再缝' : '招募'} ${rq.cost}骨${rq.discount ? `(-${Math.round(rq.discount * 100)}%)` : ''}`,
       () => recruit(k.id),
-      { size: 11, enabled: S.bone >= rq.cost, fill: C.greenDark, border: C.green, color: C.white });
+      { size: custom ? 10 : 11, enabled: S.bone >= rq.cost, fill: C.greenDark, border: C.green, color: C.white });
+    if (custom) button(g, uiLayer, hits, 424, 176, 46, 18, customDeleteConfirm === k.id ? '确认删' : '删图纸', () => deleteCustomKind(k.id),
+      { size: 9, fill: C.ink, border: C.red, color: C.red });
 
     const passiveBody = k.passiveDesc ?? k.passive ?? '无被动说明';
     g.rect(340, 197, 130, 27).fill(C.ink).stroke({ width: 1, color: C.goldDark, alignment: 0 });
@@ -7795,7 +7965,7 @@ function pageMob(g               ) {
     label(uiLayer, open ? `${rq.cost}骨${rq.discount ? '↓' : ''}` : `第${k.eliteMin}轮`, 92, y + 4, 12,
       !open ? C.stoneLit : S.bone >= rq.cost ? C.gold : C.redDark);
     label(uiLayer, k.row === 'front' ? '前' : k.row === 'back' ? '后' : '任', 142, y + 4, 12, C.stoneLit);
-    hits.add(6, y, 152, 20, () => { sel = { kind: 'monkind', id: k.id }; selectedEntity = { type: 'monster-kind', id: k.id }; inspectorView = 'summary'; playSfx('tab'); render(); });
+    hits.add(6, y, 152, 20, () => { if (customDeleteConfirm !== k.id) customDeleteConfirm = ''; sel = { kind: 'monkind', id: k.id }; selectedEntity = { type: 'monster-kind', id: k.id }; inspectorView = 'summary'; playSfx('tab'); render(); });
     y += 22;
   }
   pager(g, 'mob-kinds', pg.pages, 6, 190, 152);
@@ -9446,6 +9616,7 @@ window.__debug = {
   setStitchName: (n        ) => { if (stitch) { stitch.name = n; stitch.auto = false; if (nameInput) nameInput.value = n; render(); } },
   confirmStitch: () => confirmStitch(),
   dismantle: (uid        ) => dismantle(uid),
+  deleteCustomKind: (id        ) => deleteCustomKind(id),
   reloadSave: async () => { S = freshSave(); await loadSave(); for (const d of S.customs) buildCustomTex(d); sel = null; render(); return true; },
   get story() {
     return {
@@ -9500,6 +9671,9 @@ window.__debug = {
   restoreRaw: async (raw) => { const state = typeof raw === 'string' ? JSON.parse(raw) : raw; await queueAutosave(state); await flushAutosave(); installSave(state); render(); return true; },
   aiSettingsOpen: () => { openAISettings(); return !!aiSettingsRoot; },
   aiSettingsClose: () => { closeAISettings(); return !aiSettingsRoot; },
+  get onlineModeTour() { return { open: !!onlineModeTourRoot, pending: onlineTourPending, count: apiConnectCount(), step: localStorage.getItem(ONLINE_MODE_TOUR_KEY) }; },
+  onlineModeTourOpen: (step = null) => openOnlineModeTour(step),
+  onlineModeTourClose: (complete = true) => { closeOnlineModeTour(complete); return !onlineModeTourRoot; },
   get aiPrompts() { return { tasks: AI_PROMPT_TASKS.map((task) => ({ ...task })), overrides: loadPromptOverrides() }; },
   llmSetBackend: (b                   ) => { setBackend(b); render(); return getBackend()?.name ?? null; },
   llmEcho: () => { saveMode('echo'); restoreBackend(); render(); return getBackend()?.name ?? null; },
