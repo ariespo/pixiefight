@@ -30,6 +30,14 @@ for (const id of followups) if (!ids.has(id)) throw new Error(`Missing follow-up
 const source = readFileSync('game.js', 'utf8');
 if (!source.includes("const GAME_NAME = '勇者去死！'")) throw new Error('The unified player-visible game name is missing.');
 if (/夜曲地牢|夜 曲 地 牢/.test(source)) throw new Error('A legacy game title remains in game.js.');
+for (const zone of ['throne', 'dungeon', 'army', 'shop', 'archive']) {
+  if (!source.includes(`{ id: '${zone}'`)) throw new Error(`Missing five-zone UI route: ${zone}`);
+}
+for (const contract of ['function uiTasks()', 'function navigateUiTask(task)', 'const UI_DENSITY_KEY', 'const UI_SHELL_TOUR_KEY']) {
+  if (!source.includes(contract)) throw new Error(`Missing global UI architecture contract: ${contract}`);
+}
+if (!source.includes("const PAGE_ZONE = { throne: 'throne', dungeon: 'dungeon', hero: 'army', mob: 'army', shop: 'shop', report: 'archive', story: 'archive' }"))
+  throw new Error('Legacy page identifiers are not mapped onto the five-zone route.');
 const llmSource = readFileSync('llm.js', 'utf8');
 for (const provider of ['openai', 'anthropic', 'deepseek', 'glm', 'kimi', 'custom']) {
   if (!llmSource.includes(`id: '${provider}'`)) throw new Error(`Missing AI provider preset: ${provider}`);

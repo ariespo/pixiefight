@@ -1029,9 +1029,10 @@ const statOf = (c       , chem = chemMap()) => {
   return champStats(c, POT_MULT[S.champPot[c.uid] ?? 0], chemOf(chem, c.uid));
 };
 function champStatMap() {
-  const chem = chemMap();
+  const active = seatedChampUids().filter((uid) => { const c = champById(uid); return c && (!(c.restTurns || 0) || heroForcedThisRaid(c)); });
+  const chem = chemistry(S.champs, active).map;
   const m                                                = {};
-  for (const c of S.champs) m[c.uid] = statOf(c, chem);
+  for (const c of S.champs) if (!(c.restTurns || 0) || heroForcedThisRaid(c)) m[c.uid] = statOf(c, chem);
   return m;
 }
 const seatedChampUids = () => S.rooms.map((r) => r.leader).filter((u)              => u != null);
@@ -1101,6 +1102,25 @@ const TABS                              = [
   { id: 'shop', name: '工坊' }, { id: 'report', name: '战报' },
   { id: 'story', name: '秘闻' },
 ];
+const NAV_ZONES = [
+  { id: 'throne', name: '王座' }, { id: 'dungeon', name: '地牢' },
+  { id: 'army', name: '军团' }, { id: 'shop', name: '工坊' }, { id: 'archive', name: '档案' },
+];
+const PAGE_ZONE = { throne: 'throne', dungeon: 'dungeon', hero: 'army', mob: 'army', shop: 'shop', report: 'archive', story: 'archive' };
+const UI_DENSITY_KEY = 'yqh-ui-density-v1';
+const UI_SHELL_TOUR_KEY = 'yqh-ui-shell-tour-v1';
+let armySection = 'mob';
+let archiveSection = 'report';
+let selectedEntity = null;
+let inspectorView = 'summary';
+let desktopSystemMenu = false;
+let uiDensity = localStorage.getItem(UI_DENSITY_KEY) === 'expert' ? 'expert' : 'standard';
+let uiShellTourStep = localStorage.getItem(UI_SHELL_TOUR_KEY) === 'done' ? 4 : 0;
+const activeZone = () => PAGE_ZONE[tab] ?? 'throne';
+const pageName = (page) => NAV_ZONES.find((item) => item.id === (PAGE_ZONE[page] ?? page))?.name
+  ?? TABS.find((item) => item.id === page)?.name ?? page;
+const zoneOpen = (id) => id === 'army' ? featureOpen('mob') : id === 'archive' ? featureOpen('report') : featureOpen(id);
+const visibleZones = () => NAV_ZONES.filter((item) => zoneOpen(item.id));
 const FEATURE_RAID = {
   throne: 1, dungeon: 1, mob: 1,
   report: 2, dungeonTools: 2,
@@ -1277,6 +1297,11 @@ function prepareRoundGuideView() {
   }
 }
 function acknowledgeRoundGuide() {
+  if (uiShellTourStep < 4) {
+    uiShellTourStep++;
+    if (uiShellTourStep >= 4) localStorage.setItem(UI_SHELL_TOUR_KEY, 'done');
+    playSfx('tab'); render(); return;
+  }
   const t = tutorialData();
   const list = ROUND_TUTORIALS[S.raidNo] ?? [];
   const step = Math.max(0, Math.round(t.roundSteps[S.raidNo] || 0));
@@ -1287,11 +1312,77 @@ function acknowledgeRoundGuide() {
   persist();
   render();
 }
+function skipUiShellTour() {
+  uiShellTourStep = 4;
+  localStorage.setItem(UI_SHELL_TOUR_KEY, 'done');
+  playSfx('tab'); render();
+}
 const roundTeachingComplete = () => {
   const list = ROUND_TUTORIALS[S.raidNo] ?? [];
   return Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0)) >= list.length;
 };
+const UI_TASK_TONE = { block: C.red, warning: C.gold, opportunity: C.purple };
+function uiTasks() {
+  const tasks = [];
+  const add = (severity, id, title, summary, reason, page, target = {}) => tasks.push({
+    id, severity, title, summary, reason, page, target, blocking: severity === 'block',
+  });
+  if (!roundTeachingComplete()) add('block', 'teaching', '完成本轮教学', '阅读当前高光步骤后才可迎战。', '新机制尚未确认', ROUND_TUTORIALS[S.raidNo]?.[Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0))]?.page ?? 'throne');
+  const activeDefense = S.rooms.reduce((n, room) => n + [room.front, room.back, room.flank].filter((uid) => uid != null).length
+    + (room.leader != null && (!(champById(room.leader)?.restTurns || 0) || heroForcedThisRaid(champById(room.leader))) ? 1 : 0), 0);
+  if (activeDefense <= 0) add('block', 'empty-defense', '地牢完全空防', '至少部署一名可出战守军，否则入侵者会直达王座。', '当前有效布防为0', 'dungeon', { kind: 'slot', room: 0, which: 'front' });
+  const resting = seatedChampUids().map(champById).filter((c) => c && (c.restTurns || 0) > 0 && !heroForcedThisRaid(c));
+  if (resting.length) add('warning', 'resting-hero', `${resting.length}名统领正在休息`, '轮换统领、疗愈，或支付高额费用强制驱使。', '休息英雄无法正常出战', 'hero', { type: 'hero', uid: resting[0].uid, view: 'stat' });
+  const wounded = S.champs.filter((c) => seatedChampUids().includes(c.uid) && (c.wounds || 0) > 0);
+  if (wounded.length) add('warning', 'wounded-hero', `${wounded.length}名上阵英雄带伤`, '伤势会削弱属性；可在英雄状态页疗伤。', '上阵英雄存在永久伤势', 'hero', { type: 'hero', uid: wounded[0].uid, view: 'stat' });
+  const damagedFloor = S.floors.findIndex((floor) => floor.utility.kind !== 'none' && floor.utility.condition < 40);
+  if (damagedFloor >= 0) add('warning', 'damaged-facility', `${damagedFloor + 1}层设施严重受损`, '维修后可恢复产出与服务能力。', `设施耐久${S.floors[damagedFloor].utility.condition}`, 'dungeon', { kind: 'utility', floor: damagedFloor });
+  const thinFloor = S.rooms.findIndex((room) => [room.front, room.back, room.leader, room.flank].filter((uid) => uid != null).length === 0);
+  if (thinFloor >= 0 && countPlaced() > 0) add('warning', 'empty-floor', `${thinFloor + 1}层没有守军`, '敌人会无消耗穿过该层；可部署单位或接受风险。', '防线存在空层', 'dungeon', { kind: 'slot', room: thinFloor, which: 'front' });
+  const talentHero = S.champs.find((c) => pendingTier(c) > 0);
+  if (talentHero) add('opportunity', 'hero-talent', '有英雄可学习专精', '专精无需随机，先预览五个方向再确认。', `${talentHero.name}有未分配专精`, 'hero', { type: 'hero', uid: talentHero.uid, view: 'talent' });
+  else {
+    const levelHero = S.champs.find((c) => canLevel(c) && S.bone >= heroUpgradeBone(c) && S.mana >= heroUpgradeMana(c));
+    if (levelHero) add('opportunity', 'hero-level', '有英雄可以升级', '升级会提高基础属性并推进专精层级。', `${levelHero.name}经验和资源充足`, 'hero', { type: 'hero', uid: levelHero.uid, view: 'stat' });
+  }
+  const lead = availableStoryLeads()[0];
+  if (lead) add('opportunity', 'story-lead', '有待处理秘闻', '选择会明确显示持续时间和具体影响。', `${lead.source}产生了新线索`, 'story', { type: 'story', id: lead.id });
+  if (featureOpen('shop')) {
+    const group = WORKSHOP_RESEARCH.find((item) => !S.workshopResearch[item.id]
+      && researchAvailability(item, S.overtime ? 999 : S.raidNo, workshopResearchLevel()).open && S.mana >= item.cost);
+    if (group) add('opportunity', 'research', '高端路线可以定型', '每组永久三选一，建议比较收益和代价后再确认。', `${group.name}已开放且资源充足`, 'shop', { type: 'research', id: group.id });
+    else if (shopHasAffordable()) add('opportunity', 'shop', '工坊有可负担强化', '可购买永久强化，也可以保留魔质用于英雄成长。', '当前资源足以购买至少一项', 'shop', { type: 'shop' });
+  }
+  return tasks.sort((a, b) => ['block', 'warning', 'opportunity'].indexOf(a.severity) - ['block', 'warning', 'opportunity'].indexOf(b.severity));
+}
+function navigateUiTask(task) {
+  if (!task) return;
+  selectedEntity = task.target?.type ? { ...task.target } : null;
+  inspectorView = 'summary';
+  if (task.target?.type === 'hero') {
+    heroSel = task.target.uid;
+    heroTab = 'roster';
+    heroView = task.target.view ?? 'stat';
+    portraitHeroMode = 'roster'; portraitHeroDetail = true;
+    portraitHeroSection = heroView === 'talent' ? 'talent' : 'status';
+  } else if (task.target?.kind) sel = { ...task.target };
+  if (task.target?.type === 'research') {
+    setTab('shop'); openWorkshopResearch(); chooseResearchGroup(task.target.id); return;
+  }
+  setTab(task.page);
+}
+const uiBattleBlocked = () => uiTasks().some((task) => task.blocking);
 function roundGuide() {
+  if (uiShellTourStep < 4) {
+    const steps = [
+      ['zoneNav', '新版界面：底部只保留王座、地牢、军团、工坊、档案五个区域。'],
+      ['taskCenter', '本轮事务：阻止、警告和机会集中在王座；点击即可前往处理。'],
+      ['inspector', '上下文检查器：点击对象只更新详情区，不会让列表丢失位置。'],
+      ['encyclopedia', '完整百科：长说明、公式与历史按需打开，主画面只保留决策摘要。'],
+    ];
+    if (tab !== 'throne') return ['throne', '新版界面导览：请先进入“王座”。', false];
+    return [steps[uiShellTourStep][0], steps[uiShellTourStep][1], true];
+  }
   if (S.raidNo === 1 && !S.overtime) {
     const step = syncTutorialProgress();
     const room = S.rooms.findIndex((r) => {
@@ -1314,7 +1405,7 @@ function roundGuide() {
   const step = Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0));
   const item = list[step];
   if (item) {
-    if (tab !== item.page) return [item.page, `新教学：${item.title}，请进入“${TABS.find((x) => x.id === item.page)?.name ?? item.page}”`, false];
+    if (tab !== item.page) return [item.page, `新教学：${item.title}，请进入“${pageName(item.page)}”`, false];
     return [item.target, `${item.title}：${item.detail}`, true];
   }
   return null;
@@ -1868,7 +1959,7 @@ function closePortraitModal() {
 function portraitConsoleHeight() {
   if (portraitModalOpen()) return 64;
   if (screen !== 'manage') return screen === 'battle' ? 153 : 58;
-  const rows = Math.max(1, Math.ceil(visibleTabs().length / 4));
+  const rows = Math.max(1, Math.ceil(visibleZones().length / 5));
   return 186 + rows * 43;
 }
 
@@ -1987,8 +2078,8 @@ function bindInput() {
         return;
       }
       const i = ['1', '2', '3', '4', '5', '6', '7'].indexOf(e.key);
-      const openTabs = visibleTabs();
-      if (i >= 0 && openTabs[i]) { setTab(openTabs[i].id); return; }
+      const openTabs = visibleZones();
+      if (i >= 0 && openTabs[i]) { setZone(openTabs[i].id); return; }
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         if (tab === 'story' && storyRun) return;   // 剧情选项里方向键留给剧情
         if (pagerKey(e.key === 'ArrowLeft' ? -1 : 1)) return;
@@ -2023,21 +2114,51 @@ function bindInput() {
   });
 }
 
+function pageForZone(zone) {
+  const guidePage = roundGuide()?.[0];
+  if (zone === 'army') {
+    if (guidePage === 'hero' || guidePage === 'mob') return featureOpen(guidePage) ? guidePage : 'mob';
+    return armySection === 'hero' && featureOpen('hero') ? 'hero' : 'mob';
+  }
+  if (zone === 'archive') {
+    if (guidePage === 'story' || guidePage === 'report') return featureOpen(guidePage) ? guidePage : 'report';
+    return archiveSection === 'story' && featureOpen('story') ? 'story' : 'report';
+  }
+  return zone;
+}
+function setZone(zone) { setTab(pageForZone(zone)); }
+function setArchiveSection(section) {
+  archiveSection = section;
+  if (section === 'report') setTab('report');
+  else {
+    storyView = section === 'chronicle' ? 'chronicle' : 'dashboard';
+    portraitStoryView = section === 'chronicle' ? 'archive' : 'leads';
+    setTab('story');
+  }
+}
 function setTab(t     ) {
+  if (NAV_ZONES.some((item) => item.id === t)) t = pageForZone(t);
   if (!featureOpen(t)) return;
   pagerFocus = null;
   confirmNew = false;
+  desktopSystemMenu = false;
   if (stitch) closeStitch();
   if (forge) closeForge();
   if (graft) closeGraft();
   relicForgeConfirm = false;
   tab = t;
+  const guideItem = (ROUND_TUTORIALS[S.raidNo] ?? [])[Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0))];
+  if (t === 'story' && guideItem?.page === 'story' && guideItem.target === 'storyArea') storyView = 'dashboard';
+  if (t === 'hero' || t === 'mob') armySection = t;
+  if (t === 'report') archiveSection = 'report';
+  if (t === 'story' && archiveSection === 'report') archiveSection = storyView === 'chronicle' ? 'chronicle' : 'story';
   if (portrait) portraitPane = 0;
   portraitNativeBypass = false;
   portraitMobileMenu = false;
   if (portrait && t === 'mob' && S.raidNo === 1) portraitMobView = 'recruit';
   sel = null;
   markTabVisited(t);
+  markTabVisited(activeZone());
   syncTutorialProgress();
   if (S.raidNo === 1 && t === 'mob') {
     const required = tutorialData().step < 2 ? 'slime' : tutorialData().step < 3 ? 'archer' : null;
@@ -2130,6 +2251,7 @@ function render() {
   else if (tab === 'shop') pageShop(g);
   else if (tab === 'story') pageStory(g);
   else pageReport(g);
+  drawDesktopSystemMenu(g);
   drawProgressGuide();
   syncStoryInput();
   ensurePortraitChrome();
@@ -2804,6 +2926,14 @@ const FORGE_INPUT = { x: 108, y: 58, w: 250, h: 18 };
 
 let aiSettingsRoot = null;
 
+function toggleUiDensity() {
+  uiDensity = uiDensity === 'expert' ? 'standard' : 'expert';
+  localStorage.setItem(UI_DENSITY_KEY, uiDensity);
+  playSfx('tab');
+  say(`信息密度已切换为${uiDensity === 'expert' ? '专家' : '标准'}模式`);
+  render();
+}
+
 function closeAISettings() {
   if (aiSettingsRoot) aiSettingsRoot.remove();
   aiSettingsRoot = null;
@@ -2821,10 +2951,10 @@ function openAISettings() {
   card.style.cssText = 'width:min(560px,96vw);max-height:calc(100vh - 24px);overflow:auto;box-sizing:border-box;padding:18px;border:3px solid #8f6fc4;box-shadow:0 0 0 3px #21172d,0 12px 40px #000;background:#191423;image-rendering:pixelated;';
   card.innerHTML = `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px">
-      <div><div style="font-size:20px;color:#e2bd64">游戏设置・AI 接入</div><div style="margin-top:4px;font-size:12px;color:#918aa0">用于战报、秘闻、英雄档案与工坊创作</div></div>
+      <div><div style="font-size:20px;color:#e2bd64">游戏设置</div><div style="margin-top:4px;font-size:12px;color:#918aa0">界面、AI 接入与创作提示词</div></div>
       <button data-ai="close" style="width:42px;height:34px">关闭</button>
     </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:12px"><button data-ai="tab-connection" type="button">接口</button><button data-ai="tab-prompts" type="button">提示词</button></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px"><button data-ai="tab-connection" type="button">接口</button><button data-ai="tab-prompts" type="button">提示词</button><button data-ai="tab-interface" type="button">界面</button></div>
     <div data-ai="panel-connection">
       <label>服务商预设<select data-ai="provider"></select></label>
       <label data-ai="protocol-row">接口协议<select data-ai="protocol"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select></label>
@@ -2845,6 +2975,12 @@ function openAISettings() {
       <div style="font-size:12px;line-height:1.55;color:#918aa0">这里控制文风、侧重点和创作偏好。JSON 格式、字段白名单、事实边界与数值上限由游戏锁定，不能通过提示词绕过。</div>
       <div data-ai="prompt-status" style="min-height:34px;margin-top:10px;padding:8px;border:1px solid #484054;background:#100d17;color:#918aa0;box-sizing:border-box">每个任务分别保存，只影响本浏览器之后的新生成内容。</div>
       <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:14px"><button data-ai="prompt-reset" type="button">恢复本项</button><button data-ai="prompt-reset-all" type="button">全部恢复</button><button data-ai="prompt-save" type="button">保存提示词</button></div>
+    </div>
+    <div data-ai="panel-interface" style="display:none">
+      <div style="font-size:16px;color:#e2bd64;margin:6px 0 12px">信息密度</div>
+      <div style="padding:12px;border:1px solid #484054;background:#100d17;line-height:1.65">标准摘要只显示结论、风险和关键变化；专家模式额外显示倍率、公式来源和机制标签，不改变任何战斗数值。</div>
+      <button data-ai="density" type="button" style="width:100%;height:44px;margin-top:14px">当前：${uiDensity === 'expert' ? '专家信息' : '标准摘要'}</button>
+      <div style="font-size:12px;line-height:1.55;color:#918aa0;margin-top:10px">设置只保存在当前浏览器，不进入游戏存档。</div>
     </div>`;
   const css = document.createElement('style');
   css.textContent = '#ai-settings-overlay label{display:block;margin:10px 0 5px;font-size:13px;color:#cbbd91}#ai-settings-overlay input,#ai-settings-overlay select,#ai-settings-overlay textarea,#ai-settings-overlay button{box-sizing:border-box;border:1px solid #76698a;border-radius:0;background:#272033;color:#f1e5bd;font:14px monospace;min-height:36px;padding:7px 9px;outline:none}#ai-settings-overlay input,#ai-settings-overlay select,#ai-settings-overlay textarea{display:block;width:100%;margin-top:5px}#ai-settings-overlay textarea{resize:vertical;line-height:1.5;min-height:190px}#ai-settings-overlay button:not(:disabled){cursor:pointer}#ai-settings-overlay button:disabled{opacity:.42}#ai-settings-overlay input:focus,#ai-settings-overlay select:focus,#ai-settings-overlay textarea:focus,#ai-settings-overlay button:focus{border-color:#e2bd64;box-shadow:0 0 0 1px #e2bd64}';
@@ -2855,7 +2991,7 @@ function openAISettings() {
   const el = (name) => card.querySelector(`[data-ai="${name}"]`);
   const provider = el('provider'), protocol = el('protocol'), url = el('url'), key = el('key');
   const model = el('model'), refresh = el('refresh'), save = el('save'), status = el('status');
-  const connectionPanel = el('panel-connection'), promptsPanel = el('panel-prompts');
+  const connectionPanel = el('panel-connection'), promptsPanel = el('panel-prompts'), interfacePanel = el('panel-interface');
   const promptTask = el('prompt-task'), promptText = el('prompt-text'), promptStatus = el('prompt-status');
   const storedPrompts = loadPromptOverrides();
   const promptValues = Object.fromEntries(AI_PROMPT_TASKS.map((task) => [task.id, storedPrompts[task.id] || task.defaultPrompt]));
@@ -2866,14 +3002,18 @@ function openAISettings() {
   promptText.value = promptValues[promptTask.value];
   const stashPrompt = () => { promptValues[promptTask.value] = promptText.value.slice(0, 2000); };
   const showSettingsTab = (tabName) => {
-    const prompts = tabName === 'prompts';
-    connectionPanel.style.display = prompts ? 'none' : 'block'; promptsPanel.style.display = prompts ? 'block' : 'none';
-    el('tab-connection').style.borderColor = prompts ? '#76698a' : '#e2bd64';
+    const prompts = tabName === 'prompts', interfaceTab = tabName === 'interface';
+    connectionPanel.style.display = !prompts && !interfaceTab ? 'block' : 'none';
+    promptsPanel.style.display = prompts ? 'block' : 'none'; interfacePanel.style.display = interfaceTab ? 'block' : 'none';
+    el('tab-connection').style.borderColor = !prompts && !interfaceTab ? '#e2bd64' : '#76698a';
     el('tab-prompts').style.borderColor = prompts ? '#e2bd64' : '#76698a';
-    (prompts ? promptText : url).focus();
+    el('tab-interface').style.borderColor = interfaceTab ? '#e2bd64' : '#76698a';
+    (prompts ? promptText : interfaceTab ? el('density') : url).focus();
   };
   el('tab-connection').addEventListener('click', () => { stashPrompt(); showSettingsTab('connection'); });
   el('tab-prompts').addEventListener('click', () => showSettingsTab('prompts'));
+  el('tab-interface').addEventListener('click', () => { stashPrompt(); showSettingsTab('interface'); });
+  el('density').addEventListener('click', () => { toggleUiDensity(); el('density').textContent = `当前：${uiDensity === 'expert' ? '专家信息' : '标准摘要'}`; });
   promptTask.addEventListener('change', (event) => {
     const prior = event.target.dataset.prior;
     if (prior) promptValues[prior] = promptText.value.slice(0, 2000);
@@ -3703,6 +3843,8 @@ function toggleMute() {
 
 function clearTransientUi() {
   sel = null; heroSel = null; detailPopup = null; researchModal = null; raidBriefing = null; lawAudit = null; stitch = null; forge = null; graft = null; smith = null;
+  selectedEntity = null; inspectorView = 'summary'; desktopSystemMenu = false;
+  armySection = 'mob'; archiveSection = 'report';
   battle = null; battleLayer.visible = false; confirmNew = false; titleNewConfirm = false;
   for (const c of overlay.removeChildren()) c.destroy({ children: true });
   hits.clear(); endingBuilt = false; endingActionRect = null; endingRebirthRect = null;
@@ -3812,21 +3954,43 @@ function drawTopBar(g               ) {
   };
   ico('icon-bone', 8);
   label(uiLayer, `${S.bone}`, 26, 12, 12, C.gold);
-  ico('icon-mana', 78);
-  label(uiLayer, `${S.mana}`, 96, 12, 12, C.purple);
+  ico('icon-mana', 74);
+  label(uiLayer, `${S.mana}`, 92, 12, 12, C.purple);
   const raid = currentRaid();
-  label(uiLayer, S.overtime ? `加班勇者 第${raid.no - NORMAL_RAID_COUNT}批` : `袭击 ${S.raidNo}/${NORMAL_RAID_COUNT}`, 150, 12, 12, C.bone);
-  label(uiLayer, '勇者请回', 240, 12, 12, C.stoneLit);
-  if (saveFlash > 0) label(uiLayer, '已保存', 266, 12, 10, C.green);
-  // 测试按钮：一键补资源，方便试各种阵容
-  button(g, uiLayer, hits, 306, 6, 36, 22, '+1000', addTestResources, { size: 11, fill: C.greenDark, border: C.green, color: C.white });
-  button(g, uiLayer, hits, 344, 6, 30, 22, '导出', exportSave, { size: 10 });
-  button(g, uiLayer, hits, 376, 6, 30, 22, '导入', importSave, { size: 10 });
-  button(g, uiLayer, hits, 408, 6, 30, 22, '设置', openAISettings, { size: 10, border: C.purple, color: C.purple });
-  button(g, uiLayer, hits, 440, 6, 36, 22, '新档', requestNewGame,
-    { size: 12, border: confirmNew ? C.red : C.bone, color: confirmNew ? C.red : C.bone });
+  label(uiLayer, S.overtime ? `加班${raid.no - NORMAL_RAID_COUNT}` : `${S.raidNo}/${NORMAL_RAID_COUNT}轮`, 144, 12, 12, C.bone);
+  if (activeZone() === 'army') {
+    button(g, uiLayer, hits, 204, 6, 56, 22, '怪物', () => setTab('mob'), { size: 11, fill: tab === 'mob' ? C.wallLit : C.wall, border: tab === 'mob' ? C.gold : C.stoneLit, color: C.white });
+    if (featureOpen('hero')) button(g, uiLayer, hits, 262, 6, 56, 22, '英雄', () => setTab('hero'), { size: 11, fill: tab === 'hero' ? C.wallLit : C.wall, border: tab === 'hero' ? C.gold : C.stoneLit, color: C.white });
+  } else if (activeZone() === 'archive') {
+    button(g, uiLayer, hits, 204, 6, 36, 22, '战报', () => setArchiveSection('report'), { size: 10, fill: archiveSection === 'report' ? C.wallLit : C.wall, border: archiveSection === 'report' ? C.gold : C.stoneLit, color: C.white });
+    if (featureOpen('story')) {
+      button(g, uiLayer, hits, 242, 6, 36, 22, '秘闻', () => setArchiveSection('story'), { size: 10, fill: archiveSection === 'story' ? C.wallLit : C.wall, border: archiveSection === 'story' ? C.gold : C.stoneLit, color: C.white });
+      button(g, uiLayer, hits, 280, 6, 38, 22, '编年', () => setArchiveSection('chronicle'), { size: 10, fill: archiveSection === 'chronicle' ? C.wallLit : C.wall, border: archiveSection === 'chronicle' ? C.gold : C.stoneLit, color: C.white });
+    }
+  } else label(uiLayer, NAV_ZONES.find((item) => item.id === activeZone())?.name ?? '', 224, 12, 12, C.stoneLit);
+  const tasks = uiTasks(), blocked = tasks.some((task) => task.blocking);
+  button(g, uiLayer, hits, 324, 6, 70, 22, `事务 ${tasks.length}`, () => { selectedEntity = { type: 'tasks' }; setZone('throne'); },
+    { size: 11, fill: blocked ? C.redDark : C.ink, border: blocked ? C.red : tasks.length ? C.gold : C.green, color: blocked ? C.white : tasks.length ? C.gold : C.green });
+  button(g, uiLayer, hits, 398, 6, 78, 22, desktopSystemMenu ? '关闭菜单' : '系统菜单', () => { desktopSystemMenu = !desktopSystemMenu; render(); },
+    { size: 11, fill: desktopSystemMenu ? C.wallLit : C.wall, border: desktopSystemMenu ? C.gold : C.stoneLit, color: C.white });
+  if (saveFlash > 0) label(uiLayer, '已保存', 174, 12, 9, C.green);
 }
 let confirmNew = false;
+
+function drawDesktopSystemMenu(g) {
+  if (!desktopSystemMenu) return;
+  panelF(g, uiLayer, 'stone', 330, 36, 146, 198, C.wall);
+  label(uiLayer, '系统菜单', 342, 44, 12, C.gold);
+  const actions = [
+    ['导出存档', exportSave, C.bone], ['导入存档', importSave, C.bone],
+    [S.muted ? '开启声音' : '关闭声音', toggleMute, C.purple],
+    [`信息：${uiDensity === 'expert' ? '专家' : '标准'}`, toggleUiDensity, C.gold],
+    ['AI与提示词设置', openAISettings, C.purple],
+    [confirmNew ? '确认开始新档' : '开始新档', requestNewGame, confirmNew ? C.red : C.gold],
+  ];
+  actions.forEach(([name, action, color], i) => button(g, uiLayer, hits, 340, 62 + i * 27, 126, 23, name, action,
+    { size: 11, fill: i === 5 && confirmNew ? C.redDark : C.ink, border: color, color: i === 5 && confirmNew ? C.white : color }));
+}
 
 function portraitPage(items, key, per) {
   const pages = Math.max(1, Math.ceil(items.length / per));
@@ -3858,7 +4022,31 @@ function portraitGuideBanner(x, y, w) {
 function drawPortraitThrone(x, y, w, h) {
   const raid = currentRaid();
   const economy = dungeonEconomyPreview();
-  label(portraitLayer, `下一波・${raid.title}`, x + 8, y + 4, 17, C.white);
+  const tasks = uiTasks();
+  const selectedTask = selectedEntity?.type === 'task' ? tasks.find((task) => task.id === selectedEntity.id) : null;
+  const selectedEnemy = selectedEntity?.type === 'enemy' ? raid.members[selectedEntity.index] : null;
+  if (selectedTask || selectedEnemy) {
+    button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, 76, 38, '← 返回', () => { selectedEntity = null; inspectorView = 'summary'; render(); }, { size: 14 });
+    label(portraitLayer, '上下文检查器', x + 96, y + 12, 18, C.gold);
+    const bodyY = y + 52;
+    panelF(portraitGfx, portraitLayer, 'stone', x + 8, bodyY, w - 16, h - 58, C.wall);
+    if (selectedTask) {
+      const color = UI_TASK_TONE[selectedTask.severity];
+      label(portraitLayer, selectedTask.title, x + 24, bodyY + 18, 19, color);
+      label(portraitLayer, selectedTask.severity === 'block' ? '阻止迎战' : selectedTask.severity === 'warning' ? '风险提示' : '发展机会', x + 24, bodyY + 48, 14, color);
+      boundedText(portraitLayer, `${selectedTask.summary}\n\n原因：${selectedTask.reason}`, x + 24, bodyY + 76, w - 48, Math.max(90, h - 210), 14, C.bone);
+      button(portraitGfx, portraitLayer, portraitHits, x + 20, bodyY + h - 160, w - 40, 44, '前往处理', () => navigateUiTask(selectedTask), { size: 16, fill: C.wallLit, border: color, color: C.white });
+      button(portraitGfx, portraitLayer, portraitHits, x + 20, bodyY + h - 108, w - 40, 40, '查看完整说明', () => openDetailPopup(selectedTask.title, `${selectedTask.summary}\n\n触发原因：${selectedTask.reason}\n\n该事务不会自动消费资源，前往后仍需手动确认操作。`, color), { size: 14, border: C.gold, color: C.gold });
+    } else {
+      const cls = HERO_CLASSES[selectedEnemy.cls];
+      label(portraitLayer, `${cls.name}・Lv${selectedEnemy.lv}`, x + 24, bodyY + 18, 19, cls.role === '首领' ? C.gold : C.white);
+      label(portraitLayer, `战场定位：${cls.role}`, x + 24, bodyY + 48, 14, C.red);
+      boundedText(portraitLayer, cls.intel, x + 24, bodyY + 76, w - 48, Math.max(120, h - 190), 14, C.bone);
+      button(portraitGfx, portraitLayer, portraitHits, x + 20, bodyY + h - 108, w - 40, 40, '完整敌情百科', () => openDetailPopup(`${cls.name}・敌情`, `${cls.intel}\n\n等级：${selectedEnemy.lv}\n定位：${cls.role}\n本轮词缀：${raid.affixes.length ? affixText(raid.affixes) : '无'}`, C.red), { size: 14, border: C.red, color: C.red });
+    }
+    return;
+  }
+  label(portraitLayer, `作战台・${raid.title}`, x + 8, y + 4, 17, C.white);
   label(portraitLayer, `${raid.members.length}名勇者`, x + w - 92, y + 6, 13, C.bone);
   const cols = Math.min(3, Math.max(1, raid.members.length));
   const cardW = Math.floor((w - 16 - (cols - 1) * 6) / cols);
@@ -3870,16 +4058,25 @@ function drawPortraitThrone(x, y, w, h) {
     const s = sprite(cls.tex, cx + 28, cy + 61, 42); portraitLayer.addChild(s);
     label(portraitLayer, cut(cls.name, 6), cx + 54, cy + 14, 14, cls.role === '首领' ? C.gold : C.white);
     label(portraitLayer, `Lv${member.lv}`, cx + 54, cy + 36, 13, C.stoneLit);
-    portraitHits.add(cx, cy, cardW, 76, () => openDetailPopup(`${cls.name}・敌情`, cls.intel, C.red));
+    portraitHits.add(cx, cy, cardW, 76, () => { selectedEntity = { type: 'enemy', index: i }; inspectorView = 'summary'; render(); });
   });
   const rows = Math.ceil(raid.members.length / cols);
   const infoY = y + 38 + rows * 82;
-  const aff = raid.affixes.length ? affixText(raid.affixes) : '无特殊词缀';
-  panelF(portraitGfx, portraitLayer, 'stone', x + 8, infoY, w - 16, 78, C.wall);
-  label(portraitLayer, `词缀：${cut(aff, 24)}`, x + 18, infoY + 10, 13, raid.affixes.length ? C.red : C.stoneLit);
-  label(portraitLayer, `已布防 ${countPlaced()}　陷阱 ${S.rooms.reduce((n, r) => n + (r.trap !== 'none' ? 1 : 0) + (researchEffects(S.workshopResearch).dualTraps && r.trap2 !== 'none' ? 1 : 0), 0)}`, x + 18, infoY + 31, 13, C.bone);
-  label(portraitLayer, `封印 ${Math.max(25, sealMax() + battleMods().sealAdd)}　待产＋${economy.bone}骨＋${economy.mana}魔`, x + 18, infoY + 52, 13, C.gold);
-  void h;
+  label(portraitLayer, `本轮事务 ${tasks.length}`, x + 8, infoY, 16, tasks.some((task) => task.blocking) ? C.red : tasks.length ? C.gold : C.green);
+  const pg = portraitPage(tasks, 'portrait-ui-tasks', Math.max(2, Math.min(4, Math.floor((h - (infoY - y) - 44) / 58))));
+  pg.view.forEach((task, i) => {
+    const cy = infoY + 28 + i * 58, color = UI_TASK_TONE[task.severity];
+    portraitGfx.roundRect(x + 8, cy, w - 16, 52, 4).fill(C.wall).stroke({ width: 1, color, alignment: 0 });
+    label(portraitLayer, `${task.severity === 'block' ? '阻止' : task.severity === 'warning' ? '警告' : '机会'}・${cut(task.title, 15)}`, x + 18, cy + 8, 14, color);
+    label(portraitLayer, cut(task.summary, 24), x + 18, cy + 30, 11, C.stoneLit);
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 86, cy + 9, 70, 34, '查看', () => { selectedEntity = { type: 'task', id: task.id }; render(); }, { size: 13, border: color, color });
+  });
+  if (!tasks.length) {
+    panelF(portraitGfx, portraitLayer, 'stone', x + 8, infoY + 28, w - 16, 82, C.wall);
+    label(portraitLayer, '✓ 防线没有显著问题', x + 20, infoY + 42, 15, C.green);
+    label(portraitLayer, `布防${countPlaced()}・封印${Math.max(25, sealMax() + battleMods().sealAdd)}・待产${economy.bone}骨${economy.mana}魔`, x + 20, infoY + 70, 12, C.bone);
+  }
+  portraitPager('portrait-ui-tasks', pg.page, pg.pages, x + 8, y + h - 38, w - 16);
 }
 
 function drawPortraitMob(x, y, w, h) {
@@ -3942,7 +4139,7 @@ function drawPortraitMob(x, y, w, h) {
       portraitLayer.addChild(portraitEffect(sprite(k.tex, x + 38, cy + 55, 44), inst.lv >= 5, false, inst.uid));
       label(portraitLayer, `${k.name}　Lv${inst.lv}`, x + 70, cy + 8, 15, C.white);
       label(portraitLayer, `位置：${post.text}　技能：${cut(k.skill, 8)}`, x + 70, cy + 31, 12, post.kind === 'free' ? C.stoneLit : C.gold);
-      button(portraitGfx, portraitLayer, portraitHits, x + w - 88, cy + 13, 72, 34, '详情', () => { sel = { kind: 'inst', uid: inst.uid }; render(); },
+      button(portraitGfx, portraitLayer, portraitHits, x + w - 88, cy + 13, 72, 34, '详情', () => { sel = { kind: 'inst', uid: inst.uid }; selectedEntity = { type: 'monster', uid: inst.uid }; inspectorView = 'summary'; render(); },
         { size: 13, border: C.purple, color: C.purple });
     });
     const next = nextMonsterCapTier();
@@ -4308,7 +4505,7 @@ function drawPortraitHero(x, y, w, h) {
     const actionX = x + w - 94;
     button(portraitGfx, portraitLayer, portraitHits, actionX, cy + 13, 78, 38, recruitMode ? `${cost}骨` : '详情', () => {
       if (recruitMode) { portraitHeroMode = 'roster'; portraitHeroDetail = true; recruitChamp(unit); }
-      else { heroSel = unit.uid; portraitHeroSection = 'status'; portraitHeroDetail = true; render(); }
+      else { heroSel = unit.uid; selectedEntity = { type: 'hero', uid: unit.uid }; inspectorView = 'summary'; portraitHeroSection = 'status'; portraitHeroDetail = true; render(); }
     }, { size: 13, enabled: !recruitMode || S.bone >= cost, fill: recruitMode ? C.greenDark : C.wallLit, border: recruitMode ? C.green : C.gold, color: C.white });
     if (!recruitMode) portraitActionMap[`hero-open-${unit.uid}`] = { x: actionX, y: cy + 13, w: 78, h: 38 };
   });
@@ -4339,7 +4536,7 @@ function drawPortraitReport(x, y, w, h) {
   const tw = Math.floor((w - 16 - (tabs.view.length - 1) * 5) / Math.max(1, tabs.view.length));
   tabs.view.forEach((idx, i) => {
     const report = S.reports[idx];
-    button(portraitGfx, portraitLayer, portraitHits, x + 8 + i * (tw + 5), y + 2, tw, 36, `#${report.raidNo}`, () => { reportIdx = idx; render(); },
+    button(portraitGfx, portraitLayer, portraitHits, x + 8 + i * (tw + 5), y + 2, tw, 36, `#${report.raidNo}`, () => { reportIdx = idx; selectedEntity = { type: 'report', raidNo: report.raidNo }; inspectorView = 'summary'; render(); },
       { size: 13, fill: idx === reportIdx ? C.wallLit : C.wall, border: report.win ? C.green : C.red, color: report.win ? C.green : C.red });
   });
   const r = S.reports[reportIdx];
@@ -4402,25 +4599,22 @@ function drawPortraitStoryRun(x, y, w, h) {
 function drawPortraitStory(x, y, w, h) {
   if (storyRun) { drawPortraitStoryRun(x, y, w, h); return; }
   const leads = availableStoryLeads(), archive = S.story.archive;
-  const tabW = Math.floor((w - 22) / 2);
-  button(portraitGfx, portraitLayer, portraitHits, x + 8, y + 2, tabW, 38, `待处理 ${leads.length}`, () => { portraitStoryView = 'leads'; render(); },
-    { size: 14, fill: portraitStoryView === 'leads' ? C.wallLit : C.wall, border: portraitStoryView === 'leads' ? C.gold : C.stoneLit, color: C.white });
-  button(portraitGfx, portraitLayer, portraitHits, x + 14 + tabW, y + 2, tabW, 38, `档案 ${archive.length}`, () => { portraitStoryView = 'archive'; render(); },
-    { size: 14, fill: portraitStoryView === 'archive' ? C.wallLit : C.wall, border: portraitStoryView === 'archive' ? C.gold : C.stoneLit, color: C.white });
-  const items = portraitStoryView === 'leads' ? leads : archive;
-  const pg = portraitPage(items, `portrait-story-${portraitStoryView}`, Math.max(3, Math.min(7, Math.floor((h - 100) / 58))));
+  const isArchive = archiveSection === 'chronicle';
+  const items = isArchive ? archive : leads;
+  label(portraitLayer, isArchive ? `永久档案 ${archive.length}` : `待处理线索 ${leads.length}`, x + 10, y + 8, 16, isArchive ? C.gold : C.purple);
+  const pg = portraitPage(items, `portrait-story-${isArchive ? 'archive' : 'leads'}`, Math.max(3, Math.min(7, Math.floor((h - 62) / 58))));
   pg.view.forEach((item, i) => {
-    const cy = y + 50 + i * 58;
-    portraitGfx.roundRect(x + 8, cy, w - 16, 52, 4).fill(C.wall).stroke({ width: 1, color: portraitStoryView === 'leads' ? C.purple : C.stoneLit, alignment: 0 });
-    label(portraitLayer, `${item.source}・${cut(item.title, 18)}`, x + 18, cy + 8, 14, portraitStoryView === 'leads' ? C.purple : C.bone);
-    label(portraitLayer, portraitStoryView === 'leads' ? `产生于第${item.raidNo}轮` : cut(item.effects || item.outcome || '已归档', 24), x + 18, cy + 30, 11, C.stoneLit);
-    button(portraitGfx, portraitLayer, portraitHits, x + w - 88, cy + 9, 72, 34, portraitStoryView === 'leads' ? '处理' : '查看', () => {
-      if (portraitStoryView === 'leads') openStoryLead(item.id);
+    const cy = y + 32 + i * 58;
+    portraitGfx.roundRect(x + 8, cy, w - 16, 52, 4).fill(C.wall).stroke({ width: 1, color: isArchive ? C.stoneLit : C.purple, alignment: 0 });
+    label(portraitLayer, `${item.source}・${cut(item.title, 18)}`, x + 18, cy + 8, 14, isArchive ? C.bone : C.purple);
+    label(portraitLayer, isArchive ? cut(item.effects || item.outcome || '已归档', 24) : `产生于第${item.raidNo}轮`, x + 18, cy + 30, 11, C.stoneLit);
+    button(portraitGfx, portraitLayer, portraitHits, x + w - 88, cy + 9, 72, 34, isArchive ? '查看' : '处理', () => {
+      if (!isArchive) openStoryLead(item.id);
       else openDetailPopup(item.title, `${item.outcome}${item.effects ? `\n\n结果：${item.effects}` : ''}`, C.purple);
     }, { size: 13, border: C.purple, color: C.purple });
   });
-  portraitPager(`portrait-story-${portraitStoryView}`, pg.page, pg.pages, x + 8, y + h - 40, w - 16);
-  if (portraitStoryView === 'leads') button(portraitGfx, portraitLayer, portraitHits, x + 96, y + h - 40, w - 192, 36,
+  portraitPager(`portrait-story-${isArchive ? 'archive' : 'leads'}`, pg.page, pg.pages, x + 8, y + h - 40, w - 16);
+  if (!isArchive) button(portraitGfx, portraitLayer, portraitHits, x + 96, y + h - 40, w - 192, 36,
     S.story.credits > 0 ? `追查无主传闻 ${S.story.credits}` : '暂无无主传闻', () => { if (S.story.credits > 0) void drawStoryScene(); },
     { size: 13, enabled: S.story.credits > 0 && !storyBusy, border: C.gold, color: C.gold });
 }
@@ -4437,18 +4631,21 @@ function drawPortraitNativeDetail(x, y, w, h) {
 
 function drawPortraitNativeManage() {
   const w = app.screen.width, h = app.screen.height;
+  const tasksNow = uiTasks();
   portraitGfx.rect(0, 0, w, h).fill({ color: C.bg, alpha: 0.18 });
   panelF(portraitGfx, portraitLayer, 'stone', 8, 8, w - 16, 44, C.wall);
   label(portraitLayer, `骨 ${S.bone}　魔 ${S.mana}`, 20, 20, 15, C.gold);
-  labelC(portraitLayer, TABS.find((item) => item.id === tab)?.name ?? '', w / 2, 20, 16, C.white);
-  label(portraitLayer, S.overtime ? `加班${currentRaid().no - NORMAL_RAID_COUNT}` : `${S.raidNo}/${NORMAL_RAID_COUNT}`, w - 112, 21, 13, C.bone);
+  labelC(portraitLayer, NAV_ZONES.find((item) => item.id === activeZone())?.name ?? '', w / 2, 20, 16, C.white);
+  label(portraitLayer, S.overtime ? `班${currentRaid().no - NORMAL_RAID_COUNT}` : `${S.raidNo}/${NORMAL_RAID_COUNT}`, 112, 21, 13, C.bone);
+  button(portraitGfx, portraitLayer, portraitHits, w - 132, 12, 62, 34, `事务${tasksNow.length}`, () => { selectedEntity = { type: 'tasks' }; setZone('throne'); },
+    { size: 12, border: tasksNow.some((task) => task.blocking) ? C.red : tasksNow.length ? C.gold : C.green, color: tasksNow.some((task) => task.blocking) ? C.red : tasksNow.length ? C.gold : C.green });
   button(portraitGfx, portraitLayer, portraitHits, w - 66, 12, 52, 34, '菜单', () => { portraitMobileMenu = !portraitMobileMenu; render(); },
     { size: 13, fill: portraitMobileMenu ? C.wallLit : C.wall, border: portraitMobileMenu ? C.gold : C.stoneLit, color: C.white });
 
-  const tabs = visibleTabs(), cols = Math.min(4, tabs.length), rows = Math.ceil(tabs.length / cols);
+  const tabs = visibleZones(), cols = tabs.length, rows = 1;
   const navH = rows * 46 + 8, navTop = h - navH - 4;
   const guide = roundGuide();
-  const guideOnPage = !!guide && (guide[2] || guide[0] === tab || (tab === 'mob' && guide[0] === 'mobRecruit'));
+  const guideOnPage = !!guide && (guide[2] || PAGE_ZONE[guide[0]] === activeZone() || guide[0] === activeZone() || (tab === 'mob' && guide[0] === 'mobRecruit'));
   const primaryY = navTop - 54;
   const contentX = 8, contentY = 60, contentW = w - 16, contentH = primaryY - contentY - 8;
   portraitGfx.roundRect(contentX, contentY, contentW, contentH, 5).fill(C.bg).stroke({ width: 2, color: C.wallLit, alignment: 0 });
@@ -4461,17 +4658,31 @@ function drawPortraitNativeManage() {
     const menuItems = [
       ['导出存档', exportSave, C.bone], ['导入存档', importSave, C.bone],
       [S.muted ? '开启声音' : '关闭声音', toggleMute, C.purple],
+      [`信息密度：${uiDensity === 'expert' ? '专家' : '标准'}`, toggleUiDensity, C.gold],
       ['AI 接入设置', openAISettings, C.purple],
       [confirmNew ? '确认清空并开始新档' : '开始新档', requestNewGame, confirmNew ? C.red : C.gold],
     ];
     menuItems.forEach(([name, action, color], i) => {
       const by = pageY + 38 + i * 54;
-      if (i === 4) menuNewY = by;
+      if (i === 5) menuNewY = by;
       button(portraitGfx, portraitLayer, portraitHits, contentX + 18, by, contentW - 36, 46, name, action,
-        { size: 16, fill: i === 4 && confirmNew ? C.redDark : C.wall, border: color, color: i === 4 && confirmNew ? C.white : color });
+        { size: 16, fill: i === 5 && confirmNew ? C.redDark : C.wall, border: color, color: i === 5 && confirmNew ? C.white : color });
     });
   } else {
     if (guideOnPage) pageY += portraitGuideBanner(contentX + 6, pageY, contentW - 12);
+    if (activeZone() === 'army') {
+      const sections = featureOpen('hero') ? [['mob', '怪物'], ['hero', '英雄']] : [['mob', '怪物']];
+      const sw = Math.floor((contentW - 18 - (sections.length - 1) * 6) / sections.length);
+      sections.forEach(([id, name], i) => button(portraitGfx, portraitLayer, portraitHits, contentX + 6 + i * (sw + 6), pageY, sw, 36, name,
+        () => setTab(id), { size: 14, fill: tab === id ? C.wallLit : C.wall, border: tab === id ? C.gold : C.stoneLit, color: C.white }));
+      pageY += 42;
+    } else if (activeZone() === 'archive') {
+      const sections = featureOpen('story') ? [['report', '战报'], ['story', '秘闻'], ['chronicle', '编年史']] : [['report', '战报']];
+      const sw = Math.floor((contentW - 18 - (sections.length - 1) * 6) / sections.length);
+      sections.forEach(([id, name], i) => button(portraitGfx, portraitLayer, portraitHits, contentX + 6 + i * (sw + 6), pageY, sw, 36, name,
+        () => setArchiveSection(id), { size: 14, fill: archiveSection === id ? C.wallLit : C.wall, border: archiveSection === id ? C.gold : C.stoneLit, color: C.white }));
+      pageY += 42;
+    }
     const pageH = contentY + contentH - pageY - 6;
     if (tab === 'throne') drawPortraitThrone(contentX, pageY, contentW, pageH);
     else if (tab === 'dungeon') drawPortraitDungeon(contentX, pageY, contentW, pageH);
@@ -4483,23 +4694,31 @@ function drawPortraitNativeManage() {
   }
 
   const ack = guide?.[2];
-  const battleReady = tab === 'throne' && (!guide || guide[0] === 'battle');
-  const primaryLabel = detailPopup ? '关闭详情' : portraitMobileMenu ? '关闭菜单' : ack ? '明白，继续' : battlePrepBusy ? 'AI 正在编排战前台词…' : battleReady ? '迎战' : guide ? '按引导完成当前步骤' : tab === 'throne' ? '迎战' : '返回王座';
+  const battleReady = activeZone() === 'throne' && (!guide || guide[0] === 'battle');
+  const blocked = uiBattleBlocked();
+  const primaryLabel = detailPopup ? '关闭详情' : portraitMobileMenu ? '关闭菜单' : ack ? '明白，继续' : battlePrepBusy ? 'AI 正在编排战前台词…' : battleReady ? blocked ? '先处理阻止事务' : '迎战' : guide ? '按引导完成当前步骤' : activeZone() === 'throne' ? blocked ? '先处理阻止事务' : '迎战' : '返回王座';
   const primaryAction = detailPopup ? closeDetailPopup : portraitMobileMenu ? () => { portraitMobileMenu = false; confirmNew = false; render(); }
-    : ack ? acknowledgeRoundGuide : battleReady || tab === 'throne' ? startBattle : guide ? () => {} : () => setTab('throne');
+    : ack ? acknowledgeRoundGuide : battleReady || activeZone() === 'throne' ? startBattle : guide ? () => {} : () => setZone('throne');
   button(portraitGfx, portraitLayer, portraitHits, 8, primaryY, w - 16, 46, primaryLabel, primaryAction,
-    { size: 17, enabled: !battlePrepBusy && (!!detailPopup || portraitMobileMenu || ack || battleReady || tab === 'throne' || !guide), fill: ack ? C.goldDark : C.greenDark, border: ack ? C.gold : C.green, color: C.white });
+    { size: 17, enabled: !battlePrepBusy && !((battleReady || activeZone() === 'throne') && blocked) && (!!detailPopup || portraitMobileMenu || ack || battleReady || activeZone() === 'throne' || !guide), fill: ack ? C.goldDark : C.greenDark, border: blocked ? C.red : ack ? C.gold : C.green, color: C.white });
   portraitActionMap.primary = { x: 8, y: primaryY, w: w - 16, h: 46 };
 
   const gap = 5, bw = Math.floor((w - 16 - gap * (cols - 1)) / cols);
   tabs.forEach((item, i) => {
     const bx = 8 + (i % cols) * (bw + gap), by = navTop + Math.floor(i / cols) * 46;
-    const guided = guide && guide[0] === item.id;
-    button(portraitGfx, portraitLayer, portraitHits, bx, by, bw, 40, item.name, () => setTab(item.id), {
-      size: 14, fill: tab === item.id ? C.wallLit : C.wall, border: guided || tab === item.id ? C.gold : C.stoneLit,
-      color: guided || tab === item.id ? C.white : C.bone,
+    const guided = guide && (PAGE_ZONE[guide[0]] === item.id || guide[0] === item.id);
+    button(portraitGfx, portraitLayer, portraitHits, bx, by, bw, 40, item.name, () => setZone(item.id), {
+      size: 14, fill: activeZone() === item.id ? C.wallLit : C.wall, border: guided || activeZone() === item.id ? C.gold : C.stoneLit,
+      color: guided || activeZone() === item.id ? C.white : C.bone,
     });
     portraitActionMap[`nav-${item.id}`] = { x: bx, y: by, w: bw, h: 40 };
+    if (item.id === 'army') {
+      portraitActionMap['nav-mob'] = portraitActionMap[`nav-${item.id}`];
+      portraitActionMap['nav-hero'] = portraitActionMap[`nav-${item.id}`];
+    } else if (item.id === 'archive') {
+      portraitActionMap['nav-report'] = portraitActionMap[`nav-${item.id}`];
+      portraitActionMap['nav-story'] = portraitActionMap[`nav-${item.id}`];
+    }
   });
   portraitLayoutInfo = { native: true, contentTop: contentY, contentBottom: contentY + contentH, primaryY, navTop, bottom: h, tabTop: navTop,
     margin: 8, gap, buttonWidth: bw, menuButton: { x: w - 66, y: 12, w: 52, h: 34 }, menuOpen: portraitMobileMenu,
@@ -4602,7 +4821,7 @@ function ensurePortraitChrome() {
   const bw = Math.floor((w - margin * 2 - gap * (cols - 1)) / cols);
   let cursorY = top + 7;
   let tabTop = cursorY;
-  const tabs = visibleTabs();
+    const tabs = visibleZones();
   const currentGuide = roundGuide();
   if (screen === 'manage') {
     panelF(portraitGfx, portraitLayer, 'stone', 6, cursorY, w - 12, 36, C.wall);
@@ -4614,10 +4833,10 @@ function ensurePortraitChrome() {
     tabs.forEach((item, i) => {
       const x = margin + (i % cols) * (bw + gap);
       const y = tabTop + Math.floor(i / cols) * 43;
-      const guided = currentGuide?.[0] === item.id;
-      button(portraitGfx, portraitLayer, portraitHits, x, y, bw, 38, item.name, () => setTab(item.id), {
-        size: 14, fill: tab === item.id ? C.wallLit : C.wall,
-        border: guided || tab === item.id ? C.gold : C.stoneLit, color: guided || tab === item.id ? C.white : C.bone,
+      const guided = PAGE_ZONE[currentGuide?.[0]] === item.id || currentGuide?.[0] === item.id;
+      button(portraitGfx, portraitLayer, portraitHits, x, y, bw, 38, item.name, () => setZone(item.id), {
+        size: 14, fill: activeZone() === item.id ? C.wallLit : C.wall,
+        border: guided || activeZone() === item.id ? C.gold : C.stoneLit, color: guided || activeZone() === item.id ? C.white : C.bone,
       });
       if (guided) {
         const pulse = new PIXI.Graphics().roundRect(x - 2, y - 2, bw + 4, 42, 4)
@@ -4698,10 +4917,10 @@ function ensurePortraitChrome() {
 }
 
 function drawTabs(g               ) {
-  const tabs = visibleTabs();
+  const tabs = visibleZones();
   const w = VIEW_W / tabs.length;
   tabs.forEach((t, i) => {
-    const active = t.id === tab;
+    const active = t.id === activeZone();
     const x = i * w;
     g.rect(x, 238, w, 32).fill(active ? C.wallLit : C.wall);
     frame(uiLayer, 'tab-fill', x, 238, w, 32, { tint: active ? C.wallLit : C.wall });
@@ -4710,10 +4929,9 @@ function drawTabs(g               ) {
     label1.x = Math.round(x + (w - label1.width) / 2);
     label1.y = 248;
     uiLayer.addChild(label1);
-    const dot = (t.id === 'mob' && canUpgradeAny()) || (t.id === 'shop' && shopHasAffordable()) || (t.id === 'story' && storyHasNew())
-      || (t.id === 'hero' && heroHasNew());
+    const dot = (t.id === 'army' && (canUpgradeAny() || heroHasNew())) || (t.id === 'shop' && shopHasAffordable()) || (t.id === 'archive' && storyHasNew());
     if (dot) g.circle(x + w - 10, 248, 3).fill(C.red);
-    hits.add(x, 238, w, 32, () => setTab(t.id));
+    hits.add(x, 238, w, 32, () => setZone(t.id));
   });
 }
 
@@ -4730,74 +4948,64 @@ function skullRow(g               , x        , y        , n        ) {
 function pageThrone(g               ) {
   const raid = currentRaid();
   const economy = dungeonEconomyPreview();
-  label(uiLayer, `下一波：${raid.title}`, 10, 42, 12, C.white);
-  label(uiLayer, `${raid.members.length}名勇者`, 240, 42, 12, C.bone);
-  // 勇者队列
-  panelF(g, uiLayer, 'inset', 8, 60, 320, 96, C.ink);
-  raid.members.forEach((m, i) => {
-    const cls = HERO_CLASSES[m.cls];
-    const x = 26 + i * 62;
-    const s = sprite(cls.tex, x, 130, 30);
-    uiLayer.addChild(s);
-    // 名字在精灵上方、等级在下方：12px 点阵字的文本包围盒高约 19px，同侧两行必判重叠
-    labelC(uiLayer, cls.name, x, 82, 12, cls.role === '首领' ? C.gold : C.bone);
-    labelC(uiLayer, `Lv${m.lv}`, x, 132, 12, C.stoneLit);
-    hits.add(x - 24, 80, 48, 68, () => { sel = null; say(`${cls.name}：${cls.intel}`); render(); });
-  });
-  label(uiLayer, '行进顺序 →', 236, 64, 12, C.stoneLit);
-  const affRaw = raid.affixes.length ? affixText(raid.affixes) : '无特殊词缀';
-  const aff = affRaw.length > 20 ? `${affRaw.slice(0, 20)}…` : affRaw;
-  label(uiLayer, `词缀：${aff}`, 10, 158, 12, raid.affixes.length ? C.red : C.stoneLit);
-
+  const tasks = uiTasks(), topTasks = tasks.slice(0, 3), blocked = tasks.some((task) => task.blocking);
   const placed = countPlaced();
   const dualTraps = researchEffects(S.workshopResearch).dualTraps;
-  const traps = S.rooms.reduce((n, r) => n + (r.trap !== 'none' ? 1 : 0) + (dualTraps && r.trap2 !== 'none' ? 1 : 0), 0);
-  const leads = S.rooms.filter((r) => r.leader != null).length;
-  const resting = seatedChampUids().filter((u) => (champById(u)?.restTurns || 0) > 0).length;
-  const tired = seatedChampUids().filter((u) => { const c = champById(u); return c && fatigueTier(c.fatigue).bad; }).length;
-  const hurt = S.champs.filter((c) => seatedChampUids().includes(c.uid) && (c.wounds || 0) > 0).length;
-  const warnBits = [resting ? `${resting}名强制休息` : '', tired ? `${tired}名英雄乏力` : '', hurt ? `${hurt}名带伤` : ''].filter(Boolean);
-  const warn = warnBits.join('、');
-  label(uiLayer, cut(`已布防 ${placed}怪 / ${leads}英雄 / ${traps}陷阱${warn ? `  ${warn}` : ''}`, 36), 10, 177, 12, warn ? C.red : C.bone);
-  const best = S.best[raid.no] || 0;
-  label(uiLayer, '最佳评价', 10, 195, 12, C.stoneLit);
-  skullRow(g, 74, 195, best);
+  const trapCount = S.rooms.reduce((n, r) => n + (r.trap !== 'none' ? 1 : 0) + (dualTraps && r.trap2 !== 'none' ? 1 : 0), 0);
+  label(uiLayer, `敌情・${raid.title}`, 10, 42, 12, C.white);
+  label(uiLayer, `${raid.members.length}名・${raid.affixes.length ? affixText(raid.affixes) : '无词缀'}`, 190, 42, 11, raid.affixes.length ? C.red : C.stoneLit);
+  panelF(g, uiLayer, 'inset', 8, 56, 306, 76, C.ink);
+  const gap = Math.min(56, Math.floor(286 / Math.max(1, raid.members.length)));
+  raid.members.forEach((m, i) => {
+    const cls = HERO_CLASSES[m.cls];
+    const x = 28 + i * gap;
+    const s = sprite(cls.tex, x, 111, 27);
+    uiLayer.addChild(s);
+    labelC(uiLayer, cut(cls.name, 4), x, 62, 10, cls.role === '首领' ? C.gold : C.bone);
+    labelC(uiLayer, `Lv${m.lv} ${cut(cls.role, 3)}`, x, 113, 9, C.stoneLit);
+    hits.add(x - 22, 58, 44, 66, () => { selectedEntity = { type: 'enemy', index: i }; inspectorView = 'summary'; playSfx('tab'); render(); });
+  });
+  label(uiLayer, `本轮事务 ${tasks.length}`, 10, 138, 12, blocked ? C.red : tasks.length ? C.gold : C.green);
+  if (!topTasks.length) label(uiLayer, '✓ 防线没有需要处理的显著问题', 14, 161, 11, C.green);
+  topTasks.forEach((task, i) => {
+    const y = 154 + i * 25, color = UI_TASK_TONE[task.severity];
+    g.rect(8, y, 306, 22).fill(C.wall).stroke({ width: 1, color, alignment: 0 });
+    label(uiLayer, task.severity === 'block' ? '阻止' : task.severity === 'warning' ? '警告' : '机会', 13, y + 4, 9, color);
+    label(uiLayer, cut(task.title, 12), 49, y + 3, 11, C.bone);
+    button(g, uiLayer, hits, 258, y + 2, 52, 18, '前往', () => navigateUiTask(task), { size: 10, border: color, color });
+    hits.add(8, y, 246, 22, () => { selectedEntity = { type: 'task', id: task.id }; inspectorView = 'summary'; playSfx('tab'); render(); });
+  });
 
-  // 剧情修正：本波会真的吃到，所以在开战前摊开给玩家看
-  if (S.story.mods.length) {
-    const f = battleMods();
-    const bits           = [];
-    if (f.monHpMult !== 1) bits.push(`怪血${f.monHpMult > 1 ? '+' : ''}${Math.round((f.monHpMult - 1) * 100)}%`);
-    if (f.monAtkMult !== 1) bits.push(`怪攻${f.monAtkMult > 1 ? '+' : ''}${Math.round((f.monAtkMult - 1) * 100)}%`);
-    if (f.heroHpMult !== 1) bits.push(`勇血${f.heroHpMult > 1 ? '+' : ''}${Math.round((f.heroHpMult - 1) * 100)}%`);
-    if (f.heroAtkMult !== 1) bits.push(`勇攻${f.heroAtkMult > 1 ? '+' : ''}${Math.round((f.heroAtkMult - 1) * 100)}%`);
-    if (f.sealAdd) bits.push(`封印${f.sealAdd > 0 ? '+' : ''}${f.sealAdd}`);
-    if (f.trapMult !== 1) bits.push(`陷阱${f.trapMult > 1 ? '+' : ''}${Math.round((f.trapMult - 1) * 100)}%`);
-    if (f.roomLimitAdd) bits.push(`限时${f.roomLimitAdd > 0 ? '+' : ''}${f.roomLimitAdd}s`);
-    if (f.monSpdAdd) bits.push(`怪速${f.monSpdAdd > 0 ? '+' : ''}${f.monSpdAdd.toFixed(2)}`);
-    // 修正读数横排在"最佳评价"右侧那行之下，只留一行；名字与数值分左右，避免与骷髅行叠
-    label(uiLayer, cut(`秘闻影响：${S.story.mods.map((m) => m.name).join('、')}`, 14), 10, 217, 12, C.purple);
-    label(uiLayer, cut(bits.join(' ') || '无直接影响', 14), 180, 217, 12, C.gold);
+  panelF(g, uiLayer, 'stone', 318, 38, 158, 196, C.wall);
+  label(uiLayer, '上下文检查器', 328, 45, 11, C.gold);
+  const selectedTask = selectedEntity?.type === 'task' ? tasks.find((task) => task.id === selectedEntity.id) : null;
+  const selectedEnemy = selectedEntity?.type === 'enemy' ? raid.members[selectedEntity.index] : null;
+  if (selectedTask) {
+    label(uiLayer, selectedTask.severity === 'block' ? '【阻止】' : selectedTask.severity === 'warning' ? '【警告】' : '【机会】', 328, 65, 11, UI_TASK_TONE[selectedTask.severity]);
+    boundedText(uiLayer, selectedTask.title, 328, 82, 138, 24, 12, C.white, { maxLines: 2 });
+    boundedText(uiLayer, selectedTask.summary, 328, 108, 138, 47, 10, C.bone, { maxLines: 4 });
+    label(uiLayer, cut(`原因：${selectedTask.reason}`, 18), 328, 158, 9, C.stoneLit);
+    button(g, uiLayer, hits, 328, 177, 138, 22, '前往处理', () => navigateUiTask(selectedTask), { size: 11, border: UI_TASK_TONE[selectedTask.severity], color: C.white });
+  } else if (selectedEnemy) {
+    const cls = HERO_CLASSES[selectedEnemy.cls];
+    label(uiLayer, `${cls.name}・Lv${selectedEnemy.lv}`, 328, 65, 12, cls.role === '首领' ? C.gold : C.white);
+    label(uiLayer, `定位：${cls.role}`, 328, 84, 10, C.red);
+    boundedText(uiLayer, cls.intel, 328, 101, 138, 70, 10, C.bone, { maxLines: uiDensity === 'expert' ? 6 : 4 });
+    button(g, uiLayer, hits, 328, 177, 138, 22, '完整敌情', () => openDetailPopup(`${cls.name}・完整敌情`, `${cls.intel}\n\n等级：${selectedEnemy.lv}\n定位：${cls.role}\n本轮词缀：${raid.affixes.length ? affixText(raid.affixes) : '无'}`, C.red), { size: 11, border: C.red, color: C.red });
   } else {
-    const hint = tutorialHint();
-    if (hint) label(uiLayer, cut(hint, 30), 10, 217, 12, C.gold);
+    const doctrineSeal = S.doctrine === 'default' ? 1.25 : S.doctrine === 'economy' ? 0.8 : 1;
+    const sealEff = Math.max(25, Math.round((sealMax() + battleMods().sealAdd) * doctrineSeal));
+    label(uiLayer, blocked ? '结论：尚不可迎战' : tasks.some((task) => task.severity === 'warning') ? '结论：有风险，可迎战' : '结论：防线可用', 328, 65, 11, blocked ? C.red : tasks.length ? C.gold : C.green);
+    label(uiLayer, `布防 ${placed}・陷阱 ${trapCount}`, 328, 84, 10, C.bone);
+    label(uiLayer, `封印 ${sealEff}・待产 ${economy.bone}骨${economy.mana}魔`, 328, 100, 10, C.purple);
+    boundedText(uiLayer, tasks[0]?.summary ?? '可以直接迎战；也可以继续优化阵容。', 328, 119, 138, 48, 10, C.stoneLit, { maxLines: 4 });
+    if (uiDensity === 'expert') label(uiLayer, `秘闻修正 ${S.story.mods.length}・评价 ${S.best[raid.no] || 0}/3`, 328, 168, 9, C.gold);
   }
-
-  // 右侧迎战
-  panelF(g, uiLayer, 'stone', 334, 40, 142, 194, C.wall);
-  labelC(uiLayer, '王座', 405, 46, 12, C.white);
-  const th = sprite('icon-throne', 405, 120, 46);
-  uiLayer.addChild(th);
-  const sealW = 110;
-  bar(g, 350, 122, sealW, 8, 1, C.purple);
+  button(g, uiLayer, hits, 328, 202, 66, 24, '完整百科', () => openDetailPopup('本轮作战百科', `敌军：${raid.members.map((m) => `${HERO_CLASSES[m.cls].name} Lv${m.lv}`).join('、')}\n词缀：${raid.affixes.length ? affixText(raid.affixes) : '无'}\n\n布防：${placed}名守军，${trapCount}个陷阱\n预计产出：${economy.bone}骨币、${economy.mana}魔质\n\n本轮事务：\n${tasks.map((task) => `【${task.title}】${task.summary} 原因：${task.reason}`).join('\n') || '无'}`, C.gold), { size: 10, border: C.gold, color: C.gold });
   const doctrineSeal = S.doctrine === 'default' ? 1.25 : S.doctrine === 'economy' ? 0.8 : 1;
-  const sealEff = Math.max(25, Math.round((sealMax() + battleMods().sealAdd) * doctrineSeal));
-  labelC(uiLayer, `封印 ${sealEff}・${doctrine().tag}`, 405, 133, 12, doctrineSeal < 1 ? C.red : C.purple);
-  labelC(uiLayer, '突围勇者每名 -25', 405, 148, 12, C.stoneLit);
-  labelC(uiLayer, placed === 0 ? '空防必败' : cut(`待产＋${economy.bone}骨＋${economy.mana}魔`, 14), 405, 163, 11, placed === 0 ? C.red : C.gold);
-  button(g, uiLayer, hits, 344, 181, 122, 30, battlePrepBusy ? 'AI 编排中…' : '迎 战', () => void startBattle(),
-    { enabled: !battlePrepBusy, fill: C.redDark, border: C.red, color: C.white });
-  labelC(uiLayer, battlePrepBusy ? '生成失败会自动使用本地台词' : 'Enter 开战', 405, 215, 12, C.stoneLit);
+  void doctrineSeal;
+  button(g, uiLayer, hits, 398, 202, 68, 24, blocked ? '先处理' : battlePrepBusy ? '准备中' : '迎战', () => void startBattle(),
+    { enabled: !battlePrepBusy && !blocked, fill: blocked ? C.wall : C.redDark, border: blocked ? C.red : C.green, color: C.white });
 }
 
 function tutorialHint()         {
@@ -4874,7 +5082,7 @@ function pageDungeon(g               ) {
             : u.kind === 'workshop' ? `维修＋${out.repair}点` : `招募-${Math.round(out.hatcheryDiscount * 100)}%`;
       label(uiLayer, cut(yieldText, 7), ux + 9, b.y + 29, 8, C.bone);
     }
-    hits.add(ux, b.y, uw, b.h, () => { sel = { kind: 'utility', floor: i }; playSfx('tab'); render(); });
+    hits.add(ux, b.y, uw, b.h, () => { sel = { kind: 'utility', floor: i }; selectedEntity = { type: 'facility', floor: i }; inspectorView = 'summary'; playSfx('tab'); render(); });
   }
   labelC(uiLayer, pf.from + pf.view.length >= S.floors.length ? '王座↓' : '深层↓', 20, 205, 8, C.purple);
   pager(g, 'dungeon-floors', pf.pages, 8, 219, 318, '楼层 ');
@@ -4901,7 +5109,7 @@ function dungeonSlotChip(g               , x        , y        , w        , h   
   } else {
     labelC(uiLayer, locked ? '锁' : shortName, x + w / 2, y + 6, 9, locked ? C.wallLit : which === 'leader' ? C.goldDark : C.stoneLit);
   }
-  hits.add(x, y, w, h, () => { sel = { kind: 'slot', room, which }; playSfx('tab'); render(); });
+  hits.add(x, y, w, h, () => { sel = { kind: 'slot', room, which }; selectedEntity = { type: 'room-slot', room, which }; inspectorView = 'summary'; playSfx('tab'); render(); });
 }
 
 function slotBox(g               , x        , y        , w        , h        , uid               , room        , which         , name        ) {
@@ -5566,6 +5774,7 @@ function openStoryLead(id) {
   if (!lead || !sc || (lead.dueRaid ?? 0) > S.raidNo) return false;
   storyRun = { scene: sc, log: [], pending: null, leadId: lead.id, context: { ...lead.context } };
   const run = storyRun;
+  archiveSection = 'story';
   tab = 'story';
   openScene(sc, false);
   void enrichContextStory(run, lead, sc);
@@ -5983,6 +6192,8 @@ function openChronicle(filter = 'all', ref = null, raid = null) {
   storyChronicleRef = ref;
   storyChronicleRaid = raid;
   storyArchiveSel = null;
+  archiveSection = 'chronicle';
+  portraitStoryView = 'archive';
   tab = 'story';
   playSfx('tab');
   render();
@@ -6010,9 +6221,14 @@ function chronicleItems() {
 }
 
 function guideTargetRect(target) {
-  const tabs = visibleTabs();
-  const tabIndex = tabs.findIndex((item) => item.id === target);
+  const tabs = visibleZones();
+  const targetZone = PAGE_ZONE[target] ?? target;
+  const tabIndex = tabs.findIndex((item) => item.id === targetZone);
   if (tabIndex >= 0) return { x: tabIndex * (VIEW_W / tabs.length), y: 238, w: VIEW_W / tabs.length, h: 32 };
+  if (target === 'zoneNav') return { x: 0, y: 238, w: VIEW_W, h: 32 };
+  if (target === 'taskCenter') return { x: 6, y: 134, w: 310, h: 96 };
+  if (target === 'inspector') return { x: 318, y: 38, w: 158, h: 196 };
+  if (target === 'encyclopedia') return { x: 338, y: 202, w: 128, h: 24 };
   if (target === 'mobRecruit') return { x: 338, y: 174, w: 134, h: 22 };
   if (target === 'frontSlot') return { x: 125, y: 85, w: 44, h: 27 };
   if (target === 'backSlot') return { x: 37, y: 85, w: 44, h: 27 };
@@ -6064,8 +6280,14 @@ function drawProgressGuide() {
   const plate = new PIXI.Graphics();
   plate.roundRect(20, 36, 440, acknowledge ? 48 : 24, 4).fill(C.ink).stroke({ width: 2, color: C.gold, alignment: 0 });
   guideLayer.addChild(plate);
-  boundedText(guideLayer, `◆ ${message}`, 28, acknowledge ? 40 : 41, acknowledge ? 350 : 424, acknowledge ? 40 : 17, acknowledge ? 9 : 11, C.white);
+  const touring = uiShellTourStep < 4;
+  boundedText(guideLayer, `◆ ${message}`, 28, acknowledge ? 40 : 41, acknowledge ? (touring ? 292 : 350) : 424, acknowledge ? 40 : 17, acknowledge ? 9 : 11, C.white);
   if (acknowledge) {
+    if (touring) {
+      plate.roundRect(326, 49, 54, 24, 3).fill(C.wall).stroke({ width: 1, color: C.stoneLit, alignment: 0 });
+      const skip = txt('跳过导览', 9, C.stoneLit); skip.x = 333; skip.y = 56; guideLayer.addChild(skip);
+      hits.add(326, 49, 54, 24, skipUiShellTour);
+    }
     plate.roundRect(386, 49, 66, 24, 3).fill(C.goldDark).stroke({ width: 1, color: C.gold, alignment: 0 });
     const ok = txt('明白，继续', 10, C.white);
     ok.x = 394; ok.y = 56; guideLayer.addChild(ok);
@@ -6111,49 +6333,51 @@ function drawChronicle(g) {
   label(uiLayer, battles.length ? `影响战斗：${battles.map((x) => `#${x}`).join('、')}` : '尚未记录到后续战斗影响', 246, 198, 9, battles.length ? C.gold : C.stoneLit);
   if (reportRaid != null) button(g, uiLayer, hits, 356, 210, 98, 16, `查看战报 #${reportRaid}`, () => {
     const at = S.reports.findIndex((r) => r.raidNo === reportRaid);
-    if (at >= 0) { reportIdx = at; tab = 'report'; storyView = 'dashboard'; playSfx('tab'); render(); }
+    if (at >= 0) { reportIdx = at; archiveSection = 'report'; tab = 'report'; storyView = 'dashboard'; playSfx('tab'); render(); }
   }, { size: 9, border: C.gold, color: C.gold });
 }
 
 function pageStory(g               ) {
   if (!storyRun) {
     if (storyView === 'chronicle') { drawChronicle(g); return; }
-    label(uiLayer, '秘闻线索与档案', 20, 42, 12, C.white);
+    label(uiLayer, '秘闻线索', 10, 42, 12, C.white);
     const readyLeads = availableStoryLeads();
     const dormant = S.story.leads.length - readyLeads.length;
-    label(uiLayer, `待处理 ${readyLeads.length}${dormant ? `・酝酿 ${dormant}` : ''}・已归档 ${S.story.archive.length}`, 278, 42, 10, C.stoneLit);
-    panelF(g, uiLayer, 'inset', 16, 58, 218, 112, C.ink);
-    label(uiLayer, '来自经营现场', 26, 62, 12, C.purple);
-    const pl = paged('story-leads', readyLeads, 3);
-    let vy = 78;
-    if (!readyLeads.length) label(uiLayer, dormant ? '后续正在酝酿，完成袭击后再来' : '暂无线索；经营与战斗会留下痕迹', 26, vy, 10, C.wall);
+    label(uiLayer, `待处理${readyLeads.length}${dormant ? `・酝酿${dormant}` : ''}`, 224, 42, 10, C.stoneLit);
+    panelF(g, uiLayer, 'inset', 8, 58, 306, 176, C.ink);
+    const pl = paged('story-leads', readyLeads, 5);
+    let vy = 66;
+    if (!readyLeads.length) label(uiLayer, dormant ? '后续正在酝酿，完成袭击后再来' : '暂无线索；经营与战斗会留下痕迹', 18, vy, 10, C.wall);
     for (const lead of pl.view) {
-      button(g, uiLayer, hits, 24, vy, 202, 25, `${lead.source}・${cut(lead.title, 11)}`, () => openStoryLead(lead.id),
-        { size: 10, fill: C.wall, border: C.purple, color: C.bone });
-      vy += 27;
+      const active = selectedEntity?.type === 'story' && selectedEntity.id === lead.id;
+      g.rect(14, vy, 294, 28).fill(active ? C.wallLit : C.wall).stroke({ width: 1, color: active ? C.gold : C.purple, alignment: 0 });
+      label(uiLayer, `${lead.source}・${cut(lead.title, 16)}`, 20, vy + 4, 11, active ? C.white : C.bone);
+      label(uiLayer, `第${lead.raidNo}轮`, 255, vy + 4, 9, C.stoneLit);
+      hits.add(14, vy, 294, 28, () => { selectedEntity = { type: 'story', id: lead.id }; inspectorView = 'summary'; playSfx('tab'); render(); });
+      vy += 31;
     }
-    pager(g, 'story-leads', pl.pages, 26, 154, 90);
-    panelF(g, uiLayer, 'inset', 244, 58, 220, 112, C.ink);
-    label(uiLayer, '已经发生', 254, 62, 12, C.purple);
-    const pa = paged('story-archive', S.story.archive, 3);
-    let my = 78;
-    if (!S.story.archive.length) label(uiLayer, '（尚无归档）', 254, my, 11, C.wall);
-    for (const item of pa.view) {
-      button(g, uiLayer, hits, 252, my, 204, 25, `${item.source}・${cut(item.title, 11)}`, () =>
-        openDetailPopup(item.title, `${item.outcome}${item.effects ? `\n\n结果：${item.effects}` : ''}`, C.purple),
-      { size: 10, fill: C.wall, border: C.stoneLit, color: C.stoneLit });
-      my += 27;
+    pager(g, 'story-leads', pl.pages, 14, 214, 120);
+    panelF(g, uiLayer, 'stone', 318, 38, 158, 196, C.wall);
+    label(uiLayer, '上下文检查器', 328, 45, 11, C.gold);
+    const selectedLead = selectedEntity?.type === 'story' ? readyLeads.find((lead) => lead.id === selectedEntity.id) : null;
+    if (selectedLead) {
+      label(uiLayer, cut(selectedLead.title, 16), 328, 65, 12, C.purple);
+      label(uiLayer, `${selectedLead.source}・第${selectedLead.raidNo}轮`, 328, 84, 9, C.stoneLit);
+      boundedText(uiLayer, selectedLead.summary ?? selectedLead.title, 328, 101, 138, 62, 10, C.bone, { maxLines: uiDensity === 'expert' ? 5 : 4 });
+      button(g, uiLayer, hits, 328, 170, 138, 24, '处理这条线索', () => openStoryLead(selectedLead.id), { size: 11, fill: C.purpleDark, border: C.purple, color: C.white });
+      button(g, uiLayer, hits, 328, 200, 138, 24, '完整说明', () => openDetailPopup(selectedLead.title, `来源：${selectedLead.source}\n产生于第${selectedLead.raidNo}轮\n\n${selectedLead.summary ?? '选择后将明确显示实际影响。'}`, C.purple), { size: 11, border: C.gold, color: C.gold });
+    } else {
+      label(uiLayer, `待处理 ${readyLeads.length}`, 328, 65, 12, C.purple);
+      label(uiLayer, `永久档案 ${S.story.archive.length}`, 328, 84, 10, C.bone);
+      label(uiLayer, `战场变化 ${S.story.mods.length}`, 328, 101, 10, C.gold);
+      boundedText(uiLayer, readyLeads.length ? '从左侧选择一条线索，查看来源后再决定是否处理。' : '经营与战斗会产生带对象和结果的线索。', 328, 122, 138, 50, 10, C.stoneLit);
     }
-    pager(g, 'story-archive', pa.pages, 254, 154, 90);
     const can = S.story.credits > 0;
-    label(uiLayer, `战场变化 ${S.story.mods.length}・剧情记录 ${Object.keys(S.story.vars).length}`, 20, 180, 11, C.stoneLit);
-    label(uiLayer, can ? `另有 ${S.story.credits} 次无主传闻可追查` : '无主传闻会在下一场袭击后补充', 20, 194, 11, can ? C.gold : C.wall);
-    button(g, uiLayer, hits, 20, 210, 200, 22, storyBusy ? '正在追查…' : can ? '追查无主传闻' : '暂无次数・查看说明', () => {
+    if (!selectedLead) button(g, uiLayer, hits, 328, 180, 138, 22, storyBusy ? '正在追查…' : can ? `追查无主传闻 ${S.story.credits}` : '暂无次数・说明', () => {
       if (can) void drawStoryScene();
       else openDetailPopup('暂无无主秘闻', '当前可追查次数为 0。\n\n每场袭击结束后都会补充：守住地牢 +2 次，失守 +1 次。英雄、设施和战报产生的具体线索不消耗次数。', C.purple);
     }, { enabled: !storyBusy, fill: can ? C.purpleDark : C.ink, border: can ? C.purple : C.stoneLit, color: can ? C.white : C.stoneLit });
-    label(uiLayer, '具体线索不消耗次数', 232, 216, 10, C.stoneLit);
-    button(g, uiLayer, hits, 356, 210, 100, 22, '打开地牢编年史', () => openChronicle(), { size: 9, border: C.gold, color: C.gold });
+    if (!selectedLead) button(g, uiLayer, hits, 328, 206, 138, 18, '前往编年史', () => setArchiveSection('chronicle'), { size: 10, border: C.gold, color: C.gold });
     return;
   }
 
@@ -6469,7 +6693,7 @@ function drawRoster(g               ) {
     if (canLevel(c) && S.bone >= heroUpgradeBone(c) && S.mana >= heroUpgradeMana(c)) g.circle(151, y + 6, 3).fill(C.red);
     else if (pendingTier(c)) g.circle(151, y + 6, 3).fill(C.purple);
     for (let w = 0; w < (c.wounds || 0); w++) g.rect(140 + w * 5, y + 18, 4, 3).fill(C.red);
-    hits.add(8, y, 150, 26, () => { heroSel = c.uid; playSfx('tab'); render(); });
+    hits.add(8, y, 150, 26, () => { heroSel = c.uid; selectedEntity = { type: 'hero', uid: c.uid }; inspectorView = 'summary'; playSfx('tab'); render(); });
     y += 28;
   }
   pager(g, 'roster', pr.pages, 8, 214, 150);
@@ -7001,7 +7225,7 @@ function pageMob(g               ) {
     label(uiLayer, open ? `${rq.cost}骨${rq.discount ? '↓' : ''}` : `第${k.eliteMin}轮`, 92, y + 4, 12,
       !open ? C.stoneLit : S.bone >= rq.cost ? C.gold : C.redDark);
     label(uiLayer, k.row === 'front' ? '前' : k.row === 'back' ? '后' : '任', 142, y + 4, 12, C.stoneLit);
-    hits.add(6, y, 152, 20, () => { sel = { kind: 'monkind', id: k.id }; playSfx('tab'); render(); });
+    hits.add(6, y, 152, 20, () => { sel = { kind: 'monkind', id: k.id }; selectedEntity = { type: 'monster-kind', id: k.id }; inspectorView = 'summary'; playSfx('tab'); render(); });
     y += 22;
   }
   pager(g, 'mob-kinds', pg.pages, 6, 190, 152);
@@ -7029,7 +7253,7 @@ function pageMob(g               ) {
     const post = monsterPost(inst.uid);
     label(uiLayer, post.text, 278, y2 + 2, 12, post.kind === 'free' ? C.stoneLit : post.kind === 'guard' ? C.gold : C.purple);
     if (ready) g.circle(324, y2 + 9, 3).fill(C.red);
-    hits.add(168, y2, 160, 18, () => { sel = { kind: 'inst', uid: inst.uid }; playSfx('tab'); render(); });
+    hits.add(168, y2, 160, 18, () => { sel = { kind: 'inst', uid: inst.uid }; selectedEntity = { type: 'monster', uid: inst.uid }; inspectorView = 'summary'; playSfx('tab'); render(); });
     y2 += 20;
   }
   pager(g, 'mob-owned', pm.pages, 168, 208, 160);
@@ -7108,7 +7332,7 @@ function pageShop(g               ) {
     g.rect(x, y, 158, 20).fill(selected ? C.wallLit : C.wall).stroke({ width: 1, color: selected ? C.gold : C.ink, alignment: 0 });
     label(uiLayer, it.name, x + 4, y + 4, 12, it.owned ? C.green : C.bone);
     label(uiLayer, it.owned ? '已拥有' : `${it.cost}魔`, x + 116, y + 4, 12, it.owned ? C.stoneLit : canBuy ? C.purple : C.redDark);
-    hits.add(x, y, 158, 20, () => { relicForgeConfirm = false; sel = { kind: 'shop', id: it.id }; playSfx('tab'); render(); });
+    hits.add(x, y, 158, 20, () => { relicForgeConfirm = false; sel = { kind: 'shop', id: it.id }; selectedEntity = { type: 'shop', id: it.id }; inspectorView = 'summary'; playSfx('tab'); render(); });
   });
   pager(g, 'shop', ps.pages, 6, 146, 158, '解锁 ');
   button(g, uiLayer, hits, 6, 168, 158, 18,
@@ -7156,7 +7380,7 @@ function pageReport(g               ) {
   if (pageState[lkey0] === undefined) pageState[lkey0] = Math.max(0, Math.ceil(r.logs.length / 5) - 1);
   S.reports.forEach((rp, i) => {
     const x = 8 + i * 44;
-    button(g, uiLayer, hits, x, 40, 40, 18, `#${rp.raidNo}`, () => { reportIdx = i; playSfx('tab'); render(); },
+    button(g, uiLayer, hits, x, 40, 40, 18, `#${rp.raidNo}`, () => { reportIdx = i; selectedEntity = { type: 'report', raidNo: rp.raidNo }; inspectorView = 'summary'; playSfx('tab'); render(); },
       { size: 12, fill: i === reportIdx ? C.wallLit : C.wall, border: rp.win ? C.green : C.red, color: rp.win ? C.green : C.red });
   });
   const reportLead = pendingStoryLead('战后线索', r.raidNo);
@@ -7302,12 +7526,14 @@ async function startBattle() {
     say(guide?.[2] ? '先阅读高光区域的说明，并点击“明白，继续”' : guide?.[1] ?? '请先完成本轮教学');
     return;
   }
-  if (stitch) closeStitch();
-  const unavailable = seatedChampUids().map(champById).filter((c) => c && (c.restTurns || 0) > 0 && !heroForcedThisRaid(c));
-  if (unavailable.length) {
-    say(`${unavailable.map((c) => c.name).join('、')}仍在强制休息，请先更换统领`);
+  const hardTask = uiTasks().find((task) => task.blocking);
+  if (hardTask) {
+    selectedEntity = { type: 'task', id: hardTask.id };
+    setZone('throne');
+    say(`${hardTask.title}：${hardTask.summary}`);
     return;
   }
+  if (stitch) closeStitch();
   if (!S.overtime && !S.raidBriefingsSeen.includes(S.raidNo)) {
     raidBriefing = RAID_BRIEFINGS[S.raidNo - 1] ?? null;
     if (raidBriefing) { playSfx('tab'); scheduleLayout(); render(); return; }
@@ -8306,7 +8532,7 @@ window.__debug = {
   titlePick: (id) => { if (DOCTRINES[id]) { titleDoctrinePick = id; render(); } return titleDoctrinePick; },
   titleConfirm: () => { beginNewRun(titleDoctrinePick); return screen; },
   get progression() { return { raid: S.raidNo, tutorialStep: tutorialData().step,
-    visibleTabs: visibleTabs().map((item) => item.id), guide: roundGuide(), deploymentReady: tutorialDeploymentReady(),
+    visibleTabs: visibleZones().map((item) => item.id), visiblePages: visibleTabs().map((item) => item.id), guide: roundGuide(), deploymentReady: tutorialDeploymentReady(),
     enemyClasses: currentRaid().members.map((member) => member.cls), teachingComplete: roundTeachingComplete(),
     roundStep: Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0)),
     roundTutorialTotal: (ROUND_TUTORIALS[S.raidNo] ?? []).length,
@@ -8338,8 +8564,13 @@ window.__debug = {
       safeRect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null };
   },
   get currentTab() { return tab; },
+  get uiRoute() { return { zone: activeZone(), section: tab, selectedEntity: selectedEntity ? { ...selectedEntity } : null, inspectorView, density: uiDensity, tourStep: uiShellTourStep }; },
+  get uiTasks() { return uiTasks().map((task) => ({ ...task, target: { ...task.target } })); },
+  uiTaskOpen: (id) => { const task = uiTasks().find((item) => item.id === id); if (task) navigateUiTask(task); return activeZone(); },
+  uiDensity: (mode) => { if (mode === 'expert' || mode === 'standard') { uiDensity = mode; localStorage.setItem(UI_DENSITY_KEY, mode); render(); } return uiDensity; },
+  uiTourSkip: () => { skipUiShellTour(); return uiShellTourStep; },
   get newGameConfirm() { return confirmNew; },
-  cancelNewGame: () => { confirmNew = false; render(); return true; },
+  cancelNewGame: () => { confirmNew = false; desktopSystemMenu = false; render(); return true; },
   get monsters() { return S.monsters.map((m) => ({ ...m, room: roomOf(m.uid) })); },
   get rooms() { return S.rooms; },
   get floors() { return S.floors.map((f, i) => ({ id: f.id, battle: { ...f.battle }, utility: { ...f.utility }, output: utilityOutput(i) })); },

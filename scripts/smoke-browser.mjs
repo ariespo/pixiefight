@@ -135,12 +135,13 @@ try {
         if (taskPage !== __debug.currentTab) __debug.setTab(taskPage);
         __debug.ackGuide();
       }
-      unlocks[raid] = { tabs: before.visibleTabs, kinds: before.recruitKinds, guide: before.guide, features: before.features,
+      unlocks[raid] = { tabs: before.visibleTabs, pages: before.visiblePages, kinds: before.recruitKinds, guide: before.guide, features: before.features,
         heroGift: before.heroGift, tutorialTotal: before.roundTutorialTotal, complete: __debug.progression.teachingComplete };
     }
     return { initial, hiddenRouteBlocked, afterSlime, ready, briefing, briefingArchived, battle, unlocks };
   });
-  assert(JSON.stringify(onboarding.initial.visibleTabs) === JSON.stringify(['throne', 'dungeon', 'mob']), 'First raid exposed locked pages.');
+  assert(JSON.stringify(onboarding.initial.visibleTabs) === JSON.stringify(['throne', 'dungeon', 'army'])
+    && JSON.stringify(onboarding.initial.visiblePages) === JSON.stringify(['throne', 'dungeon', 'mob']), 'First raid exposed locked pages.');
   assert(onboarding.initial.enemyClasses.length === 1 && onboarding.initial.enemyClasses[0] === 'knight', 'First raid is not a single swordsman.');
   assert(onboarding.hiddenRouteBlocked, 'A hidden page was still reachable directly.');
   assert(onboarding.afterSlime.tutorialStep === 2 && onboarding.ready.tutorialStep === 6 && onboarding.ready.deploymentReady, 'Guided recruitment/deployment did not advance.');
@@ -150,11 +151,11 @@ try {
   assert(onboarding.battle?.heroesAlive === 1, 'Guided battle did not start against one enemy.');
   assert(onboarding.battle?.dialoguePack?.opening?.[0]?.text === '这次差旅没有返程票。',
     'The selected AI model did not provide the pre-battle dialogue pack.');
-  assert(onboarding.unlocks[2].tabs.includes('report') && !onboarding.unlocks[2].tabs.includes('hero'), 'Raid 2 unlock schedule is incorrect.');
-  assert(!onboarding.unlocks[3].tabs.includes('hero') && !onboarding.unlocks[3].tabs.includes('shop'), 'Raid 3 unlock schedule is incorrect.');
-  assert(onboarding.unlocks[4].tabs.includes('shop') && !onboarding.unlocks[4].tabs.includes('story') && !onboarding.unlocks[4].tabs.includes('hero'), 'Raid 4 unlock schedule is incorrect.');
-  assert(onboarding.unlocks[5].tabs.includes('story') && !onboarding.unlocks[5].tabs.includes('hero'), 'Raid 5 unlock schedule is incorrect.');
-  assert(onboarding.unlocks[6].tabs.includes('hero') && onboarding.unlocks[6].guide?.[0] === 'hero', 'Raid 6 did not introduce the hero page.');
+  assert(onboarding.unlocks[2].tabs.includes('archive') && onboarding.unlocks[2].pages.includes('report') && !onboarding.unlocks[2].pages.includes('hero'), 'Raid 2 unlock schedule is incorrect.');
+  assert(!onboarding.unlocks[3].pages.includes('hero') && !onboarding.unlocks[3].tabs.includes('shop'), 'Raid 3 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[4].tabs.includes('shop') && !onboarding.unlocks[4].pages.includes('story') && !onboarding.unlocks[4].pages.includes('hero'), 'Raid 4 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[5].pages.includes('story') && !onboarding.unlocks[5].pages.includes('hero'), 'Raid 5 unlock schedule is incorrect.');
+  assert(onboarding.unlocks[6].tabs.includes('army') && onboarding.unlocks[6].pages.includes('hero') && onboarding.unlocks[6].guide?.[0] === 'hero', 'Raid 6 did not introduce the hero page.');
   assert(onboarding.unlocks[2].kinds.includes('goblin') && onboarding.unlocks[2].kinds.includes('bat') && !onboarding.unlocks[2].kinds.includes('shaman'), 'Raid 2 troop unlocks are incorrect.');
   assert(onboarding.unlocks[3].kinds.includes('shaman') && !onboarding.unlocks[3].kinds.includes('ogre'), 'Raid 3 troop unlocks are incorrect.');
   assert(onboarding.unlocks[4].kinds.includes('ogre') && !onboarding.unlocks[4].kinds.includes('lich'), 'Raid 4 troop unlocks are incorrect.');
@@ -167,6 +168,37 @@ try {
   assert([11, 12, 13, 14, 15, 16, 17, 18, 19, 20].every((raid) => onboarding.unlocks[raid].tutorialTotal > 0
     && onboarding.unlocks[raid].guide && onboarding.unlocks[raid].complete),
   `Mid/late-game tutorials are incomplete: ${JSON.stringify(onboarding.unlocks)}`);
+
+  const uiArchitecture = await page.evaluate(() => {
+    __debug.uiTourSkip();
+    __debug.setTab('mob');
+    const armyFromLegacy = __debug.uiRoute;
+    __debug.setTab('army');
+    const armyFromZone = __debug.uiRoute;
+    __debug.setTab('report');
+    const archiveFromLegacy = __debug.uiRoute;
+    const rawBeforeDensity = __debug.rawSave;
+    __debug.uiDensity('expert');
+    const expert = { route: __debug.uiRoute, stored: localStorage.getItem('yqh-ui-density-v1'), raw: __debug.rawSave };
+    __debug.uiDensity('standard');
+    __debug.save.rooms.forEach((room) => { room.front = null; room.back = null; room.leader = null; room.flank = null; });
+    __debug.forceRaid(20);
+    const blockedTasks = __debug.uiTasks;
+    const blockerRoute = __debug.uiTaskOpen('empty-defense');
+    const monster = __debug.monsters[0] ?? { uid: __debug.devRecruit('slime') };
+    __debug.devAssign(0, 'front', monster.uid);
+    const unblockedTasks = __debug.uiTasks;
+    return { armyFromLegacy, armyFromZone, archiveFromLegacy, rawBeforeDensity, expert, blockedTasks, blockerRoute, unblockedTasks };
+  });
+  assert(uiArchitecture.armyFromLegacy.zone === 'army' && uiArchitecture.armyFromLegacy.section === 'mob'
+    && uiArchitecture.armyFromZone.zone === 'army', 'Legacy and five-zone army routes are not compatible.');
+  assert(uiArchitecture.archiveFromLegacy.zone === 'archive' && uiArchitecture.archiveFromLegacy.section === 'report',
+    'Legacy report route did not map into the archive zone.');
+  assert(uiArchitecture.expert.route.density === 'expert' && uiArchitecture.expert.stored === 'expert'
+    && uiArchitecture.expert.raw === uiArchitecture.rawBeforeDensity, 'Expert density was not local-only or did not persist.');
+  assert(uiArchitecture.blockedTasks.some((task) => task.id === 'empty-defense' && task.blocking)
+    && uiArchitecture.blockerRoute === 'dungeon' && !uiArchitecture.unblockedTasks.some((task) => task.id === 'empty-defense'),
+  `UI task blocking or direct navigation is incorrect: ${JSON.stringify(uiArchitecture)}`);
 
   const workshopResearch = await page.evaluate(() => {
     __debug.giveResources(0, 1000);
@@ -236,7 +268,7 @@ try {
   });
   assert(randomArchived, 'A random story was not recorded in the permanent chronicle.');
   await page.evaluate(() => { __debug.storyLeave(); __debug.forceRaid(5); __debug.setTab('story'); });
-  const noCreditPoint = await page.evaluate(() => __debug.toScreen(120, 221));
+  const noCreditPoint = await page.evaluate(() => __debug.toScreen(397, 191));
   await page.mouse.click(noCreditPoint.x, noCreditPoint.y);
   await page.waitForTimeout(50);
   const noCreditDetail = await page.evaluate(() => __debug.detail);
@@ -375,9 +407,11 @@ try {
     assert(metrics.safeRect?.width > 0 && metrics.safeRect?.height > 0, 'Safe viewport was not measurable.');
     if (viewport.width > viewport.height) {
       assert(metrics.scale <= Math.min(viewport.width / 480, viewport.height / 270) + 0.01, 'Landscape logical canvas scaling is invalid.');
-      const point = await page.evaluate(() => __debug.toScreen(458, 17));
-      assert(point.x < viewport.width && point.y < viewport.height, 'Landscape new-game button is outside the viewport.');
+      const point = await page.evaluate(() => __debug.toScreen(438, 17));
+      assert(point.x < viewport.width && point.y < viewport.height, 'Landscape system-menu button is outside the viewport.');
       await page.mouse.click(point.x, point.y);
+      const newPoint = await page.evaluate(() => __debug.toScreen(403, 208));
+      await page.mouse.click(newPoint.x, newPoint.y);
       assert(await page.evaluate(() => __debug.newGameConfirm), 'Landscape new-game button did not receive the click.');
       await page.evaluate(() => __debug.cancelNewGame());
     } else {
