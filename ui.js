@@ -22,6 +22,16 @@ export function txt(str        , size = 12, color = C.bone)            {
   return t;
 }
 
+export function measureWrappedText(str, width, size = 12) {
+  const probe = new PIXI.Text({ text: String(str ?? ''), style: {
+    fontFamily: FONT, fontSize: size, lineHeight: size + 3, wordWrap: true,
+    wordWrapWidth: Math.max(1, width), breakWords: true,
+  } });
+  const result = { width: probe.width, height: probe.height };
+  probe.destroy();
+  return result;
+}
+
 // 固定尺寸卡片必须通过这个原语画长文本：先按真实 PIXI 字体度量换行，
 // 超出最大高度时二分截断并补省略号，避免“布局按限制高度走、文字却继续往下画”。
 export function boundedText(parent, str, x, y, w, maxHeight, size = 12, color = C.bone) {

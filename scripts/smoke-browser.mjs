@@ -141,7 +141,8 @@ try {
     return { initial, hiddenRouteBlocked, afterSlime, ready, briefing, briefingArchived, battle, unlocks };
   });
   assert(JSON.stringify(onboarding.initial.visibleTabs) === JSON.stringify(['throne', 'dungeon', 'army'])
-    && JSON.stringify(onboarding.initial.visiblePages) === JSON.stringify(['throne', 'dungeon', 'mob']), 'First raid exposed locked pages.');
+    && JSON.stringify(onboarding.initial.visiblePages) === JSON.stringify(['throne', 'dungeon', 'mob']),
+  `First raid exposed locked pages: ${JSON.stringify(onboarding.initial)}`);
   assert(onboarding.initial.enemyClasses.length === 1 && onboarding.initial.enemyClasses[0] === 'knight', 'First raid is not a single swordsman.');
   assert(onboarding.hiddenRouteBlocked, 'A hidden page was still reachable directly.');
   assert(onboarding.afterSlime.tutorialStep === 2 && onboarding.ready.tutorialStep === 6 && onboarding.ready.deploymentReady, 'Guided recruitment/deployment did not advance.');
@@ -477,6 +478,38 @@ try {
     }
   }
 
+  const portraitGuideAudit = [];
+  for (const viewport of [{ width: 360, height: 640 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.waitForTimeout(100);
+    const audit = await page.evaluate(() => {
+      __debug.uiTourSkip();
+      const rows = [];
+      for (let raid = 2; raid <= 20; raid++) {
+        __debug.forceRaid(raid);
+        const total = __debug.progression.roundTutorialTotal;
+        for (let step = 0; step < total; step++) {
+          __debug.save.tutorial.roundSteps[raid] = step;
+          __debug.forceRaid(raid);
+          const before = __debug.progression.guide;
+          if (before && !before[2]) __debug.setTab(before[0]);
+          const layout = __debug.viewport().portraitLayout;
+          const guide = layout?.guide;
+          const record = __debug.uiBounds().records.find((item) => item.text === guide?.message);
+          rows.push({ raid, step, guide, primaryY: layout?.primaryY, record });
+        }
+        __debug.save.tutorial.roundSteps[raid] = total;
+      }
+      return rows;
+    });
+    portraitGuideAudit.push({ viewport, audit });
+  }
+  for (const group of portraitGuideAudit) {
+    assert(group.audit.length > 0 && group.audit.every((item) => item.guide && !item.guide.truncated
+      && item.record && !item.record.truncated && item.guide.y + item.guide.h < item.primaryY),
+    `Portrait tutorial text was clipped at ${group.viewport.width}x${group.viewport.height}: ${JSON.stringify(group.audit.filter((item) => !item.guide || item.guide.truncated || !item.record || item.record.truncated || item.guide.y + item.guide.h >= item.primaryY).slice(0, 3))}`);
+  }
+
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => __debug.forceRaid(10));
   for (const targetTab of ['throne', 'dungeon', 'hero', 'mob', 'shop', 'report', 'story']) {
@@ -488,10 +521,17 @@ try {
   }
   await page.evaluate(() => __debug.setTab('hero'));
   await page.waitForTimeout(80);
+  const preexistingHeroBack = await page.evaluate(() => __debug.viewport().portraitActions.heroRosterBack ?? null);
+  if (preexistingHeroBack) {
+    await page.mouse.click(preexistingHeroBack.x + preexistingHeroBack.w / 2, preexistingHeroBack.y + preexistingHeroBack.h / 2);
+    await page.waitForTimeout(80);
+  }
   const portraitHeroUid = await page.evaluate(() => __debug.save.champs[0]?.uid);
   assert(portraitHeroUid, 'Raid-ten portrait test has no hero to open.');
   const portraitHeroOpen = await page.evaluate((uid) => __debug.viewport().portraitActions[`hero-open-${uid}`] ?? null, portraitHeroUid);
-  assert(portraitHeroOpen, 'Portrait hero roster has no working detail action.');
+  assert(portraitHeroOpen, `Portrait hero roster has no working detail action: ${JSON.stringify(await page.evaluate(() => ({
+    tab: __debug.currentTab, guide: __debug.progression.guide, actions: Object.keys(__debug.viewport().portraitActions), champs: __debug.save.champs.length,
+  })))}`);
   await page.mouse.click(portraitHeroOpen.x + portraitHeroOpen.w / 2, portraitHeroOpen.y + portraitHeroOpen.h / 2);
   await page.waitForTimeout(80);
   const portraitHeroDetail = await page.evaluate(() => __debug.viewport());

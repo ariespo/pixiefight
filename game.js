@@ -22,7 +22,7 @@ import { CHAMP_CAP, CHAMP_LV_CAP, CHEM_INFO, HEAL_MANA, HERO_REST_ROUNDS, HERO_S
   rerollTraits, rollCands, talentSlots, tickFatigue, titleById, titleOf, unlockedTitles, upCostOf, xpNeed } from './heroes.js';
                                                          
 import { TEX, txt, label, labelC, panel, panelF, frame, bar, sprite, Hits, button, setTextRes, FONT,
-  boundedText, paginateText, resetBoundedTextAudit, boundedTextAudit } from './ui.js';
+  boundedText, paginateText, measureWrappedText, resetBoundedTextAudit, boundedTextAudit } from './ui.js';
 import { initAudio, unlockAudio, playSfx, playHit, playMusic, setMuted, audioSnapshot, tickAudio } from './audio.js';
 import { WORKSHOP_RESEARCH, normalizeResearchPicks, researchAvailability, researchEffects, researchOption } from './research.js';
 
@@ -4012,11 +4012,15 @@ function portraitPager(key, page, pages, x, y, w) {
 
 function portraitGuideBanner(x, y, w) {
   const guide = roundGuide();
-  if (!guide) return 0;
-  portraitGfx.roundRect(x, y, w, 52, 4).fill(C.ink).stroke({ width: 2, color: C.gold, alignment: 0 });
-  label(portraitLayer, '当前引导', x + 10, y + 7, 12, C.gold);
-  boundedText(portraitLayer, guide[1], x + 78, y + 6, w - 88, 38, 12, C.white, { maxLines: 2 });
-  return 58;
+  if (!guide) return null;
+  const textX = x + 12, textY = y + 31, textW = w - 24;
+  const measured = measureWrappedText(guide[1], textW, 12);
+  const textH = Math.ceil(measured.height);
+  const height = Math.max(66, 31 + textH + 10);
+  portraitGfx.roundRect(x, y, w, height, 4).fill(C.ink).stroke({ width: 2, color: C.gold, alignment: 0 });
+  label(portraitLayer, guide[2] ? '当前教学・阅读后确认' : '当前引导・前往高光区域', x + 12, y + 8, 12, C.gold);
+  const block = boundedText(portraitLayer, guide[1], textX, textY, textW, textH + 1, 12, C.white);
+  return { x, y, w, h: height, textHeight: textH, truncated: block.truncated, message: guide[1] };
 }
 
 function raidAffixBody(raid, id) {
@@ -4667,11 +4671,11 @@ function drawPortraitNativeManage() {
   const tabs = visibleZones(), cols = tabs.length, rows = 1;
   const navH = rows * 46 + 8, navTop = h - navH - 4;
   const guide = roundGuide();
-  const guideOnPage = !!guide && (guide[2] || PAGE_ZONE[guide[0]] === activeZone() || guide[0] === activeZone() || (tab === 'mob' && guide[0] === 'mobRecruit'));
   const primaryY = navTop - 54;
   const contentX = 8, contentY = 60, contentW = w - 16, contentH = primaryY - contentY - 8;
   portraitGfx.roundRect(contentX, contentY, contentW, contentH, 5).fill(C.bg).stroke({ width: 2, color: C.wallLit, alignment: 0 });
   let pageY = contentY + 8;
+  let guideLayout = null;
   let menuNewY = null;
   if (detailPopup) {
     drawPortraitNativeDetail(contentX, pageY, contentW, contentY + contentH - pageY - 6);
@@ -4691,7 +4695,10 @@ function drawPortraitNativeManage() {
         { size: 16, fill: i === 5 && confirmNew ? C.redDark : C.wall, border: color, color: i === 5 && confirmNew ? C.white : color });
     });
   } else {
-    if (guideOnPage) pageY += portraitGuideBanner(contentX + 6, pageY, contentW - 12);
+    if (guide) {
+      guideLayout = portraitGuideBanner(contentX + 6, pageY, contentW - 12);
+      pageY += (guideLayout?.h ?? 0) + 6;
+    }
     if (activeZone() === 'army') {
       const sections = featureOpen('hero') ? [['mob', '怪物'], ['hero', '英雄']] : [['mob', '怪物']];
       const sw = Math.floor((contentW - 18 - (sections.length - 1) * 6) / sections.length);
@@ -4744,7 +4751,7 @@ function drawPortraitNativeManage() {
   });
   portraitLayoutInfo = { native: true, contentTop: contentY, contentBottom: contentY + contentH, primaryY, navTop, bottom: h, tabTop: navTop,
     margin: 8, gap, buttonWidth: bw, menuButton: { x: w - 66, y: 12, w: 52, h: 34 }, menuOpen: portraitMobileMenu,
-    menuNew: menuNewY == null ? null : { x: contentX + 18, y: menuNewY, w: contentW - 36, h: 46 } };
+    menuNew: menuNewY == null ? null : { x: contentX + 18, y: menuNewY, w: contentW - 36, h: 46 }, guide: guideLayout };
   syncStoryInput();
 }
 

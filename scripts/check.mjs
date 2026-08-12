@@ -38,6 +38,8 @@ for (const contract of ['function uiTasks()', 'function navigateUiTask(task)', '
 }
 if (!source.includes("const PAGE_ZONE = { throne: 'throne', dungeon: 'dungeon', hero: 'army', mob: 'army', shop: 'shop', report: 'archive', story: 'archive' }"))
   throw new Error('Legacy page identifiers are not mapped onto the five-zone route.');
+if (!source.includes('measureWrappedText(guide[1], textW, 12)') || !source.includes('guideLayout = portraitGuideBanner'))
+  throw new Error('Portrait tutorial text is not using measured adaptive-height layout.');
 const llmSource = readFileSync('llm.js', 'utf8');
 for (const provider of ['openai', 'anthropic', 'deepseek', 'glm', 'kimi', 'custom']) {
   if (!llmSource.includes(`id: '${provider}'`)) throw new Error(`Missing AI provider preset: ${provider}`);
