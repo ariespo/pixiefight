@@ -864,11 +864,35 @@ export const SCENES          = [
     ],
   },
   {
+    id: 'chain-death-strike', chained: true, who: '拒绝躺好的亡者代表',
+    text: '越来越多的死者拒绝按名单躺下。他们并不反对死亡，只反对死亡以后还要服从一份写错名字、没有休息日的安排。',
+    choices: [
+      { label: '支持亡者停止赴死', reply: '尸体们集体坐了起来。冥府称这是恶意缺勤，并派督战队来帮助它们重新理解安静。', effects: [{ t: 'encounter', chain: 'death', stage: 3, route: 'strike' }] },
+      { label: '替亡者要求重新谈判', reply: '冥府同意谈判，只是把谈判地点定在你的入口，把谈判方式写成了围攻。', effects: [{ t: 'encounter', chain: 'death', stage: 3, route: 'bargain' }] },
+    ],
+  },
+  {
+    id: 'chain-death-audit', chained: true, who: '冥府审计官',
+    text: '审计官展开一卷比走廊更长的账册：你窝藏了死亡、放走了名字，还让若干尸体形成了自己的意见。这三项都没有对应收费标准，所以默认按最高价处理。',
+    choices: [
+      { label: '烧掉整本账册', reply: '账册烧得很慢，像是连火焰也需要逐页签字。审计官带着武装人员前来抢救欠款。', effects: [{ t: 'encounter', chain: 'death', stage: 4, route: 'burnLedger' }] },
+      { label: '偷走冥府的公章', reply: '没有章，新的死亡一律无法生效。勇者们对此短暂高兴，直到发现来追章的人仍然可以正常杀人。', effects: [{ t: 'encounter', chain: 'death', stage: 4, route: 'stealSeal' }] },
+    ],
+  },
+  {
+    id: 'chain-death-heir', chained: true, who: '即将被迫转正的小死神',
+    text: '冥府决定解决问题的根源：让小死神继承职位，承担所有错误，并从下个月开始补交几百年的责任。它问你，死亡是否也能临阵脱逃。',
+    choices: [
+      { label: '保护它拒绝继任', reply: '你撕掉考核通知。冥府考官把拒绝服从列为最后一科，满分标准是考生与包庇者都不再动。', effects: [{ t: 'encounter', chain: 'death', stage: 5, route: 'protect' }] },
+      { label: '让它假装接受，再伏击考场', reply: '小死神第一次露出职业性的微笑。它把整个考场地址填成了你的地牢，并在备注栏写下“自备棺材”。', effects: [{ t: 'encounter', chain: 'death', stage: 5, route: 'apprentice' }] },
+    ],
+  },
+  {
     id: 'chain-death-final', chained: true, who: '真正的死神',
     text: '死神本人来到王座前，递上一份没有退订按钮的契约。小死神躲在你身后小声提醒：别怕，最坏也只是死；这游戏里死通常只耽误下一场出勤。',
     choices: [
-      { label: '撕毁契约，给小死神自由', reply: '契约裂成两半，冥府立刻派出一支队伍证明自由属于未经批准的异常状态。', effects: [{ t: 'encounter', chain: 'death', stage: 3, route: 'freedom' }] },
-      { label: '把死亡契约钉上王座', reply: '从这一刻起，死亡也得先经过你的前台。冥府认为这是严重的业务劫持，并亲自上门催收。', effects: [{ t: 'encounter', chain: 'death', stage: 3, route: 'crown' }] },
+      { label: '撕毁契约，给小死神自由', reply: '契约裂成两半，冥府立刻派出一支队伍证明自由属于未经批准的异常状态。', effects: [{ t: 'encounter', chain: 'death', stage: 6, route: 'freedom' }] },
+      { label: '把死亡契约钉上王座', reply: '从这一刻起，死亡也得先经过你的前台。冥府认为这是严重的业务劫持，并亲自上门催收。', effects: [{ t: 'encounter', chain: 'death', stage: 6, route: 'crown' }] },
     ],
   },
   {
@@ -888,11 +912,35 @@ export const SCENES          = [
     ],
   },
   {
+    id: 'chain-thirteenth-identity', chained: true, who: '队伍里多出来的那个人',
+    text: '清点人数时，十二名幽灵依然投下十三道影子。最后一道影子说自己既是队长、也是每一个被删掉的名字；它不确定哪种说法更容易活进历史。',
+    choices: [
+      { label: '承认它是被删除的队长', reply: '影子戴上破损的队长徽记。王国立刻派来一位官方队长，用剑证明职称不能重复领取。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 3, route: 'captain' }] },
+      { label: '宣布所有人都是第十三人', reply: '十二个人同时向前一步，人数没有变化，问题却变得更大。王国统计局决定亲自来数。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 3, route: 'collective' }] },
+    ],
+  },
+  {
+    id: 'chain-thirteenth-rehearsal', chained: true, who: '王国纪念剧团',
+    text: '王国决定重演那次远征，以证明它从未发生。演员拿着没有开刃的剑，幽灵拿着自己真正的伤口，双方都认为另一边缺乏专业精神。',
+    choices: [
+      { label: '篡改剧本，让错误再次发生', reply: '舞台布景被换成真实陷阱。主持人宣布演出绝对安全时，第一排已经开始阵亡。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 4, route: 'sabotage' }] },
+      { label: '让幽灵公开作证', reply: '听证会同意给死者发言时间，只是把时间安排在所有活人把它们再次杀死以后。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 4, route: 'witness' }] },
+    ],
+  },
+  {
+    id: 'chain-thirteenth-trial', chained: true, who: '被撕下来的删除令',
+    text: '删除令自己承认，它不是为了掩盖失败，而是为了掩盖第十三远征队发现的东西：王国最深处没有真相，只有一群忙着修改前一份报告的人。',
+    choices: [
+      { label: '审判签署删除令的人', reply: '你在王座前摆好审判席。王国法庭带着被告、证人和武装旁听席一起赶来拒绝出庭。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 5, route: 'trial' }] },
+      { label: '让幽灵亲手重写档案', reply: '墨水开始倒流，被删掉的行重新出现。王国护卫奉命保护旧版本，即使旧版本正在咬人。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 5, route: 'rewrite' }] },
+    ],
+  },
+  {
     id: 'chain-thirteenth-final', chained: true, who: '王国首席史官',
     text: '史官带着剑圣和一瓶更正液来到门前。他愿意承认第十三远征队存在，条件是所有见证者先变成适合写进脚注的过去式。',
     choices: [
-      { label: '为他们建立纪念碑', reply: '你决定把名字留在石头上。史官叹气，历史最讨厌石头：删起来必须动用攻城锤。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 3, route: 'memorial' }] },
-      { label: '抹去名字，保留他们的暗道', reply: '名字消失了，脚步声却留在地下。王国派出圣火军，准备烧掉所有可能通向真相的路。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 3, route: 'erase' }] },
+      { label: '为他们建立纪念碑', reply: '你决定把名字留在石头上。史官叹气，历史最讨厌石头：删起来必须动用攻城锤。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 6, route: 'memorial' }] },
+      { label: '抹去名字，保留他们的暗道', reply: '名字消失了，脚步声却留在地下。王国派出圣火军，准备烧掉所有可能通向真相的路。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 6, route: 'erase' }] },
     ],
   },
   {
@@ -912,11 +960,35 @@ export const SCENES          = [
     ],
   },
   {
+    id: 'chain-dream-guests', chained: true, who: '梦中旅店的前台',
+    text: '梦里的地牢开始接待住客。每个房间都住着现实中某人的另一种人生，有些人成了英雄，有些人终于学会在进门前敲门。',
+    choices: [
+      { label: '允许梦中住客长期留下', reply: '前台给倒影们发了钥匙。现实中的本人发现自己已被另一个版本替代，提着武器要求退房。', effects: [{ t: 'encounter', chain: 'dream', stage: 3, route: 'guests' }] },
+      { label: '把梦境改造成第二道防线', reply: '同一块石头同时存在于两座地牢。王国测绘队无法在图上容纳它们，决定先抹掉比较黑的那座。', effects: [{ t: 'encounter', chain: 'dream', stage: 3, route: 'fortify' }] },
+    ],
+  },
+  {
+    id: 'chain-dream-leak', chained: true, who: '从天花板滴下来的现实',
+    text: '现实开始从裂缝漏进来：税单、阳光和勇者的脚步一起落在地板上。地牢抱怨自己做的是噩梦，而税单坚持自己属于纪实文学。',
+    choices: [
+      { label: '用旧战报堵住裂缝', reply: '纸上的败仗重新活了过来。曾经死去的勇者要求补发一场胜利，你只好再次拒绝。', effects: [{ t: 'encounter', chain: 'dream', stage: 4, route: 'patch' }] },
+      { label: '任由现实淹进梦境', reply: '两个世界的勇者互相指责对方是幻觉，最后一致认为先杀掉旁观的魔王最容易验证。', effects: [{ t: 'encounter', chain: 'dream', stage: 4, route: 'flood' }] },
+    ],
+  },
+  {
+    id: 'chain-dream-mirror', chained: true, who: '梦里的另一位魔王',
+    text: '王座梦见了另一个你：更富有、更威严，而且从未点错过任何按钮。他说自己才是正版，但他的地牢也正被勇者堵在门口。',
+    choices: [
+      { label: '与梦中的自己谈判', reply: '另一个你同意共享王座，却派出自己的勇者检验你是否配得上另一半坐垫。', effects: [{ t: 'encounter', chain: 'dream', stage: 5, route: 'mirror' }] },
+      { label: '砸碎王座前的镜子', reply: '镜子碎成许多种可能，每一种可能都掉出一名确信自己才是真实的勇者。', effects: [{ t: 'encounter', chain: 'dream', stage: 5, route: 'break' }] },
+    ],
+  },
+  {
     id: 'chain-dream-final', chained: true, who: '王座的梦话',
     text: '王座要求拥有自己的梦。它保证不会梦见更好的魔王，至少今晚不会。现实与梦境同时派来军队，准备争夺谁有权宣布另一边不存在。',
     choices: [
-      { label: '让整座地牢醒来', reply: '所有砖石睁开不存在的眼睛。梦境为了避免被醒来，只能派出最后的守护者。', effects: [{ t: 'encounter', chain: 'dream', stage: 3, route: 'awaken' }] },
-      { label: '允许王座继续做梦', reply: '你把现实关在门外。现实对此很不服气，带着一支联合军要求重新测量门的位置。', effects: [{ t: 'encounter', chain: 'dream', stage: 3, route: 'dreaming' }] },
+      { label: '让整座地牢醒来', reply: '所有砖石睁开不存在的眼睛。梦境为了避免被醒来，只能派出最后的守护者。', effects: [{ t: 'encounter', chain: 'dream', stage: 6, route: 'awaken' }] },
+      { label: '允许王座继续做梦', reply: '你把现实关在门外。现实对此很不服气，带着一支联合军要求重新测量门的位置。', effects: [{ t: 'encounter', chain: 'dream', stage: 6, route: 'dreaming' }] },
     ],
   },
 ];

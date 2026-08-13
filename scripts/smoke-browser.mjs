@@ -43,7 +43,7 @@ try {
   await page.evaluate(() => __debug.introContinue());
   assert(await page.evaluate(() => __debug.screen === 'manage'), 'Opening story did not enter management mode.');
 
-  // 长期事件链：三场临时战斗逐段升级，结算不推进主线，终局写入永久路线效果。
+  // 长期事件链：六场临时战斗逐段升级，结算不推进主线，终局写入永久路线效果。
   const eventChain = await page.evaluate(async () => {
     const original = __debug.rawSave;
     __debug.forceRaid(5); __debug.giveResources(9999, 9999);
@@ -55,7 +55,7 @@ try {
     const guard = __debug.devRecruit('slime'); __debug.devAssign(0, 'front', guard); __debug.setTab('throne');
     const startRaid = __debug.save.raidNo;
     const stages = [];
-    for (const [stage, route] of [[1, 'shelter'], [2, 'names'], [3, 'freedom']]) {
+    for (const [stage, route] of [[1, 'shelter'], [2, 'names'], [3, 'strike'], [4, 'burnLedger'], [5, 'protect'], [6, 'freedom']]) {
       const issued = __debug.devStoryEncounter('death', stage, route);
       const encounter = __debug.storyEncounter;
       await __debug.startBattle(); if (__debug.raidBriefing) await __debug.confirmRaidBriefing();
@@ -65,15 +65,26 @@ try {
     }
     const result = { startRaid, stages, finalBone: __debug.save.bone, finalMana: __debug.save.mana,
       permanent: __debug.save.story.mods.find((mod) => mod.id === 'death-freed'), encounter: __debug.storyEncounter };
+    const legacy = JSON.parse(original);
+    legacy.raidNo = 10;
+    legacy.story.chains = { death: { id: 'death', stage: 3, status: 'complete', ending: 'freedom', completedRaid: 8, history: [] } };
+    await __debug.restoreRaw(JSON.stringify(legacy));
+    result.legacyExtension = { chain: __debug.storyChains.death,
+      fourth: __debug.save.story.leads.find((lead) => lead.key === 'campaign:death:4') };
     await __debug.restoreRaw(original);
     return result;
   });
   assert(eventChain.stages.every((stage) => stage.issued.ok && stage.encounter && stage.raid === eventChain.startRaid)
     && eventChain.stages[0].chain.nextDueRaid === eventChain.startRaid + 1
     && eventChain.stages[1].chain.nextDueRaid === eventChain.startRaid + 2
-    && eventChain.stages[2].chain.status === 'complete' && eventChain.stages[2].chain.ending === 'freedom'
+    && eventChain.stages[2].chain.nextDueRaid === eventChain.startRaid + 1
+    && eventChain.stages[3].chain.nextDueRaid === eventChain.startRaid + 2
+    && eventChain.stages[4].chain.nextDueRaid === eventChain.startRaid + 1
+    && eventChain.stages[5].chain.status === 'complete' && eventChain.stages[5].chain.ending === 'freedom'
+    && eventChain.legacyExtension.chain?.status === 'waiting' && eventChain.legacyExtension.chain?.legacyEnding === 'freedom'
+    && eventChain.legacyExtension.fourth?.dueRaid === 10
     && eventChain.permanent?.raids === -1 && !eventChain.encounter,
-  `Long-term event chain did not settle three temporary battles safely: ${JSON.stringify(eventChain)}`);
+  `Long-term event chain did not settle six temporary battles safely: ${JSON.stringify(eventChain)}`);
 
   // AI 设置必须走“地址/Key → 刷新模型 → 选择模型 → 保存”的完整链路。
   let requestedModel = '';
