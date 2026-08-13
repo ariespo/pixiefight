@@ -51,7 +51,7 @@ for (const zone of ['throne', 'dungeon', 'army', 'shop', 'archive']) {
 for (const contract of ['function uiTasks()', 'function navigateUiTask(task)', 'const UI_DENSITY_KEY', 'const UI_SHELL_TOUR_KEY']) {
   if (!source.includes(contract)) throw new Error(`Missing global UI architecture contract: ${contract}`);
 }
-for (const contract of ['function abortBattle()', "button(hudGfx, hudLayer, hits, 338, 2, 42, 18, '退出'", "portraitActionMap.battleExit", "if (e.key === 'Escape') { abortBattle(); return; }"]) {
+for (const contract of ['let battleCheckpoint = null', 'battleCheckpoint = structuredClone(S)', 'function abortBattle()', 'if (battleCheckpoint) S = structuredClone(battleCheckpoint)', 'r.rolledBack = true', "button(hudGfx, hudLayer, hits, 338, 2, 42, 18, '退出'", "portraitActionMap.battleExit", "if (e.key === 'Escape') { abortBattle(); return; }"]) {
   if (!source.includes(contract)) throw new Error(`Missing reversible battle-exit contract: ${contract}`);
 }
 if (!source.includes("const PAGE_ZONE = { throne: 'throne', dungeon: 'dungeon', hero: 'army', mob: 'army', shop: 'shop', report: 'archive', story: 'archive' }"))

@@ -1528,6 +1528,7 @@ let toast = { text: '', t: 0 };
 let endingT = 0;
 let pendingResultRaid = 0;
 let battlePrepBusy = false;
+let battleCheckpoint = null;                         // 迎战前经营状态；败战与主动退出均从这里恢复
 let heroLoreBusyUid = null;
 let heroForceConfirmUid = null;
 const battleDialogueCache = new Map();
@@ -4275,7 +4276,7 @@ function clearTransientUi() {
   sel = null; heroSel = null; detailPopup = null; researchModal = null; raidBriefing = null; lawAudit = null; stitch = null; forge = null; graft = null; smith = null;
   selectedEntity = null; inspectorView = 'summary'; desktopSystemMenu = false;
   armySection = 'mob'; archiveSection = 'report';
-  battle = null; battleLayer.visible = false; confirmNew = false; titleNewConfirm = false;
+  battle = null; battleCheckpoint = null; battleLayer.visible = false; confirmNew = false; titleNewConfirm = false;
   for (const c of overlay.removeChildren()) c.destroy({ children: true });
   hits.clear(); endingBuilt = false; endingActionRect = null; endingRebirthRect = null;
 }
@@ -8440,6 +8441,7 @@ async function startBattle() {
   }
   const dungeonEconomy = dungeonEconomyPreview();
   const doctrineSeal = S.doctrine === 'default' ? 1.25 : S.doctrine === 'economy' ? 0.8 : 1;
+  battleCheckpoint = structuredClone(S);
   battle = createBattle(raid, S.rooms, S.monsters,
     { sealMax: Math.round(sealMax() * doctrineSeal), trapPower: trapPower(), mods: battleMods(), research: researchEffects(S.workshopResearch), champs: champStatMap(), dungeonEconomy, dialoguePack });
   pendingResultRaid = raid.no;
@@ -8463,6 +8465,8 @@ function abortBattle() {
   if (screen !== 'battle' || !battle) return false;
   // 战斗模拟只使用开战时创建的瞬态副本；在 finishBattle 之前丢弃它，资源、经验、
   // 伤势、设施损失、战报和轮次均不会结算，经营存档保持在本次迎战之前。
+  if (battleCheckpoint) S = structuredClone(battleCheckpoint);
+  battleCheckpoint = null;
   pendingResultRaid = 0;
   paused = false;
   speed = 1;
@@ -9041,6 +9045,34 @@ function finishBattle() {
   screen = 'result';
   scheduleLayout();
   resultLayerBuilt = false;
+  if (!r.win) {
+    // 败战是一次可复盘的失败尝试，而不是第二套惩罚经济。恢复迎战前的完整经营
+    // 状态，只额外保留一份不参与结算的战术记录，供玩家判断卡点。
+    if (battleCheckpoint) S = structuredClone(battleCheckpoint);
+    battleCheckpoint = null;
+    r.bone = 0; r.mana = 0; r.relicLoot = 0; r.loot = []; r.economy = null; r.rolledBack = true;
+    const units = [...b.heroes.map((unit) => ({ name: unit.name, dmg: Math.round(unit.dmgDealt), heal: Math.round(unit.healed), kills: unit.kills ?? 0, side: 'hero' })),
+      ...b.rooms.flatMap((room) => room.mons.map((unit) => ({ name: unit.name, dmg: Math.round(unit.dmgDealt), heal: Math.round(unit.healed), kills: unit.kills ?? 0, side: 'mon' })))]
+      .sort((a, z) => z.dmg - a.dmg);
+    const report = {
+      raidNo: b.raid.no, title: b.raid.title, win: false, rolledBack: true, skulls: 0, seal: r.seal, time: b.time,
+      bone: 0, mana: 0, relicLoot: 0,
+      rooms: b.rooms.map((room) => ({ i: room.index, broken: room.broken, t: room.breachTime, reason: room.breachReason,
+        lootDuration: room.utility?.row?.realtime?.duration ?? 0, lootProgress: room.utility?.row?.realtime?.progress ?? 0,
+        workerState: room.utility?.workerState ?? 'none' })),
+      units, firstCause: r.firstCause, review: r.review ?? [], metrics: r.metrics ?? {}, economy: null, aiState: 'local',
+      dialogue: (b.dialogue ?? []).map((line) => ({ name: line.name, text: line.text, kind: line.kind, side: line.side, room: line.room, t: line.t })),
+      logs: b.log.map((line) => ({ text: line.text, tone: line.tone })), storyConsequences: [], storyEchoes: [], storyRefs: [], storyLeadIds: [],
+    };
+    S.reports.unshift(report);
+    if (S.reports.length > 5) S.reports.length = 5;
+    reportIdx = 0;
+    playSfx('lose');
+    persist();
+    void enrichLiteraryReport(report);
+    playMusic('bgm-manage');
+    return;
+  }
   const rewardMult = dungeonRaidScale().reward;
   const directReward = S.doctrine === 'economy' ? 0.60 : 1;
   r.bone = Math.round(r.bone * rewardMult * directReward);
@@ -9181,6 +9213,7 @@ function finishBattle() {
   persist();
   void enrichLiteraryReport(report);
   playMusic('bgm-manage');
+  battleCheckpoint = null;
 }
 
 function buildResultOverlay() {
@@ -9203,27 +9236,30 @@ function buildResultOverlay() {
     }
   }
   const eco = r.economy;
-  labelC(overlay, eco ? `战利＋${r.bone}骨/${r.mana}魔・经营＋${eco.bone}骨/${eco.mana}魔・训${eco.xp ?? 0}/修${eco.repair ?? 0}` : `骨币 +${r.bone}   魔质 +${r.mana}`, 240, 104, 9, C.gold);
+  labelC(overlay, r.rolledBack ? '败战未结算：收益、损害与消耗均已回退'
+    : eco ? `战利＋${r.bone}骨/${r.mana}魔・经营＋${eco.bone}骨/${eco.mana}魔・训${eco.xp ?? 0}/修${eco.repair ?? 0}`
+      : `骨币 +${r.bone}   魔质 +${r.mana}`, 240, 104, 9, r.rolledBack ? C.green : C.gold);
   boundedText(overlay, r.firstCause, 90, 120, 300, 26, 9, r.win ? C.stoneLit : C.gold);
   let y = 148;
   const xpLines = r.xp.map((x) => {
     const inst = instById(x.uid);
     return inst ? `${instKind(inst).name} +${x.xp}xp` : '';
   }).filter(Boolean).slice(0, 4);
-  labelC(overlay, xpLines.length ? xpLines.join('  ') : '本场无怪物参战', 240, y, 12, C.green);
+  labelC(overlay, r.rolledBack ? '保留战术复盘，不保留任何战斗结算' : xpLines.length ? xpLines.join('  ') : '本场无怪物参战', 240, y, 12, C.green);
   y += 16;
   // 英雄的成长单独一行：这是玩家最在意的长期读数
   const champLines = (r.champXp ?? []).map((x) => {
     const c = champById(x.uid);
     return c ? `${c.name} +${x.xp}xp${x.kills ? `/${x.kills}杀` : ''}${x.fell ? '（受伤）' : ''}` : '';
   }).filter(Boolean).slice(0, 2);
-  if (champLines.length) labelC(overlay, champLines.join('  '), 240, y, 12, C.gold);
+  if (!r.rolledBack && champLines.length) labelC(overlay, champLines.join('  '), 240, y, 12, C.gold);
   y += 16;
   const loot = (r.loot ?? []).map((id) => gearById(id)?.name ?? '').filter(Boolean);
-  const lootLine = `${loot.length ? `缴获：${cut(loot.join('、'), 16)}` : '无装备缴获'}${r.relicLoot ? '・英雄遗物×1' : ''}`;
+  const lootLine = r.rolledBack ? '可调整阵容、部署和消费后再次迎战'
+    : `${loot.length ? `缴获：${cut(loot.join('、'), 16)}` : '无装备缴获'}${r.relicLoot ? '・英雄遗物×1' : ''}`;
   labelC(overlay, lootLine, 240, y, 12, loot.length || r.relicLoot ? C.purple : C.stoneLit);
   const isFinal = r.win && !S.overtime && b.raid.no === NORMAL_RAID_COUNT;
-  button(g, overlay, hits, 100, 196, 130, 28, r.win ? (isFinal ? '观看结局' : '继续') : '重试本轮', () => afterResult(), { fill: C.greenDark, border: C.green, color: C.white });
+  button(g, overlay, hits, 100, 196, 130, 28, r.win ? (isFinal ? '观看结局' : '继续') : '立即重试', r.win ? afterResult : retryFailedBattle, { fill: C.greenDark, border: C.green, color: C.white });
   button(g, overlay, hits, 250, 196, 130, 28, isFinal ? '观看结局' : '返回经营', returnFromResult, { fill: C.wallLit, border: C.bone });
   labelC(overlay, 'Enter 继续', 240, 228, 12, C.stoneLit);
 }
@@ -9251,6 +9287,12 @@ function returnFromResult() {
   if (b.result.win && !S.overtime && b.raid.no === NORMAL_RAID_COUNT) { afterResult(); return; }
   if (b.result.win) advanceWonResult();
   backToManage();
+}
+
+function retryFailedBattle() {
+  if (!battle?.result || battle.result.win) return;
+  backToManage();
+  void startBattle();
 }
 
 function afterResult() {
@@ -9611,6 +9653,27 @@ window.__debug = {
     consumeEvents();
     if (battle.phase === 'done' && battle.result) finishBattle();
     return { screen, steps, result: battle.result };
+  },
+  devSettleLoss: () => {
+    if (!battle || screen !== 'battle') return null;
+    const mon = S.monsters[0], champ = S.champs[0];
+    if (battle.rooms[0]) battle.rooms[0].broken = true;
+    battle.result = { win: false, skulls: 0, seal: 0, kills: 0, total: battle.heroes.length, firstCause: '测试封印击破', review: ['测试败战回滚'], metrics: {},
+      bone: 90, mana: 30, relicLoot: 1, loot: [], xp: mon ? [{ uid: mon.uid, xp: 99 }] : [],
+      champXp: champ ? [{ uid: champ.uid, xp: 99, kills: 0, fell: true }] : [], champStats: [] };
+    battle.phase = 'done';
+    finishBattle();
+    return { screen, rolledBack: battle.result.rolledBack, report: S.reports[0] };
+  },
+  devSettleWin: () => {
+    if (!battle || screen !== 'battle') return null;
+    const monXp = S.monsters.slice(0, 2).map((unit) => ({ uid: unit.uid, xp: 5 }));
+    battle.result = { win: true, skulls: 3, seal: Math.max(1, Math.round(battle.seal)), kills: battle.heroes.length, total: battle.heroes.length,
+      firstCause: '测试守住封印', review: ['测试胜利结算'], metrics: {}, bone: battle.raid.reward?.bone ?? 0, mana: battle.raid.reward?.mana ?? 0,
+      relicLoot: 0, loot: [], xp: monXp, champXp: [], champStats: [] };
+    battle.phase = 'done';
+    finishBattle();
+    return { screen, result: battle.result, report: S.reports[0] };
   },
   stepBattleForTest: (steps = 120) => {
     if (!battle || screen !== 'battle') return null;

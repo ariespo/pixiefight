@@ -265,6 +265,39 @@ try {
     && onboarding.unlocks[raid].guide && onboarding.unlocks[raid].complete),
   `Mid/late-game tutorials are incomplete: ${JSON.stringify(onboarding.unlocks)}`);
 
+  const rawBeforeFailedBattle = await page.evaluate(() => __debug.rawSave);
+  const failedRollback = await page.evaluate(async () => {
+    __debug.setTab('throne');
+    const before = {
+      raidNo: __debug.save.raidNo, bone: __debug.save.bone, mana: __debug.save.mana, relic: __debug.save.relic,
+      monster: __debug.save.monsters[0] ? structuredClone(__debug.save.monsters[0]) : null,
+      hero: __debug.save.champs[0] ? structuredClone(__debug.save.champs[0]) : null,
+      floors: structuredClone(__debug.save.floors), credits: __debug.save.story.credits, mods: structuredClone(__debug.save.story.mods), reports: __debug.reports.length,
+    };
+    await __debug.startBattle(); if (__debug.raidBriefing) await __debug.confirmRaidBriefing();
+    const settled = __debug.devSettleLoss();
+    const after = {
+      raidNo: __debug.save.raidNo, bone: __debug.save.bone, mana: __debug.save.mana, relic: __debug.save.relic,
+      monster: __debug.save.monsters[0] ? structuredClone(__debug.save.monsters[0]) : null,
+      hero: __debug.save.champs[0] ? structuredClone(__debug.save.champs[0]) : null,
+      floors: structuredClone(__debug.save.floors), credits: __debug.save.story.credits, mods: structuredClone(__debug.save.story.mods), reports: __debug.reports.length,
+    };
+    __debug.returnResult();
+    return { before, after, settled, screen: __debug.screen };
+  });
+  assert(failedRollback.settled?.rolledBack && failedRollback.screen === 'manage'
+    && failedRollback.after.reports === failedRollback.before.reports + 1
+    && failedRollback.after.raidNo === failedRollback.before.raidNo
+    && failedRollback.after.bone === failedRollback.before.bone && failedRollback.after.mana === failedRollback.before.mana
+    && failedRollback.after.relic === failedRollback.before.relic
+    && JSON.stringify(failedRollback.after.monster) === JSON.stringify(failedRollback.before.monster)
+    && JSON.stringify(failedRollback.after.hero) === JSON.stringify(failedRollback.before.hero)
+    && JSON.stringify(failedRollback.after.floors) === JSON.stringify(failedRollback.before.floors)
+    && failedRollback.after.credits === failedRollback.before.credits
+    && JSON.stringify(failedRollback.after.mods) === JSON.stringify(failedRollback.before.mods),
+  `Failed battle leaked settlement damage into management: ${JSON.stringify(failedRollback)}`);
+  await page.evaluate(async (raw) => { await __debug.restoreRaw(raw); }, rawBeforeFailedBattle);
+
   const uiArchitecture = await page.evaluate(() => {
     __debug.uiTourSkip();
     __debug.setTab('mob');
@@ -709,7 +742,7 @@ try {
     `Novel mission was not generated through the local contract: ${JSON.stringify(novelMission)}`);
   assert(await page.evaluate(() => !__debug.uiTasks.some((task) => task.id === 'novel-mission')),
     'A signed novel mission still blocked the battle.' );
-  await page.evaluate(async () => { __debug.setTab('throne'); await __debug.startBattle(); __debug.runBattleToEnd(); });
+  await page.evaluate(async () => { __debug.setTab('throne'); await __debug.startBattle(); __debug.devSettleWin(); });
   const novelSettlement = await page.evaluate(() => ({ report: __debug.reports[0]?.novel, novel: __debug.novel }));
   assert(novelSettlement.report?.missionId === novelMission.id && novelSettlement.novel.phase === 'resolution'
     && novelSettlement.novel.chapter === 2 && novelSettlement.novel.entries.some((entry) => entry.role === 'battle'),
