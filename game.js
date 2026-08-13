@@ -647,14 +647,14 @@ function workerName(u) {
   return inst ? instKind(inst).name : '无人';
 }
 
+function vaultFacilityBonus(u) {
+  if (!u || u.kind !== 'vault' || u.condition <= 0) return 0;
+  const d = utilityDef(u), lv = Math.max(1, Math.min(3, u.level)) - 1;
+  return d.yieldBonus[lv] * conditionEff(u.condition);
+}
+
 function vaultYieldBonus() {
-  const bonus = S.floors.reduce((total, floor) => {
-    const u = floor.utility;
-    if (u.kind !== 'vault' || u.condition <= 0) return total;
-    const d = utilityDef(u);
-    const lv = Math.max(1, Math.min(3, u.level)) - 1;
-    return total + d.yieldBonus[lv] * conditionEff(u.condition);
-  }, 0);
+  const bonus = S.floors.reduce((total, floor) => total + vaultFacilityBonus(floor.utility), 0);
   return Math.min(3, bonus);
 }
 
@@ -5011,7 +5011,9 @@ function drawPortraitFacility(x, y, w, h, floor) {
   panelF(portraitGfx, portraitLayer, 'stone', x + 8, y + 50, w - 16, 112, C.wall);
   label(portraitLayer, `${facilityName(u)}　Lv${u.level}`, x + 20, y + 62, 17, d.color);
   boundedText(portraitLayer, d.desc, x + 20, y + 88, w - 40, 36, 12, C.bone);
-  label(portraitLayer, `耐久 ${u.condition}/100　${out.bone ? `待产${out.bone}骨` : out.mana ? `待产${out.mana}魔` : '服务设施'}`, x + 20, y + 135, 13, u.condition <= 25 ? C.red : C.gold);
+  const portraitEffect = out.bone ? `待产${out.bone}骨` : out.mana ? `待产${out.mana}魔` : u.kind === 'vault'
+    ? `本库＋${Math.round(vaultFacilityBonus(u) * 100)}%・全局＋${Math.round(vaultYieldBonus() * 100)}%` : '服务设施';
+  label(portraitLayer, `耐久 ${u.condition}/100　${portraitEffect}`, x + 20, y + 135, 13, u.condition <= 25 ? C.red : C.gold);
   const cost = u.level < 3 ? utilityUpgradeCost(u) : null;
   const repair = repairQuote(u);
   const actions = [
@@ -5903,7 +5905,7 @@ function pageDungeon(g               ) {
       const staffText = WORKER_KINDS.has(u.kind) ? `・工${cut(workerName(u), 3)}` : u.kind === 'training' ? `・训${u.trainTargets.length}` : '';
       label(uiLayer, cut(`耐${u.condition}${staffText}`, 7), ux + 9, b.y + 17, 8, u.condition <= 25 ? C.red : C.stoneLit);
       const yieldText = out.bone ? `待产＋${out.bone}骨` : out.mana ? `待产＋${out.mana}魔` : u.kind === 'vault'
-        ? `增产＋${Math.round(ud.yieldBonus[u.level - 1] * 100)}%` : u.kind === 'healing'
+        ? `全局＋${Math.round(vaultYieldBonus() * 100)}%` : u.kind === 'healing'
           ? `疗愈${ud.charges[u.level - 1]}次` : u.kind === 'training' ? `每人＋${out.xp}经验`
             : u.kind === 'workshop' ? `维修＋${out.repair}点` : `招募-${Math.round(out.hatcheryDiscount * 100)}%`;
       label(uiLayer, cut(yieldText, 7), ux + 9, b.y + 29, 8, C.bone);
@@ -6069,7 +6071,7 @@ function drawSidePanel(g               ) {
     bar(g, 340, 126, 130, 6, u.condition / 100, u.condition <= 25 ? C.red : C.green);
     const out = utilityOutput(floor);
     const detail = out.bone ? `本轮预计 ＋${out.bone}骨币` : out.mana ? `本轮预计 ＋${out.mana}魔质`
-      : u.kind === 'vault' ? `全局资源产出＋${Math.round(d.yieldBonus[u.level - 1] * 100)}%`
+      : u.kind === 'vault' ? `本库＋${Math.round(vaultFacilityBonus(u) * 100)}%・全局＋${Math.round(vaultYieldBonus() * 100)}%`
         : u.kind === 'healing' ? `疗愈 ${d.charges[u.level - 1]}次・剩${S.dungeon.healingCharges}`
           : u.kind === 'training' ? `每名学员 ＋${out.xp}经验`
             : u.kind === 'workshop' ? `维修＋${out.repair}・锻造-${Math.round(out.forgeDiscount * 100)}%`
