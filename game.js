@@ -137,10 +137,10 @@ const BASE_NEW_FLOORS = 2;
 const DEPTH_MULT = [1.30, 1.15, 1, 0.90, 0.85, 0.80];
 const UTILITY_KINDS = {
   none:       { id: 'none', name: '空后勤房', desc: '尚未建造经营设施。', bone: 0, mana: 0, color: C.stoneLit },
-  'bone-yard': { id: 'bone-yard', name: '骨料场', tex: 'facility-bone-yard', desc: '每轮生产骨币；越靠外层产量越高。', bone: 60, mana: 0, color: C.bone, yields: [10, 17, 26] },
-  'mana-well': { id: 'mana-well', name: '魔力井', tex: 'facility-mana-well', desc: '每轮凝聚魔质；失守后会损失待结算产出。', bone: 40, mana: 12, color: C.purple, yields: [3, 5, 8] },
+  'bone-yard': { id: 'bone-yard', name: '骨料场', tex: 'facility-bone-yard', desc: '每轮生产大量骨币；越靠外层产量越高。', bone: 60, mana: 0, color: C.bone, yields: [100, 170, 260] },
+  'mana-well': { id: 'mana-well', name: '魔力井', tex: 'facility-mana-well', desc: '每轮凝聚大量魔质；失守后会损失待结算产出。', bone: 40, mana: 12, color: C.purple, yields: [30, 50, 80] },
   training:   { id: 'training', name: '训练场', tex: 'facility-training', desc: '让未参战的怪物或英雄稳定获得经验。', bone: 80, mana: 0, color: C.green, xp: [8, 14, 20], slots: [1, 1, 2] },
-  vault:      { id: 'vault', name: '宝库', tex: 'facility-vault', desc: '保护被攻破楼层的部分骨币与魔质。', bone: 130, mana: 18, color: C.gold, boneCap: [20, 45, 80], manaCap: [5, 10, 18] },
+  vault:      { id: 'vault', name: '宝库', tex: 'facility-vault', desc: '保护被攻破楼层的部分骨币与魔质。', bone: 130, mana: 18, color: C.gold, boneCap: [200, 450, 800], manaCap: [50, 100, 180] },
   healing:    { id: 'healing', name: '疗愈池', tex: 'facility-healing', desc: '提供英雄疗愈资格与每轮服务次数。', bone: 70, mana: 20, color: C.green, charges: [1, 2, 3] },
   workshop:   { id: 'workshop', name: '工坊', tex: 'facility-workshop', desc: '积攒维修点，并降低锻造或全身改造成本。', bone: 110, mana: 10, color: C.steel, repair: [10, 18, 28], discount: [0.05, 0.10, 0.15] },
   hatchery:   { id: 'hatchery', name: '孵化室', tex: 'facility-hatchery', desc: '降低普通怪物招募骨币，并提供本轮优惠次数。', bone: 90, mana: 8, color: C.purple, charges: [1, 1, 2], discount: [0.08, 0.15, 0.20] },
@@ -683,13 +683,13 @@ function utilityBuildDetail(kind, floorIndex) {
   const d = UTILITY_KINDS[kind];
   const cost = doctrineCost('facility', d.bone, d.mana);
   const depth = Math.round((DEPTH_MULT[floorIndex] ?? 0.8) * 100);
-  const effect = kind === 'bone-yard' ? `Lv1基础每轮10骨币；本层深度效率${depth}%，可指派员工。`
-    : kind === 'mana-well' ? `Lv1基础每轮3魔质；本层深度效率${depth}%，可指派员工。`
+  const effect = kind === 'bone-yard' ? `Lv1基础每轮100骨币；本层深度效率${depth}%，可指派员工。`
+    : kind === 'mana-well' ? `Lv1基础每轮30魔质；本层深度效率${depth}%，可指派员工。`
       : kind === 'training' ? 'Lv1提供1个训练位，每名未参战单位每轮获得8经验。'
         : kind === 'healing' ? 'Lv1每轮提供1次疗愈资格；没有可用疗愈池时不能疗愈英雄。'
           : kind === 'workshop' ? 'Lv1每轮提供10维修点，并提供1次5%的锻造或改造优惠。'
             : kind === 'hatchery' ? 'Lv1每轮提供1次普通怪物招募优惠，骨币消耗降低8%。'
-              : 'Lv1保护20骨币与5魔质；被攻破后保护能力会随损坏下降。';
+              : 'Lv1保护200骨币与50魔质；被攻破后保护能力会随损坏下降。';
   return `${d.desc}\n${effect}\n建造成本：${cost.bone}骨币${cost.mana ? `＋${cost.mana}魔质` : ''}。`;
 }
 
@@ -745,7 +745,7 @@ function vaultCapacity(broken = null) {
     bone += Math.round(d.boneCap[u.level - 1] * breachMult);
     mana += Math.round(d.manaCap[u.level - 1] * breachMult);
   });
-  return { bone: Math.min(180, bone), mana: Math.min(40, mana) };
+  return { bone: Math.min(1800, bone), mana: Math.min(400, mana) };
 }
 
 function dungeonEconomyPreview() {
