@@ -1858,11 +1858,6 @@ function battleDialogueSnapshot(raid) {
   });
   return {
     raid: { no: raid.no, title: raid.title, affixes: raid.affixes.map((id) => AFFIXES[id]?.name).filter(Boolean) },
-    doctrine: doctrine().name,
-    rooms: S.rooms.map((room, index) => ({ floor: index + 1, theme: THEMES[room.theme]?.name,
-      traps: [room.trap, room.trap2].filter((id) => id && id !== 'none').map((id) => TRAPS[id]?.name),
-      facility: utilityAt(index)?.kind === 'none' ? '' : utilityDef(utilityAt(index)).name })),
-    recentHistory: S.story.archive.slice(0, 3).map((item) => `${item.title}：${item.outcome ?? item.summary ?? ''}`),
     units: [...units.values()],
   };
 }
@@ -3575,6 +3570,7 @@ function openAISettings() {
     </div>
     <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px"><button data-ai="tab-connection" type="button">接口</button><button data-ai="tab-prompts" type="button">提示词</button><button data-ai="tab-interface" type="button">界面</button></div>
     <div data-ai="panel-connection">
+      <button data-ai="enabled" type="button" style="width:100%;height:42px;margin-bottom:10px"></button>
       <label>服务商预设<select data-ai="provider"></select></label>
       <label data-ai="protocol-row">接口协议<select data-ai="protocol"><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic</option></select></label>
       <label>接口 Base URL<input data-ai="url" type="url" autocomplete="off" spellcheck="false"></label>
@@ -3583,7 +3579,7 @@ function openAISettings() {
       <label>可用模型<select data-ai="model" disabled><option value="">请先刷新模型</option></select></label>
       <div data-ai="status" style="min-height:34px;padding:8px;border:1px solid #484054;background:#100d17;color:#918aa0;box-sizing:border-box">修改地址或 Key 后，需要重新刷新模型。</div>
       <div style="margin-top:10px;font-size:12px;line-height:1.5;color:#918aa0">Key 只保存在这个浏览器中，不进入游戏存档或上传到部署文件。自定义服务需允许浏览器跨域访问。</div>
-      <div style="margin-top:10px;padding:8px;border:1px solid #484054;color:#918aa0">未配置有效接口时自动使用本地回声；刷新模型并保存后自动使用外部 AI，无需另设模式开关。</div>
+      <div style="margin-top:10px;padding:8px;border:1px solid #484054;color:#918aa0">关闭 AI 后会保留地址、Key、模型和提示词，但所有生成任务立即改用本地内容；重新开启无需再次刷新模型。</div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:14px">
         <button data-ai="sound" type="button">${S.muted ? '开启声音' : '关闭声音'}</button><button data-ai="save" type="button" disabled>保存并启用</button>
       </div>
@@ -3610,7 +3606,7 @@ function openAISettings() {
 
   const el = (name) => card.querySelector(`[data-ai="${name}"]`);
   const provider = el('provider'), protocol = el('protocol'), url = el('url'), key = el('key');
-  const model = el('model'), refresh = el('refresh'), save = el('save'), status = el('status');
+  const model = el('model'), refresh = el('refresh'), save = el('save'), status = el('status'), enabled = el('enabled');
   const connectionPanel = el('panel-connection'), promptsPanel = el('panel-prompts'), interfacePanel = el('panel-interface');
   const promptTask = el('prompt-task'), promptText = el('prompt-text'), promptStatus = el('prompt-status');
   const storedPrompts = loadPromptOverrides();
@@ -3665,6 +3661,15 @@ function openAISettings() {
   protocol.value = initial.protocol;
   url.value = initial.baseUrl;
   key.value = initial.key;
+  const syncEnabledButton = () => {
+    const configured = !!(saved?.model && saved.models?.includes(saved.model));
+    const active = configured && loadCfg()?.enabled !== false;
+    enabled.textContent = active ? 'AI 总开关：已开启（点击关闭）' : configured ? 'AI 总开关：已关闭（点击开启）' : 'AI 总开关：尚未配置接口';
+    enabled.style.borderColor = active ? '#67d391' : configured ? '#ed6b6b' : '#76698a';
+    enabled.style.color = active ? '#67d391' : configured ? '#ed6b6b' : '#918aa0';
+    enabled.disabled = !configured;
+  };
+  syncEnabledButton();
   let refreshedSignature = initial.models?.length ? `${initial.protocol}|${normalizeBaseUrl(initial.baseUrl)}|${initial.key}` : '';
 
   const signature = () => `${protocol.value}|${normalizeBaseUrl(url.value)}|${key.value}`;
@@ -3699,6 +3704,14 @@ function openAISettings() {
   url.addEventListener('input', invalidate);
   key.addEventListener('input', invalidate);
   model.addEventListener('change', () => { save.disabled = !model.value || refreshedSignature !== signature(); });
+  enabled.addEventListener('click', () => {
+    const current = loadCfg();
+    if (!current?.model || !current.models.includes(current.model)) return;
+    saveCfg({ ...current, enabled: current.enabled === false });
+    restoreBackend(); syncEnabledButton(); playSfx('tab');
+    setStatusText(loadMode() === 'http' ? `AI 已重新开启：${current.model}` : 'AI 已关闭；连接配置和提示词均已保留。', loadMode() === 'http' ? 'ok' : 'idle');
+    render();
+  });
   el('show-key').addEventListener('click', () => { key.type = key.type === 'password' ? 'text' : 'password'; el('show-key').textContent = key.type === 'password' ? '显示' : '隐藏'; });
   refresh.addEventListener('click', async () => {
     refresh.disabled = true; save.disabled = true; model.disabled = true;
@@ -3719,7 +3732,7 @@ function openAISettings() {
   save.addEventListener('click', () => {
     const models = [...model.options].map((option) => option.value).filter(Boolean);
     if (!model.value || refreshedSignature !== signature()) { invalidate(); return; }
-    const ok = saveCfg({ provider: provider.value, protocol: protocol.value, baseUrl: url.value, key: key.value, model: model.value, models });
+    const ok = saveCfg({ enabled: true, provider: provider.value, protocol: protocol.value, baseUrl: url.value, key: key.value, model: model.value, models });
     if (!ok) { setStatusText('保存失败，请检查浏览器存储权限。', 'error'); return; }
     const firstConnection = recordSuccessfulApiConnection();
     restoreBackend(); playSfx('buy'); closeAISettings(); say(`AI 已启用：${model.value}`);

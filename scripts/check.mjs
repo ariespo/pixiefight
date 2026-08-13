@@ -55,6 +55,8 @@ for (const zone of ['throne', 'dungeon', 'army', 'shop', 'archive']) {
 for (const contract of ['function uiTasks()', 'function navigateUiTask(task)', 'const UI_DENSITY_KEY', 'const UI_SHELL_TOUR_KEY']) {
   if (!source.includes(contract)) throw new Error(`Missing global UI architecture contract: ${contract}`);
 }
+for (const contract of ['AI 总开关：已开启', 'AI 总开关：已关闭', 'saveCfg({ ...current, enabled:', 'enabled: true, provider: provider.value'])
+  if (!source.includes(contract)) throw new Error(`Missing persistent AI master-switch contract: ${contract}`);
 for (const contract of ['let battleCheckpoint = null', 'battleCheckpoint = structuredClone(S)', 'function recordFailedAttempt(', 'state.count >= 2', 'state.count >= 5', 'champ.xp = Math.max(0, (champ.xp || 0) + 1000)', 'const fullVictory = !!r.win && (r.skulls ?? 0) >= 3', 'recordFailedAttempt(raidNo, \'中途退出\')', 'function abortBattle()', 'if (battleCheckpoint) S = structuredClone(battleCheckpoint)', 'r.rolledBack = true', "button(hudGfx, hudLayer, hits, 338, 2, 42, 18, '退出'", "portraitActionMap.battleExit", "if (e.key === 'Escape') { abortBattle(); return; }"]) {
   if (!source.includes(contract)) throw new Error(`Missing reversible battle-exit contract: ${contract}`);
 }
@@ -70,6 +72,8 @@ if (!llmSource.includes("endpoint(clean.baseUrl, 'models')")) throw new Error('A
 for (const api of ['requestBattleDialogue', 'requestLiteraryReport', 'requestContextStory', 'requestHeroLore', 'requestPart', 'requestAffix']) {
   if (!llmSource.includes(`export async function ${api}`)) throw new Error(`Missing AI generation contract: ${api}`);
 }
+for (const contract of ["dialogue: 1600", "ask(battleDialoguePrompt(snap), 'dialogue', 12000)", '每人只写a攻击、s技能、r受伤各一句'])
+  if (!llmSource.includes(contract)) throw new Error(`Missing lightweight battle-dialogue contract: ${contract}`);
 for (const task of ['part', 'affix', 'scene', 'dialogue', 'report', 'context', 'heroLore']) {
   if (!llmSource.includes(`promptDirective('${task}')`)) throw new Error(`Editable AI task prompt is not wired: ${task}`);
 }

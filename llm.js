@@ -32,7 +32,7 @@ export const AI_PROMPT_TASKS = [
   { id: 'scene', name: '随机秘闻事件', defaultPrompt: '随机选择经营事故、荒诞访客、内部纠纷、危险交易或法则异象；事件名称鲜明，正文使用克制的黑色幽默。固有后果必须有利有弊，并严格落在游戏给出的安全数值范围。' },
   { id: 'storyReply', name: '玩家回应秘闻', defaultPrompt: '把玩家的自由回答当成真实行动来裁定：先叙述世界如何回应，再给出与行动逻辑一致、有得有失且数值克制的后果，不曲解玩家原意。' },
   { id: 'overtimeRaid', name: '线上无尽远征', defaultPrompt: '生成逐轮升级、职业组合有明确战术主题的勇者远征，并用地牢基层管理者视角的黑色幽默解释他们为何来送命。' },
-  { id: 'dialogue', name: '战前台词包', defaultPrompt: '台词要短、能区分角色身份，并体现地下城职场式黑色幽默。' },
+  { id: 'dialogue', name: '战前台词包', defaultPrompt: '每个角色只写最有辨识度的短句，优先体现种族、职业、技能和当前对手；黑色幽默来自对战斗、受伤与复活机制的解构。' },
   { id: 'report', name: '文学化战报', defaultPrompt: '叙述克制、有画面感，以地牢书记的冷峻口吻串联真实战斗数据。' },
   { id: 'context', name: '上下文秘闻', defaultPrompt: '优先回收人物、设施与旧档案细节，让新事件像长期历史的自然后果。' },
   { id: 'heroLore', name: '英雄档案', defaultPrompt: '性格与背景应互相解释，并从战绩和既有经历中提炼独有矛盾。' },
@@ -727,33 +727,31 @@ const cleanLine = (value, max = 24) => String(value ?? '').replace(/[\r\n]+/g, '
 
 export function battleDialoguePrompt(snap) {
   const keys = (snap?.units ?? []).map((unit) => unit.key);
-  const skeleton = {
-    opening: keys.slice(0, Math.min(3, keys.length)).map((key) => ({ key, text: '填写一句开场台词' })),
-    units: keys.map((key) => ({ key, attack: ['填写攻击台词一', '填写攻击台词二'], skill: ['填写技能台词'],
-      reaction: ['填写受伤台词一', '填写受伤台词二'], heal: ['填写恢复台词'], special: ['填写特殊效果台词'] })),
-  };
+  const skeleton = { opening: keys[0] ? [{ key: keys[0], text: '开场短句' }] : [],
+    units: keys.map((key) => ({ key, a: '攻击短句', s: '技能短句', r: '受伤短句' })) };
   return [
-    '你为中文像素风地牢经营游戏《勇者去死！》编写一场战前台词包。只输出 JSON，不要解释。',
-    '语气是地牢守方视角的黑色幽默。台词必须短、能在人物头顶两行内读完，不要描述伤害数值。',
-    '只使用输入中给出的 key；根据角色阵营、职业/种族、技能、性格、属性特征写出有辨识度的句子。',
+    '为《勇者去死！》生成极短战斗台词。只输出紧凑JSON。',
+    '每句2至16字；依据种族、职业、技能和对手写，禁止数值说明与职场套话。',
     promptDirective('dialogue'),
-    `本场恰好有${keys.length}个单位，units数组也必须恰好有${keys.length}项，并按给定key逐项填写。attack和reaction各写2句；skill、heal、special各写1句。即使通常不会治疗，也要写符合身份的恢复反应备用句。不得省略、合并角色或把数组留空。`,
-    `<战斗事实>${JSON.stringify(snap)}</战斗事实>`,
-    `必须严格填满下面这份与本场角色一一对应的JSON骨架；保留每个key，只替换所有“填写…”文字：${JSON.stringify(skeleton)}`,
+    `必须覆盖全部${keys.length}个key，每人只写a攻击、s技能、r受伤各一句；不要增加字段。`,
+    `事实:${JSON.stringify(snap)}`,
+    `格式:${JSON.stringify(skeleton)}`,
   ].join('\n');
 }
 
 export function sanitizeBattleDialogue(raw, snap) {
   if (!raw || typeof raw !== 'object') return null;
   const allowed = new Set((snap?.units ?? []).map((unit) => unit.key));
-  const cleanPool = (value) => Array.isArray(value)
-    ? [...new Set(value.map((line) => cleanLine(line, 22)).filter((line) => line.length >= 2))].slice(0, 3) : [];
+  const cleanPool = (value) => {
+    const values = Array.isArray(value) ? value : typeof value === 'string' ? [value] : [];
+    return [...new Set(values.map((line) => cleanLine(line, 22)).filter((line) => line.length >= 2))].slice(0, 2);
+  };
   const units = {};
   for (const item of Array.isArray(raw.units) ? raw.units.slice(0, 16) : []) {
     const key = String(item?.key ?? '');
     if (!allowed.has(key)) continue;
     const entry = {
-      attack: cleanPool(item.attack), skill: cleanPool(item.skill), reaction: cleanPool(item.reaction),
+      attack: cleanPool(item.attack ?? item.a), skill: cleanPool(item.skill ?? item.s), reaction: cleanPool(item.reaction ?? item.r),
       heal: cleanPool(item.heal), special: cleanPool(item.special),
     };
     if (Object.values(entry).some((pool) => pool.length)) units[key] = entry;
@@ -773,26 +771,7 @@ export function sanitizeBattleDialogue(raw, snap) {
 }
 
 export async function requestBattleDialogue(snap) {
-  const j = await ask(battleDialoguePrompt(snap), 'dialogue', 24000);
-  let pack = sanitizeBattleDialogue(j, snap);
-  const missing = (snap?.units ?? []).filter((unit) => !pack?.units?.[unit.key]);
-  if (missing.length) {
-    const supplementSnap = { ...snap, units: missing };
-    const supplement = sanitizeBattleDialogue(await ask([
-      battleDialoguePrompt(supplementSnap),
-      `这是缺失角色补写请求。只返回上述${missing.length}个key；任何一个都不能省略。`,
-    ].join('\n'), 'dialogue', 24000), supplementSnap);
-    if (supplement) {
-      const units = { ...(pack?.units ?? {}), ...supplement.units };
-      const opening = [...(pack?.opening ?? []), ...supplement.opening].slice(0, 4);
-      const expected = (snap?.units ?? []).length, covered = Object.keys(units).length;
-      const lines = opening.length + Object.values(units).reduce((total, entry) => total
-        + Object.values(entry).reduce((sum, pool) => sum + pool.length, 0), 0);
-      const coreCovered = Object.values(units).filter((entry) => entry.attack.length && entry.skill.length && entry.reaction.length).length;
-      pack = { opening, units, stats: { expected, covered, coreCovered, lines } };
-    }
-  }
-  return pack;
+  return sanitizeBattleDialogue(await ask(battleDialoguePrompt(snap), 'dialogue', 12000), snap);
 }
 
 // ---------- 文学化战报 ----------
@@ -876,7 +855,7 @@ export function makePlatformBackend()             {
         system: '你是一款中文 8-bit 地牢经营游戏的设计助手。严格只输出一个 JSON 对象，不要解释、不要 markdown 代码块。',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.9,
-        maxTokens: ({ scene: 700, dialogue: 3200, report: 1100, context: 800 })[opts.kind] ?? 320,
+        maxTokens: ({ scene: 700, dialogue: 1400, report: 1100, context: 800 })[opts.kind] ?? 320,
       });
       if (!r.ok) {
         const MSG                         = {
@@ -902,13 +881,13 @@ export function makeHttpBackend(cfg         )             {
     name: clean?.model ? `${presetById(clean.provider).name}・${clean.model}` : '外部模型',
     async complete(prompt, opts) {
       if (!clean?.baseUrl || !clean.model) throw new Error('请先刷新并选择模型');
-      const maxTokens = ({ scene: 850, storyReply: 650, overtimeRaid: 850, dialogue: 3600, report: 1100, context: 800, heroLore: 900,
+      const maxTokens = ({ scene: 850, storyReply: 650, overtimeRaid: 850, dialogue: 1600, report: 1100, context: 800, heroLore: 900,
         novelTurn: 1400, novelMission: 1000, novelSummary: 1400, part: 640, affix: 480 })[opts.kind] ?? 480;
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
       try {
         const anthropic = clean.protocol === 'anthropic';
-        const tokenAttempts = opts.kind === 'dialogue' ? [maxTokens, Math.max(6000, maxTokens)] : [maxTokens];
+        const tokenAttempts = [maxTokens];
         let emptyReason = '模型返回为空';
         for (let attempt = 0; attempt < tokenAttempts.length; attempt++) {
           const requestPrompt = attempt ? `${prompt}\n请缩短每句并立即输出完整JSON，不要输出思考过程。` : prompt;
@@ -966,6 +945,7 @@ export function normalizeCfg(value) {
   const baseUrl = normalizeBaseUrl(value.baseUrl ?? value.url ?? preset.baseUrl);
   if (!baseUrl) return null;
   return {
+    enabled: value.enabled !== false,
     provider,
     protocol: provider === 'custom' ? (value.protocol === 'anthropic' ? 'anthropic' : 'openai') : preset.protocol,
     baseUrl,
@@ -998,7 +978,7 @@ export function saveCfg(c                ) {
 // 默认使用本地回声；保存了有效外部配置后自动切到 HTTP 模型。
 export function restoreBackend()          {
   const c = loadCfg();
-  if (c?.model && c.models.includes(c.model)) { setBackend(makeHttpBackend(c)); return 'http'; }
+  if (c?.enabled !== false && c?.model && c.models.includes(c.model)) { setBackend(makeHttpBackend(c)); return 'http'; }
   setBackend(makeEchoBackend());
   return 'echo';
 }
@@ -1007,5 +987,5 @@ export function saveMode(mode         ) {
 }
 export function loadMode()          {
   const c = loadCfg();
-  return c?.model && c.models.includes(c.model) ? 'http' : 'echo';
+  return c?.enabled !== false && c?.model && c.models.includes(c.model) ? 'http' : 'echo';
 }

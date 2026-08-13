@@ -108,17 +108,13 @@ try {
     else if (prompt.includes('小说战役叙事者')) content = { body: '战后的账房里，巫妖把伤亡名单订成了员工手册。新来的幽灵坚持要求补发入职日期。',
       choices: ['补签昨天的入职日期，并要求账房逐字记录这份跨越死亡与欠薪的正式声明', '承认工龄', '把手册埋回去'], facts: { relations: ['幽灵开始信任巫妖'], promises: [], threads: ['员工手册仍会翻页'], places: ['战后账房'] } };
     else if (prompt.includes('维护小说战役的长期记忆')) content = { summary: '地牢的员工手册开始自行记录伤亡。', facts: { relations: ['幽灵开始信任巫妖'], promises: [], threads: ['员工手册仍会翻页'], places: ['战后账房'] } };
-    else if (prompt.includes('战前台词包')) {
+    else if (prompt.includes('生成极短战斗台词')) {
       dialogueApiCalls++;
       dialogueTokenBudgets.push(body.max_tokens);
-      if (dialogueApiCalls === 1) {
-        await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ choices: [{ finish_reason: 'length', message: { content: null, reasoning_content: '仍在构思' } }] }) });
-        return;
-      }
       content = { opening: [{ key: 'hero:剑士', text: '这次差旅没有返程票。' }], units: [
-        { key: 'hero:剑士', attack: ['报销单先斩了。'], skill: ['为了最低工资！'], reaction: ['这不在保险范围。'], heal: ['先把医药费记账。'], special: ['王国规定我还能站。'] },
-        { key: 'mon:史莱姆', attack: ['黏住再算账。'], skill: ['桶装冲锋开始。'], reaction: ['桶又要漏了。'], heal: ['把漏掉的黏液捡回来。'], special: ['这滩也算特殊工位。'] },
-        { key: 'mon:骷髅弓手', attack: ['箭也要走报销。'], skill: ['后排工位开始放箭。'], reaction: ['肋骨被扣绩效了。'], heal: ['把骨钉重新按回去。'], special: ['远程岗位拒绝近战。'] },
+        { key: 'hero:剑士', a: '剑先替我问路。', s: '这一剑不留遗言。', r: '伤口比地图诚实。' },
+        { key: 'mon:史莱姆', a: '黏糊糊地问好。', s: '整桶一起撞过去。', r: '漏一点还能爬。' },
+        { key: 'mon:骷髅弓手', a: '箭从骨缝里走。', s: '后排也能送葬。', r: '那根骨头本就松。' },
       ] };
     }
     else if (prompt.includes('战地书记')) content = { title: '门轴与加班费', summary: '剑士按规定入侵，按事故离场。',
@@ -154,6 +150,14 @@ try {
   for (let i = 0; i < 6; i++) await page.click('#online-mode-tour [data-tour="next"]');
   const completedApiTour = await page.evaluate(() => __debug.onlineModeTour);
   assert(!completedApiTour.open && completedApiTour.step === 'done', 'Online-mode tutorial did not complete and persist its one-time state.');
+  await page.evaluate(() => __debug.aiSettingsOpen());
+  await page.click('[data-ai="enabled"]');
+  const disabledAi = await page.evaluate(() => __debug.llm);
+  await page.click('[data-ai="enabled"]');
+  const reenabledAi = await page.evaluate(() => __debug.llm);
+  await page.click('[data-ai="close"]');
+  assert(disabledAi.mode === 'echo' && disabledAi.cfg?.enabled === false && reenabledAi.mode === 'http' && reenabledAi.cfg?.enabled === true,
+    `AI master switch did not preserve and restore the saved connection: ${JSON.stringify({ disabledAi, reenabledAi })}`);
   const customDeletion = await page.evaluate(async () => {
     const original = __debug.rawSave;
     const fixture = JSON.parse(original);
@@ -301,10 +305,10 @@ try {
     'The selected AI model did not provide the pre-battle dialogue pack.');
   assert(onboarding.battle?.dialoguePack?.stats?.coreCovered === onboarding.battle?.dialoguePack?.stats?.expected
     && onboarding.battle?.dialogue?.some((line) => line.text === '这次差旅没有返程票。') && onboarding.battle?.aiDialogueUsed > 0
-    && onboarding.battle?.liveDialogue?.dialogue.some((line) => ['报销单先斩了。', '为了最低工资！', '这不在保险范围。', '黏住再算账。', '桶装冲锋开始。', '桶又要漏了。'].includes(line.text)),
+    && onboarding.battle?.liveDialogue?.dialogue.some((line) => ['剑先替我问路。', '这一剑不留遗言。', '伤口比地图诚实。', '黏糊糊地问好。', '整桶一起撞过去。', '漏一点还能爬。'].includes(line.text)),
   `AI dialogue was parsed but did not enter the live battle dialogue stream: ${JSON.stringify(onboarding.battle?.dialoguePack)}`);
-  assert(dialogueApiCalls >= 2 && dialogueTokenBudgets[0] >= 3600 && dialogueTokenBudgets[1] >= 6000,
-    `Empty AI dialogue was not retried with a larger output budget: ${JSON.stringify({ dialogueApiCalls, dialogueTokenBudgets })}`);
+  assert(dialogueApiCalls === 1 && dialogueTokenBudgets[0] <= 1600,
+    `Battle dialogue did not stay within the single-call lightweight budget: ${JSON.stringify({ dialogueApiCalls, dialogueTokenBudgets })}`);
   assert(onboarding.unlocks[2].tabs.includes('archive') && onboarding.unlocks[2].pages.includes('report') && !onboarding.unlocks[2].pages.includes('hero'), 'Raid 2 unlock schedule is incorrect.');
   assert(!onboarding.unlocks[3].pages.includes('hero') && !onboarding.unlocks[3].tabs.includes('shop'), 'Raid 3 unlock schedule is incorrect.');
   assert(onboarding.unlocks[4].tabs.includes('shop') && !onboarding.unlocks[4].pages.includes('story') && !onboarding.unlocks[4].pages.includes('hero'), 'Raid 4 unlock schedule is incorrect.');
