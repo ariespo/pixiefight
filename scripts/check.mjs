@@ -30,6 +30,13 @@ for (const scene of SCENES) {
 for (const id of followups) if (!ids.has(id)) throw new Error(`Missing follow-up scene: ${id}`);
 
 const source = readFileSync('game.js', 'utf8');
+const battleSource = readFileSync('battle.js', 'utf8');
+for (const line of ['报销单先斩了。', '桶装冲锋开始。', '肋骨被扣绩效了。', '这次差旅没有返程票。']) {
+  if (!battleSource.includes(line)) throw new Error(`Missing promoted local battle dialogue: ${line}`);
+}
+if (!battleSource.includes('generatedLine(b, u, \'attack\') || localUnitLine')
+  || !battleSource.includes('generatedLine(b, tgt, \'reaction\') || localUnitLine'))
+  throw new Error('Promoted unit dialogue is not wired behind the AI dialogue priority.');
 if (!source.includes("const GAME_NAME = '勇者去死！'")) throw new Error('The unified player-visible game name is missing.');
 if (/夜曲地牢|夜 曲 地 牢/.test(source)) throw new Error('A legacy game title remains in game.js.');
 for (const zone of ['throne', 'dungeon', 'army', 'shop', 'archive']) {

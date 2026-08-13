@@ -387,6 +387,27 @@ const ATTACK_LINES = {
   hero: ['破绽在这里！', '别给它喘息！', '压住它！', '这一击开路！', '跟上我的节奏！', '先解决眼前这个！', '守住队形，我来！', '往关节打！'],
   mon: ['留下来！', '尝尝这个！', '别想越过我！', '王座不欢迎你！', '撕开那身甲！', '把火把留下！', '再往前一步试试！', '地牢会吞掉你！'],
 };
+// AI 回归中临时创作、且符合角色身份的句子沉淀为本地专属池。专属池只会由
+// 对应职业/种族抽取，并与通用池混用，避免关闭 AI 后所有人说同一种“会计腔”。
+const LOCAL_UNIT_LINES = {
+  'hero:剑士': {
+    attack: ['报销单先斩了。'], skill: ['为了最低工资！'], reaction: ['这不在保险范围。'],
+    heal: ['先把医药费记账。'], special: ['王国规定我还能站。'],
+  },
+  'mon:史莱姆': {
+    attack: ['黏住再算账。'], skill: ['桶装冲锋开始。'], reaction: ['桶又要漏了。'],
+    heal: ['把漏掉的黏液捡回来。'], special: ['这滩也算特殊工位。'],
+  },
+  'mon:骷髅弓手': {
+    attack: ['箭也要走报销。'], skill: ['后排工位开始放箭。'], reaction: ['肋骨被扣绩效了。'],
+    heal: ['把骨钉重新按回去。'], special: ['远程岗位拒绝近战。'],
+  },
+};
+
+function localUnitLine(b, u, kind, chance = 0.5) {
+  const pool = LOCAL_UNIT_LINES[`${u.side}:${u.name}`]?.[kind];
+  return Array.isArray(pool) && pool.length && b.rng() < chance ? pickLine(pool, b.rng) : '';
+}
 const BACK_ATTACK_LINES = {
   hero: ['后排露出来了！', '治疗者先倒！', '越过前线，取后阵！', '你躲得不够远！'],
   mon: ['抓到后排了！', '先掐灭施法者！', '前排救不了你！', '从队尾开始撕！'],
@@ -422,23 +443,23 @@ function attackSpeech(b, u, tgt) {
   if (b.rng() > 0.24) return;
   const side = u.side === 'hero' ? 'hero' : 'mon';
   const pool = tgt?.row === 1 ? BACK_ATTACK_LINES[side] : ATTACK_LINES[side];
-  speak(b, u, generatedLine(b, u, 'attack') || pickLine(pool, b.rng), 'attack');
+  speak(b, u, generatedLine(b, u, 'attack') || localUnitLine(b, u, 'attack', 0.55) || pickLine(pool, b.rng), 'attack');
 }
 
 function skillSpeech(b, u, nature, fallback) {
   const pool = SKILL_LINES[nature] ?? SKILL_LINES.strike;
-  speak(b, u, generatedLine(b, u, 'skill') || pickLine(pool, b.rng) || fallback, 'skill', true);
+  speak(b, u, generatedLine(b, u, 'skill') || localUnitLine(b, u, 'skill', 0.65) || pickLine(pool, b.rng) || fallback, 'skill', true);
 }
 
 function specialSpeech(b, u, kind) {
   const pool = SPECIAL_LINES[kind];
   // 特殊机制必须留下对白/战报记录；同一瞬间若连续触发，画面仍只保留该单位最后一句。
-  if (pool) speak(b, u, generatedLine(b, u, 'special') || pickLine(pool, b.rng), kind, true);
+  if (pool) speak(b, u, generatedLine(b, u, 'special') || localUnitLine(b, u, 'special', 0.45) || pickLine(pool, b.rng), kind, true);
 }
 
 function recoverySpeech(b, u) {
   const pool = u.side === 'hero' ? RECOVERY_LINES.hero : RECOVERY_LINES.mon;
-  speak(b, u, generatedLine(b, u, 'heal') || pickLine(pool, b.rng), 'heal');
+  speak(b, u, generatedLine(b, u, 'heal') || localUnitLine(b, u, 'heal', 0.55) || pickLine(pool, b.rng), 'heal');
 }
 
 function impactText(dmg        , tgt      )          {
@@ -485,7 +506,7 @@ function logHit(b        , src      , tgt      , dmg        , action        , he
   log(b, `${src.name}对${tgt.name}${action}，造成${dmg}点伤害（${imp}）`, tone);
   const beforeHp = Math.min(tgt.maxHp, Math.max(dmg, tgt.hp + dmg));
   if (dmg / Math.max(1, tgt.maxHp) >= 0.05 || dmg / Math.max(1, beforeHp) >= 0.14 || tgt.hp / Math.max(1, tgt.maxHp) < 0.35) {
-    const line = generatedLine(b, tgt, 'reaction') || reactionText(tgt, dmg, beforeHp, rng ?? b.rng);
+    const line = generatedLine(b, tgt, 'reaction') || localUnitLine(b, tgt, 'reaction', 0.5) || reactionText(tgt, dmg, beforeHp, rng ?? b.rng);
     log(b, `　${tgt.name}：${line}`, tone);
     speak(b, tgt, line, 'reaction');
   }
@@ -498,7 +519,7 @@ const HERO_ROOM_LINES = [
   '伤员站中间，前排跟我上。', '这间房交给我们，速战速决。', '不要分散火力，逐个击破。',
   '墙缝里有风，附近一定还有暗道。', '先听呼吸声，再决定砍哪边。', '别追倒下的，活着的更危险。',
   '盾沿贴紧，别给它们钻进队列。', '地上的灰是新的，守军刚换过岗。', '治疗者报位置，别等受伤才喊。',
-  '门后若没有声音，反而要更小心。', '把退路记住，我们可能得抬人出去。',
+  '门后若没有声音，反而要更小心。', '把退路记住，我们可能得抬人出去。', '这次差旅没有返程票。',
 ];
 const HERO_PARTY_BANTER = [
   ['这地方闻起来像墓地。', '好消息，我们已经省了返程车费。'],
