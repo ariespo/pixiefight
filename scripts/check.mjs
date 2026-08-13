@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { SCENES } from '../story.js';
 import { TEXTURES, RAIDS, RAID_BRIEFINGS, NORMAL_RAID_COUNT, raidAffixInfo } from '../data.js';
 import { createBattle, stepBattle, effectiveThorns, effectiveMitigationMultiplier, armorMultiplier, raidKillBoneValue } from '../battle.js';
-import { newChamp, champStats, tickFatigue } from '../heroes.js';
+import { BACKGROUNDS, newChamp, champStats, tickFatigue } from '../heroes.js';
 import { AFFIX_POWER, POWER_MENU, clampAffixDraft, clampDraft } from '../modules.js';
 import { WORKSHOP_RESEARCH, researchDirectMultiplier, researchEffects, researchPoisonApplication, researchTrapThroughput } from '../research.js';
 import { sanitizeScene } from '../llm.js';
@@ -65,6 +65,14 @@ if (!source.includes("const PAGE_ZONE = { throne: 'throne', dungeon: 'dungeon', 
 if (!source.includes('measureWrappedText(guide[1], textW, 12)') || !source.includes('guideLayout = portraitGuideBanner'))
   throw new Error('Portrait tutorial text is not using measured adaptive-height layout.');
 const llmSource = readFileSync('llm.js', 'utf8');
+for (const background of BACKGROUNDS) {
+  if (/勇者军|王国军|人类冒险者|被俘后归顺|勇者逃兵/.test(`${background.name}${background.story}`))
+    throw new Error(`Player-side hero background crosses faction boundary: ${background.id}`);
+}
+for (const contract of ['属于魔物、并被王国视作敌人的地下城', '成为魔物自己的英雄', '魔物阵营的英雄与地牢守军统领'])
+  if (!source.includes(contract)) throw new Error(`Missing player-faction worldbuilding contract: ${contract}`);
+if (!llmSource.includes('绝不是王国勇者、人类冒险者、被俘后归顺的敌军或勇者军逃兵'))
+  throw new Error('AI hero-lore prompt does not enforce the player hero faction boundary.');
 for (const provider of ['openai', 'anthropic', 'deepseek', 'glm', 'kimi', 'custom']) {
   if (!llmSource.includes(`id: '${provider}'`)) throw new Error(`Missing AI provider preset: ${provider}`);
 }

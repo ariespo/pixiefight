@@ -35,7 +35,7 @@ export const AI_PROMPT_TASKS = [
   { id: 'dialogue', name: '战前台词包', defaultPrompt: '每个角色只写最有辨识度的短句，优先体现种族、职业、技能和当前对手；黑色幽默来自对战斗、受伤与复活机制的解构。' },
   { id: 'report', name: '文学化战报', defaultPrompt: '叙述克制、有画面感，以地牢书记的冷峻口吻串联真实战斗数据。' },
   { id: 'context', name: '上下文秘闻', defaultPrompt: '优先回收人物、设施与旧档案细节，让新事件像长期历史的自然后果。' },
-  { id: 'heroLore', name: '英雄档案', defaultPrompt: '性格与背景应互相解释，并从战绩和既有经历中提炼独有矛盾。' },
+  { id: 'heroLore', name: '英雄档案', defaultPrompt: '性格与背景应互相解释，并从战绩和既有经历中提炼独有矛盾；这是魔物阵营的英雄，不是王国勇者。' },
 ];
 
 const PROMPT_KEY = 'yqh-ai-task-prompts-v1';
@@ -472,6 +472,7 @@ export function heroLorePrompt(snap) {
   return [
     '你为中文像素风地牢经营游戏《勇者去死！》重构一名英雄档案。只输出 JSON，不要解释。',
     '根据种族、姓名、特质、称号、战绩、旧性格和旧背景，写出彼此呼应且专属于该英雄的性格与背景。',
+    '阵营硬规则：这里的“英雄”是从魔物中脱颖而出的传奇个体、守军统领和地牢居民；绝不是王国勇者、人类冒险者、被俘后归顺的敌军或勇者军逃兵。王国及其勇者、军队和教会是入侵地下城的敌对方。',
     '保持地牢守方视角与克制的黑色幽默；不得改变英雄数值、特质、称号、经历或其他事实。',
     promptDirective('heroLore'),
     'personalityName 2至4个汉字，personalityDesc 30至70字；backgroundName 2至7个汉字，backgroundStory 80至180字。',

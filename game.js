@@ -1462,7 +1462,7 @@ const ROUND_TUTORIALS = {
     { page: 'story', target: 'storyArea', title: '秘闻开放', detail: '经营与战斗会产生秘闻线索，选择会明确改变后续数轮的战斗或经营效果。' },
   ],
   6: [
-    { page: 'hero', target: 'heroRoster', title: '获赠巫妖英雄', detail: '地牢获赠一名资质丙的巫妖英雄。英雄是有名字的长期个体，资质影响基础成长，但培养方向更重要。' },
+    { page: 'hero', target: 'heroRoster', title: '获赠巫妖英雄', detail: '地牢获赠一名资质丙的巫妖英雄。这里的英雄是从魔物中脱颖而出的传奇个体与守军统领，不是王国勇者；资质影响基础成长，但培养方向更重要。' },
     { page: 'hero', target: 'heroTraits', title: '特性与档案', detail: '详情页记录英雄特性、性格和背景；特性会改变战斗方式，也可以支付资源重新随机。' },
     { page: 'hero', target: 'heroGear', title: '装备系统', detail: '英雄有冠、铠、饰三个装备槽。战斗会掉落装备，第7轮才开放主动锻造。' },
     { page: 'hero', target: 'heroTitle', title: '称号系统', detail: '称号由战斗履历解锁，可反复切换并提供不同加成；未达成的称号会显示下一目标。' },
@@ -1791,6 +1791,7 @@ function heroLoreOf(c) {
 function heroLoreSnapshot(c) {
   const base = heroLoreOf(c), kind = champKind(c);
   return {
+    faction: '魔物阵营的英雄与地牢守军统领；王国勇者是敌人',
     name: c.name, race: kind.name, level: c.lv, potential: POT_NAME[S.champPot[c.uid] ?? c.potential ?? 0],
     traits: c.traits.map((id) => ({ name: TRAITS[id]?.name, description: TRAITS[id]?.desc })).filter((item) => item.name),
     title: titleOf(c)?.name ?? '', battles: c.battles, kills: c.kills, wounds: c.wounds ?? 0,
@@ -2073,7 +2074,7 @@ function syncIntroDom() {
     document.body.appendChild(introDomRoot);
   }
   introDomRoot.style.display = 'grid';
-  introDomRoot.querySelector('[data-intro-title]').textContent = `${S.playerName}的创业说明会`;
+  introDomRoot.querySelector('[data-intro-title]').textContent = `${S.playerName}的敌对势力成立声明`;
   introDomRoot.querySelector('[data-intro-copy]').textContent = introStoryText();
 }
 
@@ -2625,7 +2626,7 @@ function render() {
 }
 
 function introStoryText() {
-  return `你原本也是一位体面的魔王——至少名片上这么写。后来同行嫌你穷，王国嫌你偏，债主则认为两者都是优点，于是把你发配到边境乡下。\n\n这里唯一的产业，是一座漏风、欠税、尚未被勇者正式发现的地下城：${S.lairName}。你带着95骨币、18魔质和一份无法报销的雄心抵达。\n\n从今天起，${S.playerName}要招募怪物、经营房间、应付英雄，并说服一批批勇者：死亡不是失败，只是他们职业生涯中最后一次考核。`;
+  return `你曾经也是一位体面的魔王——至少魔界流放名单上这么写。同行嫌你穷，王国嫌你活着，于是双方难得达成共识，把你挤到边境荒地。\n\n王国地图把这里标作“待开发领土”。你把废弃矿坑钉上名字：${S.lairName}。从今天起，它不是临时窝点，而是一座属于魔物、并被王国视作敌人的地下城。你带着95骨币、18魔质和几只尚未学会列队的魔物抵达。\n\n它们不是没有名字的耗材。最强者会获得称号、专精与统领席，成为魔物自己的英雄。王国不会承认这一点，只会派勇者来清剿。${S.playerName}要做的也不是证明清白，而是让第一名误闯此地的剑士明白：这里有主人，门从里面锁。`;
 }
 
 function buildIntro() {
@@ -4524,12 +4525,12 @@ function openIdentitySetup(doctrineId = 'default') {
   const rootNode = document.createElement('div'); rootNode.id = 'identity-setup';
   rootNode.style.cssText = 'position:fixed;inset:0;z-index:90;display:flex;align-items:center;justify-content:center;padding:14px;box-sizing:border-box;background:rgba(4,3,8,.93);font-family:monospace;color:#eadcae';
   rootNode.innerHTML = `<div style="width:min(460px,96vw);box-sizing:border-box;padding:20px;border:3px solid #e2bd64;background:#191423;box-shadow:0 0 0 3px #21172d">
-    <div style="font-size:22px;color:#e2bd64;margin-bottom:8px">登记偏远地区创业主体</div>
-    <div style="font-size:13px;line-height:1.55;color:#918aa0;margin-bottom:16px">王国要求每一位魔王和每一处地牢都有名字，主要方便寄送讨伐通知与欠税单。</div>
+    <div style="font-size:22px;color:#e2bd64;margin-bottom:8px">为敌对地下城命名</div>
+    <div style="font-size:13px;line-height:1.55;color:#918aa0;margin-bottom:16px">王国地图把这里标成“待清理魔物巢穴”。你决定先纠正名称：敌人可以来讨伐，但至少应该死在写对名字的地方。</div>
     <label style="display:block;margin:10px 0">魔王姓名<div style="display:flex;gap:8px;margin-top:6px"><input data-id="lord" maxlength="12"><button data-roll="lord" title="随机姓名">🎲</button></div></label>
     <label style="display:block;margin:10px 0">地牢名称<div style="display:flex;gap:8px;margin-top:6px"><input data-id="lair" maxlength="16"><button data-roll="lair" title="随机地牢名">🎲</button></div></label>
     <div data-error style="min-height:20px;color:#ed6b6b;font-size:12px"></div>
-    <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:10px;margin-top:8px"><button data-cancel>返回</button><button data-confirm>提交创业备案</button></div></div>`;
+    <div style="display:grid;grid-template-columns:1fr 1.5fr;gap:10px;margin-top:8px"><button data-cancel>返回</button><button data-confirm>钉上地牢名牌</button></div></div>`;
   const css = document.createElement('style'); css.textContent = '#identity-setup input,#identity-setup button{box-sizing:border-box;min-height:44px;border:1px solid #76698a;background:#272033;color:#f1e5bd;font:16px monospace;padding:8px}#identity-setup input{width:100%;flex:1}#identity-setup button{cursor:pointer}#identity-setup button:focus,#identity-setup input:focus{outline:1px solid #e2bd64;border-color:#e2bd64}';
   rootNode.prepend(css); document.body.appendChild(rootNode); identityRoot = rootNode;
   const lord = rootNode.querySelector('[data-id="lord"]'), lair = rootNode.querySelector('[data-id="lair"]');
@@ -4539,7 +4540,7 @@ function openIdentitySetup(doctrineId = 'default') {
   rootNode.querySelector('[data-cancel]').onclick = () => { closeIdentitySetup(); render(); };
   rootNode.querySelector('[data-confirm]').onclick = () => {
     const identity = { playerName: lord.value.trim().slice(0, 12), lairName: lair.value.trim().slice(0, 16) };
-    if (!identity.playerName || !identity.lairName) { rootNode.querySelector('[data-error]').textContent = '姓名和地牢名都不能留空——欠税单需要收件人。'; return; }
+    if (!identity.playerName || !identity.lairName) { rootNode.querySelector('[data-error]').textContent = '姓名和地牢名都不能留空——讨伐令至少要写对收件人。'; return; }
     closeIdentitySetup(); beginNewRun(pendingDoctrine, identity);
   };
   lord.focus();
@@ -4557,7 +4558,7 @@ async function beginNewRun(doctrineId = 'default', identity = null) {
   persist();
   playMusic('bgm-manage');
   scheduleLayout(); render();
-  say(`${S.playerName}已接管${S.lairName}`);
+  say(`${S.playerName}已在王国边境升起${S.lairName}的旗帜`);
 }
 
 function finishIntro() {
@@ -4611,7 +4612,7 @@ function buildTitle() {
   const throne = sprite('icon-throne', 240, titleMode === 'main' ? 156 : 60, titleMode === 'main' ? 92 : 52);
   throne.alpha = 0.72; overlay.addChild(throne);
   labelC(overlay, GAME_NAME, 240, 20, 25, C.gold);
-  labelC(overlay, '经营黑暗 · 守住王座', 240, 50, 11, C.bone);
+  labelC(overlay, '集结魔物 · 抵御王国', 240, 50, 11, C.bone);
   button(g, overlay, hits, 390, 8, 82, 22, `档位 ${getActiveSlot()}`, () => void openSaveManager(), { size: 10, border: C.gold, color: C.gold });
   const bg = new PIXI.Graphics(); overlay.addChild(bg);
   if (titleMode === 'main') {
@@ -5561,7 +5562,7 @@ function drawPortraitTitle() {
   const throne = sprite('icon-throne', w / 2, artTop + Math.min(150, h * 0.18), Math.min(128, w * 0.32));
   throne.alpha = 0.65; portraitLayer.addChild(throne);
   labelC(portraitLayer, GAME_NAME, w / 2, artTop, Math.max(25, Math.min(36, w * 0.085)), C.gold);
-  labelC(portraitLayer, '经营黑暗 · 守住王座', w / 2, artTop + 45, 14, C.bone);
+  labelC(portraitLayer, '集结魔物 · 抵御王国', w / 2, artTop + 45, 14, C.bone);
   button(portraitGfx, portraitLayer, portraitHits, w - 104, artTop + 78, 86, 38, `档位 ${getActiveSlot()}`, () => void openSaveManager(), { size: 14, border: C.gold, color: C.gold });
   const margin = 18;
   if (titleMode === 'main') {
@@ -7821,7 +7822,7 @@ function pageHero(g               ) {
 function drawRoster(g               ) {
   panelF(g, uiLayer, 'stone', 4, 58, 158, 176, C.wall);
   if (!S.champs.length) {
-    boundedText(uiLayer, '麾下还没有英雄。去「征召」选一位传奇族个体：它们有名字、会升级，坐统领席带兵。', 12, 70, 142, 70, 12, C.stoneLit);
+    boundedText(uiLayer, '麾下还没有魔物英雄。去「征召」选一位传奇族个体：它们是地牢的长期成员，有名字、会升级，也能坐统领席带兵。', 12, 70, 142, 70, 12, C.stoneLit);
   }
   const pr = paged('roster', S.champs, 5);
   let y = 64;

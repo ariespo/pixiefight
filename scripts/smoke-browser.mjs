@@ -978,7 +978,7 @@ try {
   assert(introLarge.screen === 'intro' && introLarge.viewport.scale === 3
     && introLarge.viewport.logicalFrame.x >= 0 && introLarge.viewport.logicalFrame.y >= 0
     && introLarge.viewport.logicalFrame.right <= 2560 && introLarge.viewport.logicalFrame.bottom <= 1440
-    && introLarge.text?.includes('职业生涯中最后一次考核') && !introLarge.text.includes('…')
+    && introLarge.text?.includes('成为魔物自己的英雄') && introLarge.text.includes('王国不会承认这一点') && !introLarge.text.includes('…')
     && introLarge.nativeCta?.left >= 0 && introLarge.nativeCta?.top >= 0
     && introLarge.nativeCta?.right <= 2560 && introLarge.nativeCta?.bottom <= 1440,
   `2K opening screen is not centered at a bounded scale: ${JSON.stringify(introLarge)}`);
