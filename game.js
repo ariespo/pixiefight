@@ -1818,6 +1818,35 @@ const UHD_SCREEN_SCALE = 4;
 const loadingEl   = document.getElementById('loading');
 const loadingText = document.getElementById('loading-text');
 const loadingFill = document.getElementById('loading-fill');
+let introActionButton = null;
+
+function syncIntroActionButton() {
+  if (screen !== 'intro' || !app.canvas) {
+    if (introActionButton) introActionButton.style.display = 'none';
+    return;
+  }
+  if (!introActionButton) {
+    introActionButton = document.createElement('button');
+    introActionButton.id = 'intro-action-button';
+    introActionButton.type = 'button';
+    introActionButton.setAttribute('aria-label', '开门营业');
+    introActionButton.style.cssText = 'position:fixed;z-index:40;margin:0;padding:0;border:0;background:transparent;color:transparent;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent';
+    introActionButton.addEventListener('click', () => {
+      if (screen !== 'intro') return;
+      unlockAndPlay();
+      finishIntro();
+    });
+    document.body.appendChild(introActionButton);
+  }
+  const rect = app.canvas.getBoundingClientRect();
+  const kx = rect.width / Math.max(1, app.screen.width);
+  const ky = rect.height / Math.max(1, app.screen.height);
+  introActionButton.style.display = 'block';
+  introActionButton.style.left = `${rect.left + (root.x + 282 * viewScale) * kx}px`;
+  introActionButton.style.top = `${rect.top + (root.y + 208 * viewScale) * ky}px`;
+  introActionButton.style.width = `${174 * viewScale * kx}px`;
+  introActionButton.style.height = `${50 * viewScale * ky}px`;
+}
 
 function setLoading(percent, label) {
   const pct = Math.max(0, Math.min(100, Math.round(percent)));
@@ -2299,6 +2328,7 @@ function clearUi() {
 function render() {
   novelInputRect = null;
   portraitChromeKey = '';
+  if (screen !== 'intro') syncIntroActionButton();
   if (nameInput) nameInput.style.display = screen === 'manage' && (stitch || smith) && !detailPopup ? 'block' : 'none';
   if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !detailPopup ? 'block' : 'none';
   if (screen === 'manage' && !lawAudit && !raidBriefing && !detailPopup && !researchModal && !stitch && !forge && !graft && !smith) {
@@ -2367,17 +2397,19 @@ function render() {
 function buildIntro() {
   for (const c of overlay.removeChildren()) c.destroy({ children: true });
   hits.clear();
+  resetBoundedTextAudit();
   const g = new PIXI.Graphics(); overlay.addChild(g);
   g.rect(0, 0, VIEW_W, VIEW_H).fill(0x050408);
-  const throne = sprite('icon-throne', 78, 190, 82); throne.alpha = 0.52; overlay.addChild(throne);
-  label(overlay, `${S.playerName}的创业说明会`, 28, 24, 18, C.gold);
-  panelF(g, overlay, 'scroll', 24, 58, 432, 144, C.wall);
-  const intro = `你原本也是一位体面的魔王——至少名片上这么写。后来同行嫌你穷，王国嫌你偏，债主则认为两者都是优点，于是把你发配到边境乡下。\n\n这里唯一的产业，是一座漏风、欠税、尚未被勇者正式发现的地下城：${S.lairName}。你带着95骨币、18魔质和一份无法报销的雄心抵达。\n\n从今天起，${S.playerName}要招募怪物、经营房间、应付英雄，并说服一批批勇者：死亡不是失败，只是他们职业生涯中最后一次考核。`;
-  boundedText(overlay, intro, 42, 72, 396, 118, 11, C.bone);
-  button(g, overlay, hits, 300, 216, 138, 34, '开门营业', finishIntro, { size: 15, fill: C.redDark, border: C.gold, color: C.white });
+  const throne = sprite('icon-throne', 70, 204, 72); throne.alpha = 0.42; overlay.addChild(throne);
+  label(overlay, `${S.playerName}的创业说明会`, 28, 14, 18, C.gold);
+  panelF(g, overlay, 'scroll', 24, 42, 432, 164, C.wall);
+  const intro = `你原本也是一位体面的魔王——至少名片上这么写。后来同行嫌你穷，王国嫌你偏，债主则认为两者都是优点，于是把你发配到边境乡下。\n这里唯一的产业，是一座漏风、欠税、尚未被勇者正式发现的地下城：${S.lairName}。你带着95骨币、18魔质和一份无法报销的雄心抵达。\n从今天起，${S.playerName}要招募怪物、经营房间、应付英雄，并说服一批批勇者：死亡不是失败，只是他们职业生涯中最后一次考核。`;
+  boundedText(overlay, intro, 42, 54, 396, 140, 11, C.bone);
+  button(g, overlay, hits, 300, 222, 138, 34, '开门营业', finishIntro, { size: 15, fill: C.redDark, border: C.gold, color: C.white });
   // 高分屏和浏览器缩放下保留更宽松的真实命中区，视觉按钮仍维持原尺寸。
-  hits.add(282, 206, 174, 52, finishIntro);
-  titleActionRects.intro = { x: 300, y: 216, w: 138, h: 34 };
+  hits.add(282, 208, 174, 50, finishIntro);
+  titleActionRects.intro = { x: 300, y: 222, w: 138, h: 34 };
+  syncIntroActionButton();
 }
 
 function drawWorkshopResearch() {

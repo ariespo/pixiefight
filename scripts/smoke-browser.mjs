@@ -762,7 +762,7 @@ try {
 
   // Large desktop canvases use bounded integer pixel scaling. The opening CTA must remain
   // comfortably inside the viewport and respond to a real physical click at 2K size.
-  const largeContext = await browser.newContext({ viewport: { width: 2560, height: 1440 } });
+  const largeContext = await browser.newContext({ viewport: { width: 2560, height: 1440 }, deviceScaleFactor: 1.25 });
   const largePage = await largeContext.newPage();
   const largeErrors = [];
   largePage.on('pageerror', (error) => largeErrors.push(error.stack || error.message));
@@ -770,12 +770,19 @@ try {
   await largePage.goto(url, { waitUntil: 'domcontentloaded' });
   await largePage.waitForFunction(() => window.__gpReady && window.__debug, null, { timeout: 20000 });
   await largePage.evaluate(() => __debug.titleNew());
-  await largePage.evaluate(async () => { await __debug.identityStart('大屏魔王', '大屏地牢'); });
-  const introLarge = await largePage.evaluate(() => ({ screen: __debug.screen, viewport: __debug.viewport(), cta: __debug.toScreen(369, 233) }));
+  await largePage.evaluate(async () => { await __debug.identityStart('大屏魔王测试名', '边境超长地下创业试验地牢'); });
+  const introLarge = await largePage.evaluate(() => ({
+    screen: __debug.screen, viewport: __debug.viewport(), cta: __debug.toScreen(369, 239),
+    text: __debug.uiBounds().records.find((record) => record.text.includes('职业生涯中最后一次考核')),
+    nativeCta: document.getElementById('intro-action-button')?.getBoundingClientRect().toJSON(),
+  }));
   assert(introLarge.screen === 'intro' && introLarge.viewport.scale === 3
     && introLarge.viewport.logicalFrame.x >= 0 && introLarge.viewport.logicalFrame.y >= 0
     && introLarge.viewport.logicalFrame.right <= 2560 && introLarge.viewport.logicalFrame.bottom <= 1440
-    && introLarge.cta.x > 0 && introLarge.cta.x < 2560 && introLarge.cta.y > 0 && introLarge.cta.y < 1440,
+    && introLarge.cta.x > 0 && introLarge.cta.x < 2560 && introLarge.cta.y > 0 && introLarge.cta.y < 1440
+    && introLarge.text && !introLarge.text.truncated && introLarge.text.displayed === introLarge.text.text
+    && introLarge.nativeCta && introLarge.cta.x >= introLarge.nativeCta.left && introLarge.cta.x <= introLarge.nativeCta.right
+    && introLarge.cta.y >= introLarge.nativeCta.top && introLarge.cta.y <= introLarge.nativeCta.bottom,
   `2K opening screen is not centered at a bounded scale: ${JSON.stringify(introLarge)}`);
   await largePage.mouse.click(introLarge.cta.x, introLarge.cta.y);
   await largePage.waitForFunction(() => __debug.screen === 'manage', null, { timeout: 5000 });
