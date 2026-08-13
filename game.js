@@ -2414,9 +2414,6 @@ function introStoryText() {
 function buildIntro() {
   for (const c of overlay.removeChildren()) c.destroy({ children: true });
   hits.clear();
-  const g = new PIXI.Graphics(); overlay.addChild(g);
-  g.rect(0, 0, VIEW_W, VIEW_H).fill(0x050408);
-  const throne = sprite('icon-throne', VIEW_W / 2, 238, 146); throne.alpha = 0.22; overlay.addChild(throne);
   syncIntroDom();
 }
 
@@ -4328,7 +4325,15 @@ async function beginNewRun(doctrineId = 'default', identity = null) {
   say(`${S.playerName}已接管${S.lairName}`);
 }
 
-function finishIntro() { S.introSeen = true; screen = 'manage'; persist(); playMusic('bgm-manage'); scheduleLayout(); render(); maybeOpenOnlineModeTour(); }
+function finishIntro() {
+  if (screen !== 'intro') return;
+  S.introSeen = true;
+  for (const c of overlay.removeChildren()) c.destroy({ children: true });
+  hits.clear();
+  screen = 'manage';
+  syncIntroDom();
+  persist(); playMusic('bgm-manage'); scheduleLayout(); render(); maybeOpenOnlineModeTour();
+}
 
 function continueGame() {
   if (!saveExists) { titleMode = meta.clears > 0 ? 'doctrine' : 'main'; render(); return; }
@@ -9472,7 +9477,9 @@ window.__debug = {
     const rect = host?.getBoundingClientRect();
     return { width: app.screen.width, height: app.screen.height, scale: viewScale, portrait, smallScreen, rotateHint: !!rotateNode?.visible,
       portraitChrome: portraitLayer.visible, portraitContentBottom, portraitLayout: portraitLayoutInfo ? { ...portraitLayoutInfo } : null,
-      nativePortrait: portraitNativeManage(), rootVisible: root.visible,
+      nativePortrait: portraitNativeManage(), rootVisible: root.visible, uiVisible: uiLayer.visible,
+      introDomVisible: !!introDomRoot && getComputedStyle(introDomRoot).display !== 'none', overlayChildren: overlay.children.length,
+      overlayBlockers: overlay.children.map((node) => node.getLocalBounds()).filter((bounds) => bounds.width >= VIEW_W - 4 && bounds.height >= VIEW_H - 4).length,
       logicalFrame: { x: root.x, y: root.y, width: VIEW_W * viewScale, height: VIEW_H * viewScale,
         right: root.x + VIEW_W * viewScale, bottom: root.y + VIEW_H * viewScale },
       portraitActions: { ...portraitActionMap },

@@ -813,6 +813,9 @@ try {
   `2K opening screen is not centered at a bounded scale: ${JSON.stringify(introLarge)}`);
   await largePage.locator('#intro-screen [data-intro-enter]').click();
   await largePage.waitForFunction(() => __debug.screen === 'manage', null, { timeout: 5000 });
+  const introExit = await largePage.evaluate(() => __debug.viewport());
+  assert(introExit.uiVisible && !introExit.introDomVisible && introExit.overlayBlockers === 0,
+    `Opening action changed state but left a black intro layer above management: ${JSON.stringify(introExit)}`);
   const largeViewportAudit = [];
   for (const viewport of [{ width: 1920, height: 1080 }, { width: 2048, height: 1152 }, { width: 2560, height: 1440 },
     { width: 3440, height: 1440 }, { width: 3840, height: 2160 }]) {
