@@ -574,7 +574,8 @@ try {
     const boostedBoneYield = __debug.floors[0].output.bone;
     __debug.devUtility(1, 'mana-well', 1, 100);
     const boostedManaYield = __debug.floors[1].output.mana;
-    __debug.devUtility(1, 'none');
+    __debug.devUtility(1, 'vault', 1, 100);
+    const vaultBoostedBoneYield = __debug.floors[0].output.bone;
     __debug.devEconomySettle([0]);
     __debug.devEconomySettle([0]);
     __debug.devEconomySettle([0]);
@@ -627,7 +628,7 @@ try {
     const forcedHero = __debug.champs.find((hero) => hero.uid === heroA);
     const forcePaid = __debug.bone === forceBefore.bone - 300 && __debug.mana === forceBefore.mana - 100;
     const audit = __debug.uiBounds();
-    return { relationLead: !!relationLead, sameSubjectBlocked, optimizedLore, facilityActionLock, facility, boostedBoneYield, boostedManaYield, forcePaid, firstForceClick, secondForceClick, forcedHero, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
+    return { relationLead: !!relationLead, sameSubjectBlocked, optimizedLore, facilityActionLock, facility, boostedBoneYield, boostedManaYield, vaultBoostedBoneYield, forcePaid, firstForceClick, secondForceClick, forcedHero, archive: !!archive, exactImpact: impactText.includes('怪物攻击+12%') && impactText.includes('3轮'), chronicle: chronicleIds.includes(archive?.id),
       battleDone: battleRun?.screen === 'result', facilityVisual, returnAdvanced, reportLinked: report?.storyRefs?.includes(archive?.id) && linkedArchive?.battleRefs?.includes(report.raidNo),
       exileLead: !!exileLead, exiles: __debug.story.exiles.length, violations: audit.violations };
   });
@@ -638,6 +639,8 @@ try {
   assert(result.facilityActionLock, 'Facility build/upgrade was not limited to one action per raid.');
   assert(result.boostedBoneYield === 65 && result.boostedManaYield === 17,
     'Resource facilities did not apply the tenfold base-yield rebalance through real output multipliers.');
+  assert(result.vaultBoostedBoneYield === 98,
+    'Vault did not increase all resource-facility production by its level-one 50% bonus.');
   assert(!result.firstForceClick && result.secondForceClick && result.forcePaid && result.forcedHero?.room === 0
     && result.forcedHero?.restTurns === 3, 'Resting hero force-deployment did not require confirmation, charge 300 bone/100 mana, or preserve rest.');
   assert(result.facility.persona === 'scarred' && result.facility.nickname, 'Facility personality did not awaken after repeated damage.');

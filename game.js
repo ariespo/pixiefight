@@ -140,7 +140,7 @@ const UTILITY_KINDS = {
   'bone-yard': { id: 'bone-yard', name: '骨料场', tex: 'facility-bone-yard', desc: '每轮生产大量骨币；越靠外层产量越高。', bone: 60, mana: 0, color: C.bone, yields: [100, 170, 260] },
   'mana-well': { id: 'mana-well', name: '魔力井', tex: 'facility-mana-well', desc: '每轮凝聚大量魔质；失守后会损失待结算产出。', bone: 40, mana: 12, color: C.purple, yields: [30, 50, 80] },
   training:   { id: 'training', name: '训练场', tex: 'facility-training', desc: '让未参战的怪物或英雄稳定获得经验。', bone: 80, mana: 0, color: C.green, xp: [8, 14, 20], slots: [1, 1, 2] },
-  vault:      { id: 'vault', name: '宝库', tex: 'facility-vault', desc: '保护被攻破楼层的部分骨币与魔质。', bone: 130, mana: 18, color: C.gold, boneCap: [200, 450, 800], manaCap: [50, 100, 180] },
+  vault:      { id: 'vault', name: '宝库', tex: 'facility-vault', desc: '集中保管账目与物流，使所有骨料场和魔力井增产。', bone: 130, mana: 18, color: C.gold, yieldBonus: [0.50, 1.00, 1.75] },
   healing:    { id: 'healing', name: '疗愈池', tex: 'facility-healing', desc: '提供英雄疗愈资格与每轮服务次数。', bone: 70, mana: 20, color: C.green, charges: [1, 2, 3] },
   workshop:   { id: 'workshop', name: '工坊', tex: 'facility-workshop', desc: '积攒维修点，并降低锻造或全身改造成本。', bone: 110, mana: 10, color: C.steel, repair: [10, 18, 28], discount: [0.05, 0.10, 0.15] },
   hatchery:   { id: 'hatchery', name: '孵化室', tex: 'facility-hatchery', desc: '降低普通怪物招募骨币，并提供本轮优惠次数。', bone: 90, mana: 8, color: C.purple, charges: [1, 1, 2], discount: [0.08, 0.15, 0.20] },
@@ -647,6 +647,17 @@ function workerName(u) {
   return inst ? instKind(inst).name : '无人';
 }
 
+function vaultYieldBonus() {
+  const bonus = S.floors.reduce((total, floor) => {
+    const u = floor.utility;
+    if (u.kind !== 'vault' || u.condition <= 0) return total;
+    const d = utilityDef(u);
+    const lv = Math.max(1, Math.min(3, u.level)) - 1;
+    return total + d.yieldBonus[lv] * conditionEff(u.condition);
+  }, 0);
+  return Math.min(3, bonus);
+}
+
 function utilityOutput(floorIndex) {
   const floor = S.floors[floorIndex];
   const u = floor?.utility;
@@ -662,7 +673,8 @@ function utilityOutput(floorIndex) {
   const staffed = workerEff(u);
   const personaYield = u.persona === 'ambitious' ? 1.1 : 1;
   const doctrineYield = S.doctrine === 'economy' ? 2 : 1;
-  const mult = depth * condition * staffed * personaYield * doctrineYield;
+  const resourceBoost = u.kind === 'bone-yard' || u.kind === 'mana-well' ? 1 + vaultYieldBonus() : 1;
+  const mult = depth * condition * staffed * personaYield * doctrineYield * resourceBoost;
   const targets = u.trainTargets.map((x) => ({ ...x }));
   return {
     bone: d.yields && u.kind === 'bone-yard' ? Math.max(0, Math.round(d.yields[lv] * mult)) : 0,
@@ -689,7 +701,7 @@ function utilityBuildDetail(kind, floorIndex) {
         : kind === 'healing' ? 'Lv1每轮提供1次疗愈资格；没有可用疗愈池时不能疗愈英雄。'
           : kind === 'workshop' ? 'Lv1每轮提供10维修点，并提供1次5%的锻造或改造优惠。'
             : kind === 'hatchery' ? 'Lv1每轮提供1次普通怪物招募优惠，骨币消耗降低8%。'
-              : 'Lv1保护200骨币与50魔质；被攻破后保护能力会随损坏下降。';
+              : 'Lv1使全部骨料场和魔力井产出＋50%；多个宝库加成相加，最高＋300%。';
   return `${d.desc}\n${effect}\n建造成本：${cost.bone}骨币${cost.mana ? `＋${cost.mana}魔质` : ''}。`;
 }
 
@@ -736,18 +748,6 @@ function healingCapacity() {
   }, 0));
 }
 
-function vaultCapacity(broken = null) {
-  let bone = 0, mana = 0;
-  S.floors.forEach((f, i) => {
-    const u = f.utility, d = utilityDef(u);
-    if (u.kind !== 'vault' || u.condition <= 0) return;
-    const breachMult = broken?.[i] ? 0.5 : 1;
-    bone += Math.round(d.boneCap[u.level - 1] * breachMult);
-    mana += Math.round(d.manaCap[u.level - 1] * breachMult);
-  });
-  return { bone: Math.min(1800, bone), mana: Math.min(400, mana) };
-}
-
 function dungeonEconomyPreview() {
   const rows = S.floors.map((f, i) => ({ floor: i, kind: f.utility.kind, level: f.utility.level,
     condition: f.utility.condition, workerUid: f.utility.workerUid, ...utilityOutput(i) }));
@@ -757,7 +757,7 @@ function dungeonEconomyPreview() {
     mana: rows.reduce((n, x) => n + x.mana, 0),
     xp: rows.reduce((n, x) => n + x.xp * x.training.length, 0),
     repair: rows.reduce((n, x) => n + x.repair, 0),
-    vault: vaultCapacity(),
+    vault: { yieldBonus: vaultYieldBonus() },
   };
 }
 
@@ -910,8 +910,6 @@ function expandFloor() {
 function settleDungeonEconomy(b) {
   const snap = b.dungeonEconomy ?? dungeonEconomyPreview();
   const broken = b.rooms.map((r) => !!r.broken);
-  const cap = vaultCapacity(broken);
-  let boneShield = cap.bone, manaShield = cap.mana;
   const rows = [...snap.rows].reverse().map((row) => {
     const breached = broken[row.floor] ?? false;
     const bone = row.bone ?? 0, mana = row.mana ?? 0, xp = row.xp ?? 0, repair = row.repair ?? 0;
@@ -921,8 +919,8 @@ function settleDungeonEconomy(b) {
     let manaLoss = realtime ? realtime.manaLoss : breached ? Math.round(mana * 0.6) : 0;
     const xpLoss = realtime ? realtime.xpLoss : breached ? Math.round(xp * 0.6) : 0;
     const repairLoss = realtime ? realtime.repairLoss : breached ? Math.round(repair * 0.6) : 0;
-    const manaProtected = Math.min(manaShield, manaLoss); manaShield -= manaProtected; manaLoss -= manaProtected;
-    const boneProtected = Math.min(boneShield, boneLoss); boneShield -= boneProtected; boneLoss -= boneProtected;
+    const manaProtected = 0;
+    const boneProtected = 0;
     const u = utilityAt(row.floor);
     const conditionDamage = row.kind === 'none' ? 0 : realtime?.conditionDamage ?? (breached ? 15 : 0);
     if (conditionDamage && u && u.kind !== 'none') {
@@ -946,6 +944,7 @@ function settleDungeonEconomy(b) {
   }).reverse();
   const out = {
     rows,
+    vaultYieldBonus: snap.vault?.yieldBonus ?? 0,
     bone: rows.reduce((n, x) => n + x.boneGot, 0), mana: rows.reduce((n, x) => n + x.manaGot, 0),
     xp: rows.reduce((n, x) => n + x.xpGot * x.training.length, 0),
     repair: rows.reduce((n, x) => n + x.repairGot, 0),
@@ -5256,7 +5255,7 @@ function reportDetailBody(r) {
     : r.aiState === 'pending' ? 'AI 战地书记正在补录，以下为原始战术记录。\n\n' : '';
   const economy = r.economy;
   const economyText = economy
-    ? `\n\n经营损益：结算${economy.bone}骨币、${economy.mana}魔质、${economy.xp ?? 0}训练经验与${economy.repair ?? 0}维修点；损失${economy.boneLost}骨币、${economy.manaLost}魔质、${economy.xpLost ?? 0}训练经验与${economy.repairLost ?? 0}维修点；宝库保护${economy.boneProtected}骨币、${economy.manaProtected}魔质。\n功能储备：疗愈${economy.services?.healing ?? 0}次，工坊${economy.services?.forge ?? 0}次（-${Math.round((economy.services?.forgeDiscount ?? 0) * 100)}%），孵化优惠${economy.services?.hatchery ?? 0}次（-${Math.round((economy.services?.hatcheryDiscount ?? 0) * 100)}%）。\n${economy.rows.filter((x) => x.kind !== 'none').map((x) => `第${x.floor + 1}层 ${utilityDef({ kind: x.kind }).name}：${x.breached ? `遭劫${(x.lootDuration ?? 0).toFixed(1)}秒、设施-${x.conditionDamage ?? 0}耐久、功能损失${x.serviceLost ?? 0}次、员工${x.workerState === 'evacuated' ? '撤离' : x.workerState === 'fallen' ? '抵抗倒下' : x.workerState === 'reinforced' ? '参战' : x.workerUid ? '留守' : '无人'}` : '安全'}，结算${x.boneGot}骨/${x.manaGot}魔/${(x.xpGot ?? 0) * (x.training?.length ?? 0)}经验/${x.repairGot ?? 0}维修点，耐久${x.conditionAfter}`).join('\n')}`
+    ? `\n\n经营损益：结算${economy.bone}骨币、${economy.mana}魔质、${economy.xp ?? 0}训练经验与${economy.repair ?? 0}维修点；损失${economy.boneLost}骨币、${economy.manaLost}魔质、${economy.xpLost ?? 0}训练经验与${economy.repairLost ?? 0}维修点；宝库为资源设施提供＋${Math.round((economy.vaultYieldBonus ?? 0) * 100)}%产出。\n功能储备：疗愈${economy.services?.healing ?? 0}次，工坊${economy.services?.forge ?? 0}次（-${Math.round((economy.services?.forgeDiscount ?? 0) * 100)}%），孵化优惠${economy.services?.hatchery ?? 0}次（-${Math.round((economy.services?.hatcheryDiscount ?? 0) * 100)}%）。\n${economy.rows.filter((x) => x.kind !== 'none').map((x) => `第${x.floor + 1}层 ${utilityDef({ kind: x.kind }).name}：${x.breached ? `遭劫${(x.lootDuration ?? 0).toFixed(1)}秒、设施-${x.conditionDamage ?? 0}耐久、功能损失${x.serviceLost ?? 0}次、员工${x.workerState === 'evacuated' ? '撤离' : x.workerState === 'fallen' ? '抵抗倒下' : x.workerState === 'reinforced' ? '参战' : x.workerUid ? '留守' : '无人'}` : '安全'}，结算${x.boneGot}骨/${x.manaGot}魔/${(x.xpGot ?? 0) * (x.training?.length ?? 0)}经验/${x.repairGot ?? 0}维修点，耐久${x.conditionAfter}`).join('\n')}`
     : '';
   const quotes = Array.isArray(r.dialogue) && r.dialogue.length
     ? r.dialogue.slice(-18).map((d) => `${d.name}：${d.text}`)
@@ -5886,7 +5885,7 @@ function pageDungeon(g               ) {
       const staffText = WORKER_KINDS.has(u.kind) ? `・工${cut(workerName(u), 3)}` : u.kind === 'training' ? `・训${u.trainTargets.length}` : '';
       label(uiLayer, cut(`耐${u.condition}${staffText}`, 7), ux + 9, b.y + 17, 8, u.condition <= 25 ? C.red : C.stoneLit);
       const yieldText = out.bone ? `待产＋${out.bone}骨` : out.mana ? `待产＋${out.mana}魔` : u.kind === 'vault'
-        ? `护${ud.boneCap[u.level - 1]}骨/${ud.manaCap[u.level - 1]}魔` : u.kind === 'healing'
+        ? `增产＋${Math.round(ud.yieldBonus[u.level - 1] * 100)}%` : u.kind === 'healing'
           ? `疗愈${ud.charges[u.level - 1]}次` : u.kind === 'training' ? `每人＋${out.xp}经验`
             : u.kind === 'workshop' ? `维修＋${out.repair}点` : `招募-${Math.round(out.hatcheryDiscount * 100)}%`;
       label(uiLayer, cut(yieldText, 7), ux + 9, b.y + 29, 8, C.bone);
@@ -6052,7 +6051,7 @@ function drawSidePanel(g               ) {
     bar(g, 340, 126, 130, 6, u.condition / 100, u.condition <= 25 ? C.red : C.green);
     const out = utilityOutput(floor);
     const detail = out.bone ? `本轮预计 ＋${out.bone}骨币` : out.mana ? `本轮预计 ＋${out.mana}魔质`
-      : u.kind === 'vault' ? `保护 ${d.boneCap[u.level - 1]}骨/${d.manaCap[u.level - 1]}魔`
+      : u.kind === 'vault' ? `全局资源产出＋${Math.round(d.yieldBonus[u.level - 1] * 100)}%`
         : u.kind === 'healing' ? `疗愈 ${d.charges[u.level - 1]}次・剩${S.dungeon.healingCharges}`
           : u.kind === 'training' ? `每名学员 ＋${out.xp}经验`
             : u.kind === 'workshop' ? `维修＋${out.repair}・锻造-${Math.round(out.forgeDiscount * 100)}%`
@@ -9239,6 +9238,7 @@ function literaryReportSnapshot(report) {
     units: report.units.slice(0, 10),
     metrics: report.metrics,
     economy: report.economy ? { bone: report.economy.bone, mana: report.economy.mana, xp: report.economy.xp, repair: report.economy.repair,
+      vaultYieldBonus: report.economy.vaultYieldBonus ?? 0,
       losses: report.economy.rows?.filter((row) => row.breached).map((row) => ({ floor: row.floor + 1, boneLoss: row.boneLoss, manaLoss: row.manaLoss,
         conditionDamage: row.conditionDamage, workerState: row.workerState })) } : null,
     tacticalReview: report.review,
