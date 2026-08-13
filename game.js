@@ -1824,34 +1824,41 @@ const UHD_SCREEN_SCALE = 4;
 const loadingEl   = document.getElementById('loading');
 const loadingText = document.getElementById('loading-text');
 const loadingFill = document.getElementById('loading-fill');
-let introActionButton = null;
+let introDomRoot = null;
 
-function syncIntroActionButton() {
-  if (screen !== 'intro' || !app.canvas) {
-    if (introActionButton) introActionButton.style.display = 'none';
+function syncIntroDom() {
+  if (screen !== 'intro') {
+    if (introDomRoot) introDomRoot.style.display = 'none';
     return;
   }
-  if (!introActionButton) {
-    introActionButton = document.createElement('button');
-    introActionButton.id = 'intro-action-button';
-    introActionButton.type = 'button';
-    introActionButton.setAttribute('aria-label', '开门营业');
-    introActionButton.style.cssText = 'position:fixed;z-index:40;margin:0;padding:0;border:0;background:transparent;color:transparent;cursor:pointer;touch-action:manipulation;-webkit-tap-highlight-color:transparent';
-    introActionButton.addEventListener('click', () => {
+  if (!introDomRoot) {
+    introDomRoot = document.createElement('section');
+    introDomRoot.id = 'intro-screen';
+    introDomRoot.setAttribute('role', 'dialog');
+    introDomRoot.setAttribute('aria-modal', 'true');
+    introDomRoot.innerHTML = `<style>
+      #intro-screen{position:fixed;inset:0;z-index:80;display:grid;place-items:center;box-sizing:border-box;padding:clamp(12px,3vw,48px);background:#050408f2;color:#f1e5bd;font-family:${FONT},monospace;overflow:auto}
+      #intro-screen .intro-wrap{width:min(960px,100%);display:grid;gap:clamp(14px,2.2vh,28px)}
+      #intro-screen h1{margin:0;color:#e2bd64;font-size:clamp(24px,3vw,46px);font-weight:400;line-height:1.2}
+      #intro-screen .intro-copy{box-sizing:border-box;padding:clamp(18px,3vw,34px);border:3px solid #e2bd64;box-shadow:0 0 0 4px #21172d;background:#383248;font-size:clamp(16px,1.45vw,25px);line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+      #intro-screen .intro-actions{display:flex;justify-content:flex-end}
+      #intro-screen button{min-width:min(300px,100%);min-height:64px;box-sizing:border-box;padding:12px 28px;border:3px solid #e2bd64;box-shadow:0 0 0 3px #21172d;background:#2b0d16;color:#fff;font:clamp(20px,2vw,34px) ${FONT},monospace;cursor:pointer;touch-action:manipulation}
+      #intro-screen button:hover,#intro-screen button:focus-visible{background:#4a1725;outline:3px solid #fff;outline-offset:3px}
+      @media(max-width:600px),(max-height:560px){#intro-screen{place-items:start center;padding:12px}#intro-screen .intro-wrap{gap:12px}#intro-screen h1{font-size:22px}#intro-screen .intro-copy{font-size:15px;line-height:1.5;padding:16px}#intro-screen button{width:100%;min-height:54px;font-size:21px}}
+    </style><div class="intro-wrap"><h1 data-intro-title></h1><div class="intro-copy" data-intro-copy></div><div class="intro-actions"><button type="button" data-intro-enter>开门营业</button></div></div>`;
+    const enter = introDomRoot.querySelector('[data-intro-enter]');
+    enter.addEventListener('pointerdown', (event) => event.stopPropagation());
+    enter.addEventListener('click', (event) => {
+      event.preventDefault(); event.stopPropagation();
       if (screen !== 'intro') return;
       unlockAndPlay();
       finishIntro();
     });
-    document.body.appendChild(introActionButton);
+    document.body.appendChild(introDomRoot);
   }
-  const rect = app.canvas.getBoundingClientRect();
-  const kx = rect.width / Math.max(1, app.screen.width);
-  const ky = rect.height / Math.max(1, app.screen.height);
-  introActionButton.style.display = 'block';
-  introActionButton.style.left = `${rect.left + (root.x + 282 * viewScale) * kx}px`;
-  introActionButton.style.top = `${rect.top + (root.y + 208 * viewScale) * ky}px`;
-  introActionButton.style.width = `${174 * viewScale * kx}px`;
-  introActionButton.style.height = `${50 * viewScale * ky}px`;
+  introDomRoot.style.display = 'grid';
+  introDomRoot.querySelector('[data-intro-title]').textContent = `${S.playerName}的创业说明会`;
+  introDomRoot.querySelector('[data-intro-copy]').textContent = introStoryText();
 }
 
 function setLoading(percent, label) {
@@ -2334,7 +2341,7 @@ function clearUi() {
 function render() {
   novelInputRect = null;
   portraitChromeKey = '';
-  if (screen !== 'intro') syncIntroActionButton();
+  if (screen !== 'intro') syncIntroDom();
   if (nameInput) nameInput.style.display = screen === 'manage' && (stitch || smith) && !detailPopup ? 'block' : 'none';
   if (forgeInput) forgeInput.style.display = screen === 'manage' && forge && forge.tab !== 'book' && !detailPopup ? 'block' : 'none';
   if (screen === 'manage' && !lawAudit && !raidBriefing && !detailPopup && !researchModal && !stitch && !forge && !graft && !smith) {
@@ -2400,22 +2407,17 @@ function render() {
   ensurePortraitChrome();
 }
 
+function introStoryText() {
+  return `你原本也是一位体面的魔王——至少名片上这么写。后来同行嫌你穷，王国嫌你偏，债主则认为两者都是优点，于是把你发配到边境乡下。\n\n这里唯一的产业，是一座漏风、欠税、尚未被勇者正式发现的地下城：${S.lairName}。你带着95骨币、18魔质和一份无法报销的雄心抵达。\n\n从今天起，${S.playerName}要招募怪物、经营房间、应付英雄，并说服一批批勇者：死亡不是失败，只是他们职业生涯中最后一次考核。`;
+}
+
 function buildIntro() {
   for (const c of overlay.removeChildren()) c.destroy({ children: true });
   hits.clear();
-  resetBoundedTextAudit();
   const g = new PIXI.Graphics(); overlay.addChild(g);
   g.rect(0, 0, VIEW_W, VIEW_H).fill(0x050408);
-  const throne = sprite('icon-throne', 70, 204, 72); throne.alpha = 0.42; overlay.addChild(throne);
-  label(overlay, `${S.playerName}的创业说明会`, 28, 14, 18, C.gold);
-  panelF(g, overlay, 'scroll', 24, 42, 432, 164, C.wall);
-  const intro = `你原本也是一位体面的魔王——至少名片上这么写。后来同行嫌你穷，王国嫌你偏，债主则认为两者都是优点，于是把你发配到边境乡下。\n这里唯一的产业，是一座漏风、欠税、尚未被勇者正式发现的地下城：${S.lairName}。你带着95骨币、18魔质和一份无法报销的雄心抵达。\n从今天起，${S.playerName}要招募怪物、经营房间、应付英雄，并说服一批批勇者：死亡不是失败，只是他们职业生涯中最后一次考核。`;
-  boundedText(overlay, intro, 42, 54, 396, 140, 11, C.bone);
-  button(g, overlay, hits, 300, 222, 138, 34, '开门营业', finishIntro, { size: 15, fill: C.redDark, border: C.gold, color: C.white });
-  // 高分屏和浏览器缩放下保留更宽松的真实命中区，视觉按钮仍维持原尺寸。
-  hits.add(282, 208, 174, 50, finishIntro);
-  titleActionRects.intro = { x: 300, y: 222, w: 138, h: 34 };
-  syncIntroActionButton();
+  const throne = sprite('icon-throne', VIEW_W / 2, 238, 146); throne.alpha = 0.22; overlay.addChild(throne);
+  syncIntroDom();
 }
 
 function drawWorkshopResearch() {
