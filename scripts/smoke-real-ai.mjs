@@ -35,7 +35,9 @@ try {
     }
     const front = __debug.devRecruit('slime'), back = __debug.devRecruit('archer');
     __debug.devAssign(0, 'front', front); __debug.devAssign(0, 'back', back); __debug.setTab('throne');
+    window.__liveAiStartAt = performance.now();
     await __debug.startBattle();
+    window.__liveAiStartMs = Math.round(performance.now() - window.__liveAiStartAt);
     if (__debug.raidBriefing) await __debug.confirmRaidBriefing();
   });
   await page.waitForFunction(() => __debug.screen === 'battle', null, { timeout: 60000 });
@@ -47,6 +49,7 @@ try {
     stats: __debug.battle?.dialoguePack?.stats ?? null,
     aiDialogueUsed: __debug.battle?.aiDialogueUsed ?? 0,
     dialogueCount: __debug.battle?.dialogue?.length ?? 0,
+    battleStartMs: window.__liveAiStartMs ?? null,
   }));
   if (result.mode !== 'http' || result.screen !== 'battle' || !result.stats
     || result.stats.covered !== result.stats.expected || result.stats.coreCovered !== result.stats.expected

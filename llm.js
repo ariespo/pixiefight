@@ -854,7 +854,7 @@ export function makePlatformBackend()             {
       const r = await gp.ai.chat({
         system: '你是一款中文 8-bit 地牢经营游戏的设计助手。严格只输出一个 JSON 对象，不要解释、不要 markdown 代码块。',
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.9,
+        temperature: opts.kind === 'dialogue' ? 0.65 : 0.9,
         maxTokens: ({ scene: 700, dialogue: 1400, report: 1100, context: 800 })[opts.kind] ?? 320,
       });
       if (!r.ok) {
@@ -901,12 +901,12 @@ export function makeHttpBackend(cfg         )             {
               model: clean.model,
               system: '你是一款中文 8-bit 地牢经营游戏的设计助手。严格只输出一个 JSON 对象，不要解释、不要 markdown 代码块。',
               messages: [{ role: 'user', content: requestPrompt }],
-              temperature: 0.9,
+              temperature: opts.kind === 'dialogue' ? 0.65 : 0.9,
               max_tokens: tokenAttempts[attempt],
             } : {
               model: clean.model,
               messages: [{ role: 'user', content: requestPrompt }],
-              temperature: 0.9,
+              temperature: opts.kind === 'dialogue' ? 0.65 : 0.9,
               max_tokens: tokenAttempts[attempt],
               ...(isDeepSeek ? { thinking: { type: 'disabled' }, response_format: { type: 'json_object' } } : {}),
             }),

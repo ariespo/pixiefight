@@ -1835,8 +1835,7 @@ function battleDialogueSnapshot(raid) {
   const add = (unit) => { if (unit?.key && !units.has(unit.key)) units.set(unit.key, unit); };
   raid.members.forEach((member) => {
     const cls = HERO_CLASSES[member.cls];
-    add({ key: `hero:${cls.name}`, side: '入侵勇者', name: cls.name, kind: cls.role, level: member.lv,
-      skill: cls.skill, description: cls.intel });
+    add({ key: `hero:${cls.name}`, side: '入侵勇者', name: cls.name, kind: cls.role, level: member.lv, skill: cls.skill });
   });
   const slotNames = { front: '前排', back: '后排', flank: '侧翼' };
   S.rooms.forEach((room, floor) => {
@@ -1845,19 +1844,18 @@ function battleDialogueSnapshot(raid) {
       if (!inst) continue;
       const kind = instKind(inst);
       add({ key: `mon:${kind.name}`, side: '地牢守军', name: kind.name, kind: kind.role, level: inst.lv,
-        position: `${floor + 1}层${slotNames[slot]}`, skill: kind.skill, description: kind.passive });
+        position: `${floor + 1}层${slotNames[slot]}`, skill: kind.skill });
     }
     const champ = champById(room.leader);
     if (champ) {
-      const kind = champKind(champ), stats = statOf(champ);
+      const kind = champKind(champ);
       add({ key: `mon:${champ.name}`, side: '地牢英雄', name: champ.name, kind: kind.name, level: champ.lv,
         position: `${floor + 1}层统领`, skill: kind.skill, title: titleOf(champ)?.name ?? '',
-        traits: champ.traits.map((id) => TRAITS[id]?.name).filter(Boolean), personality: heroLoreOf(champ).personalityName,
-        stats: { hp: stats.hp, atk: stats.atk, def: stats.def, thorns: stats.eff?.thorns ?? 0 } });
+        traits: champ.traits.slice(0, 2).map((id) => TRAITS[id]?.name).filter(Boolean), personality: heroLoreOf(champ).personalityName });
     }
   });
   return {
-    raid: { no: raid.no, title: raid.title, affixes: raid.affixes.map((id) => AFFIXES[id]?.name).filter(Boolean) },
+    raid: { title: raid.title, affixes: raid.affixes.map((id) => AFFIXES[id]?.name).filter(Boolean) },
     units: [...units.values()],
   };
 }
