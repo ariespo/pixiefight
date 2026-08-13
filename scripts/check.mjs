@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { SCENES } from '../story.js';
 import { TEXTURES, RAIDS, RAID_BRIEFINGS, NORMAL_RAID_COUNT, raidAffixInfo } from '../data.js';
-import { createBattle, stepBattle, effectiveThorns, effectiveMitigationMultiplier, armorMultiplier } from '../battle.js';
+import { createBattle, stepBattle, effectiveThorns, effectiveMitigationMultiplier, armorMultiplier, raidKillBoneValue } from '../battle.js';
 import { newChamp, champStats, tickFatigue } from '../heroes.js';
 import { AFFIX_POWER, POWER_MENU, clampAffixDraft, clampDraft } from '../modules.js';
 import { WORKSHOP_RESEARCH, researchDirectMultiplier, researchEffects, researchPoisonApplication, researchTrapThroughput } from '../research.js';
@@ -31,6 +31,10 @@ for (const id of followups) if (!ids.has(id)) throw new Error(`Missing follow-up
 
 const source = readFileSync('game.js', 'utf8');
 const battleSource = readFileSync('battle.js', 'utf8');
+if (raidKillBoneValue({ no: 7001, rewardLevel: 5 }) !== 16 || raidKillBoneValue({ no: 20 }) !== 38)
+  throw new Error('Temporary encounter kill rewards still use their synthetic 7000-series identifiers.');
+for (const contract of ['function storyCampaignReward(bone, mana)', '* 1.2', 'rewardLevel: Math.max(1, Math.round(baseLevel))'])
+  if (!source.includes(contract)) throw new Error(`Missing event-chain reward rebalance contract: ${contract}`);
 for (const kind of ['slime', 'goblin', 'archer', 'bat', 'shaman', 'ogre', 'bonedragon', 'hundredarm', 'lich', 'beholder', 'mindflayer', 'plaguelord', 'magmagolem', 'broodqueen']) {
   if (!battleSource.includes(`  ${kind}: {`)) throw new Error(`Missing identity-driven monster dialogue: ${kind}`);
 }

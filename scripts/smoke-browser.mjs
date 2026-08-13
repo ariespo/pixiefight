@@ -75,6 +75,8 @@ try {
     return result;
   });
   assert(eventChain.stages.every((stage) => stage.issued.ok && stage.encounter && stage.raid === eventChain.startRaid)
+    && eventChain.stages[0].encounter.reward.bone === 106 && eventChain.stages[0].encounter.reward.mana === 22
+    && eventChain.stages.every((stage) => stage.encounter.rewardLevel < 20)
     && eventChain.stages[0].chain.nextDueRaid === eventChain.startRaid + 1
     && eventChain.stages[1].chain.nextDueRaid === eventChain.startRaid + 2
     && eventChain.stages[2].chain.nextDueRaid === eventChain.startRaid + 1

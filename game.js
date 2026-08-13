@@ -1108,104 +1108,110 @@ function champStatMap() {
 const seatedChampUids = () => S.rooms.map((r) => r.leader).filter((u)              => u != null);
 const roomOfChamp = (uid        ) => S.rooms.findIndex((r) => r.leader === uid);
 
+function storyCampaignReward(bone, mana) {
+  const targetValue = Math.round((bone + mana * BONE_PER_MANA) * 1.2);
+  const convertedMana = Math.round(targetValue / (BONE_PER_MANA * 2));
+  return { bone: targetValue - convertedMana * BONE_PER_MANA, mana: convertedMana };
+}
+
 const STORY_CAMPAIGNS = {
   death: {
     name: '借来的死神', startRaid: 5, scenes: ['chain-death-start', 'chain-death-mid', 'chain-death-strike', 'chain-death-audit', 'chain-death-heir', 'chain-death-final'],
     stages: [
-      { title: '收尸人敲错了门', reward: { bone: 90, mana: 18 }, routes: {
+      { title: '收尸人敲错了门', reward: storyCampaignReward(90, 18), routes: {
         shelter: { brief: '你把逃亡的小死神藏进地牢。冥府收尸人依法上门，唯一缺少的是允许他们活着离开的条款。', members: ['rogue', 'warlock', 'cleric'] },
         ransom: { brief: '你向冥府索要赎金。对方派来的谈判代表携带三把镰刀，并坚持这属于诚意。', members: ['knight', 'lancer', 'warlock'] },
       } },
-      { title: '亡者名单开始追人', reward: { bone: 150, mana: 34 }, routes: {
+      { title: '亡者名单开始追人', reward: storyCampaignReward(150, 34), routes: {
         names: { brief: '你释放了名单上的亡魂。负责把他们重新写回死亡的人，带着审判官和一桶墨赶来。', members: ['inquisitor', 'cleric', 'mage', 'knight'] },
         blade: { brief: '你把名单炼进武器。冥府决定回收武器、名单，以及握着武器的所有手。', members: ['swordmaster', 'warlock', 'lancer', 'cleric'] },
       } },
-      { title: '亡者拒绝按时死去', reward: { bone: 210, mana: 48 }, routes: {
+      { title: '亡者拒绝按时死去', reward: storyCampaignReward(210, 48), routes: {
         strike: { brief: '你支持亡者停工。冥府派出督战队，要求所有尸体立即回到自己的死亡岗位。', members: ['captain', 'inquisitor', 'cleric', 'rogue'] },
         bargain: { brief: '你替亡者与冥府谈判。对方带来一队负责把谈判者变成谈判材料的执行官。', members: ['paladin', 'warlock', 'lancer', 'mage'] },
       } },
-      { title: '冥府开始清查活人', reward: { bone: 280, mana: 64 }, routes: {
+      { title: '冥府开始清查活人', reward: storyCampaignReward(280, 64), routes: {
         burnLedger: { brief: '你烧掉冥府账册。审计骑士发现所有欠款同时消失，决定从制造火灾的人身上重新记账。', members: ['inquisitor', 'captain', 'mage', 'cleric', 'rogue'] },
         stealSeal: { brief: '你偷走了冥府公章。没有章的死亡暂时不算数，但追章的圣骑士仍然算五个人。', members: ['paladin', 'swordmaster', 'lancer', 'cleric', 'warlock'] },
       } },
-      { title: '小死神被迫参加继任考核', reward: { bone: 360, mana: 86 }, routes: {
+      { title: '小死神被迫参加继任考核', reward: storyCampaignReward(360, 86), routes: {
         protect: { brief: '你替小死神拒绝继任。冥府考官把“不服从”列为实战科目，并亲自带队评分。', members: ['captain', 'inquisitor', 'swordmaster', 'cleric', 'mage'] },
         apprentice: { brief: '你让小死神假装接受职位，再把考场引进地牢。监考官认为陷阱属于作弊，决定当场没收地牢。', members: ['swordmaster', 'paladin', 'warlock', 'bard', 'cleric'] },
       } },
-      { title: '死神本人前来销账', reward: { bone: 520, mana: 150 }, routes: {
+      { title: '死神本人前来销账', reward: storyCampaignReward(520, 150), routes: {
         freedom: { brief: '小死神撕掉契约。真正的死神带领六名精锐前来纠正错误：自由不在服务范围内。', members: ['inquisitor', 'swordmaster', 'captain', 'warlock', 'cleric', 'paladin'] },
         crown: { brief: '你把死亡契约钉上王座。冥府派出最豪华的讨债队，准备把王座连同坐垫一起搬走。', members: ['captain', 'swordmaster', 'inquisitor', 'cleric', 'mage', 'paladin'] },
       } },
     ],
     endings: {
-      freedom: { bone: 120, mana: 80, var: 'deathFreed', mod: { id: 'death-freed', name: '死亡缓刑', raids: -1, monHpMult: 1.06 } },
-      crown: { bone: 320, mana: 30, var: 'deathCrowned', mod: { id: 'death-crown', name: '王座死契', raids: -1, monAtkMult: 1.08, heroHpMult: 1.04 } },
+      freedom: { ...storyCampaignReward(120, 80), var: 'deathFreed', mod: { id: 'death-freed', name: '死亡缓刑', raids: -1, monHpMult: 1.06 } },
+      crown: { ...storyCampaignReward(320, 30), var: 'deathCrowned', mod: { id: 'death-crown', name: '王座死契', raids: -1, monAtkMult: 1.08, heroHpMult: 1.04 } },
     },
   },
   thirteenth: {
     name: '第十三远征队', startRaid: 9, scenes: ['chain-thirteenth-start', 'chain-thirteenth-mid', 'chain-thirteenth-identity', 'chain-thirteenth-rehearsal', 'chain-thirteenth-trial', 'chain-thirteenth-final'],
     stages: [
-      { title: '不存在的勇者来访', reward: { bone: 110, mana: 22 }, routes: {
+      { title: '不存在的勇者来访', reward: storyCampaignReward(110, 22), routes: {
         remember: { brief: '你答应替第十三远征队保存姓名。王国档案员带着火把前来删除证据。', members: ['knight', 'archer', 'mage'] },
         exploit: { brief: '你让无名勇者替地牢引路。追捕他们的同僚顺着假地图走进了真陷阱。', members: ['ranger', 'rogue', 'captain'] },
       } },
-      { title: '被删除者的反攻', reward: { bone: 180, mana: 42 }, routes: {
+      { title: '被删除者的反攻', reward: storyCampaignReward(180, 42), routes: {
         banner: { brief: '你升起第十三面旗。王国坚持只有十二支队伍，于是派人来证明算术比尸体可靠。', members: ['captain', 'paladin', 'bard', 'cleric'] },
         ambush: { brief: '你把幽灵藏进墙里。王国搜索队每敲一下墙，就有一名旧队员在背后回答。', members: ['inquisitor', 'rogue', 'mage', 'lancer'] },
       } },
-      { title: '第十三个人开始说话', reward: { bone: 240, mana: 54 }, routes: {
+      { title: '第十三个人开始说话', reward: storyCampaignReward(240, 54), routes: {
         captain: { brief: '你承认队伍里有一位被删掉的队长。王国派来真正的队长，要求双方用阵亡证明职称。', members: ['captain', 'paladin', 'ranger', 'cleric'] },
         collective: { brief: '你宣布每个人都是第十三人。王国统计局带着武装普查队，准备逐个纠正人数。', members: ['inquisitor', 'mage', 'lancer', 'bard'] },
       } },
-      { title: '王国重演最后一次远征', reward: { bone: 310, mana: 70 }, routes: {
+      { title: '王国重演最后一次远征', reward: storyCampaignReward(310, 70), routes: {
         sabotage: { brief: '你篡改重演剧本，让王国军按当年的错误再次进场。演员发现道具剑都是真货时，演出已经开幕。', members: ['captain', 'swordmaster', 'rogue', 'mage', 'cleric'] },
         witness: { brief: '你让幽灵公开作证。王国派来一支听证团，他们唯一携带的听证工具是钉头锤。', members: ['inquisitor', 'paladin', 'bard', 'cleric', 'lancer'] },
       } },
-      { title: '删除令被送上审判席', reward: { bone: 390, mana: 92 }, routes: {
+      { title: '删除令被送上审判席', reward: storyCampaignReward(390, 92), routes: {
         trial: { brief: '你审判签署删除令的人。王国法庭认为被告不能缺席，于是把整个法庭武装押送过来。', members: ['inquisitor', 'captain', 'swordmaster', 'cleric', 'warlock'] },
         rewrite: { brief: '你让幽灵亲手重写档案。王国的墨水护卫奉命保护每一个错误标点，包括会杀人的句号。', members: ['mage', 'paladin', 'bard', 'ranger', 'cleric'] },
       } },
-      { title: '王国史官的最终修订', reward: { bone: 580, mana: 138 }, routes: {
+      { title: '王国史官的最终修订', reward: storyCampaignReward(580, 138), routes: {
         memorial: { brief: '你要让第十三远征队进入历史。王国史官带着六名精锐，准备删掉所有见证者。', members: ['swordmaster', 'captain', 'inquisitor', 'bard', 'cleric', 'paladin'] },
         erase: { brief: '你同意抹去他们最后的名字，但名单拒绝消失，并引来一支专门消灭纸张的圣火军。', members: ['inquisitor', 'mage', 'warlock', 'paladin', 'cleric', 'swordmaster'] },
       } },
     ],
     endings: {
-      memorial: { bone: 180, mana: 60, var: 'thirteenthRemembered', mod: { id: 'thirteenth-banner', name: '第十三面旗', raids: -1, monSpdAdd: 0.07 } },
-      erase: { bone: 420, mana: 20, var: 'thirteenthErased', mod: { id: 'erased-route', name: '无名暗道', raids: -1, roomLimitAdd: 1 } },
+      memorial: { ...storyCampaignReward(180, 60), var: 'thirteenthRemembered', mod: { id: 'thirteenth-banner', name: '第十三面旗', raids: -1, monSpdAdd: 0.07 } },
+      erase: { ...storyCampaignReward(420, 20), var: 'thirteenthErased', mod: { id: 'erased-route', name: '无名暗道', raids: -1, roomLimitAdd: 1 } },
     },
   },
   dream: {
     name: '地牢梦见了出口', startRaid: 13, scenes: ['chain-dream-start', 'chain-dream-mid', 'chain-dream-guests', 'chain-dream-leak', 'chain-dream-mirror', 'chain-dream-final'],
     stages: [
-      { title: '第一场梦漏进现实', reward: { bone: 130, mana: 30 }, routes: {
+      { title: '第一场梦漏进现实', reward: storyCampaignReward(130, 30), routes: {
         wake: { brief: '你试图唤醒地牢。梦里的勇者认为自己才是真实的一方，决定先把你叫醒。', members: ['mage', 'monk', 'ranger'] },
         deepen: { brief: '你让地牢继续做梦。梦境长出一扇门，门外的勇者排队要求进入你的潜意识。', members: ['warlock', 'bard', 'rogue'] },
       } },
-      { title: '房间开始选择住客', reward: { bone: 210, mana: 50 }, routes: {
+      { title: '房间开始选择住客', reward: storyCampaignReward(210, 50), routes: {
         walls: { brief: '你站在会呼吸的墙一边。拆迁队带着圣锤前来，坚称活墙不符合建筑规范。', members: ['paladin', 'lancer', 'inquisitor', 'cleric'] },
         tenants: { brief: '你站在住客一边。地牢把不满意的房间折成迷宫，也把追来的勇者折了进去。', members: ['captain', 'ranger', 'mage', 'rogue'] },
       } },
-      { title: '梦里的地牢开始营业', reward: { bone: 270, mana: 64 }, routes: {
+      { title: '梦里的地牢开始营业', reward: storyCampaignReward(270, 64), routes: {
         guests: { brief: '你允许梦中住客入住。现实勇者发现自己的倒影已经办理长期居住，决定强制退房。', members: ['captain', 'bard', 'ranger', 'cleric'] },
         fortify: { brief: '你把梦境改成第二道防线。测绘骑士认为同一块地皮出现两座地牢属于恶意增建。', members: ['paladin', 'inquisitor', 'mage', 'lancer'] },
       } },
-      { title: '现实从天花板漏了进来', reward: { bone: 340, mana: 82 }, routes: {
+      { title: '现实从天花板漏了进来', reward: storyCampaignReward(340, 82), routes: {
         patch: { brief: '你用旧战报堵住现实裂缝。纸上的勇者活过来，要求补发自己从未经历的胜利。', members: ['swordmaster', 'captain', 'mage', 'bard', 'cleric'] },
         flood: { brief: '你任由现实灌进梦里。两边的勇者同时声称对方是假货，并决定先联合消灭唯一清醒的你。', members: ['inquisitor', 'paladin', 'warlock', 'ranger', 'cleric'] },
       } },
-      { title: '王座梦见了另一位魔王', reward: { bone: 430, mana: 108 }, routes: {
+      { title: '王座梦见了另一位魔王', reward: storyCampaignReward(430, 108), routes: {
         mirror: { brief: '你与梦中的自己谈判。对方派出理想化的勇者证明他比你更擅长经营失败。', members: ['captain', 'swordmaster', 'inquisitor', 'mage', 'cleric'] },
         break: { brief: '你砸碎王座前的镜子。每块碎片都放出一名勇者，并坚持自己来自唯一正确的现实。', members: ['swordmaster', 'paladin', 'warlock', 'bard', 'lancer'] },
       } },
-      { title: '王座要求拥有一个梦', reward: { bone: 620, mana: 170 }, routes: {
+      { title: '王座要求拥有一个梦', reward: storyCampaignReward(620, 170), routes: {
         awaken: { brief: '你决定让整座地牢醒来。梦境派出六名最后的守护者，试图保护自己不被现实杀死。', members: ['swordmaster', 'inquisitor', 'captain', 'mage', 'bard', 'paladin'] },
         dreaming: { brief: '你允许王座继续做梦。现实派来一支联合军，准备证明石头没有想象力。', members: ['captain', 'swordmaster', 'inquisitor', 'cleric', 'warlock', 'paladin'] },
       } },
     ],
     endings: {
-      awaken: { bone: 160, mana: 100, var: 'dungeonAwake', mod: { id: 'awake-dungeon', name: '醒着的地牢', raids: -1, trapMult: 1.10, roomLimitAdd: 1 } },
-      dreaming: { bone: 260, mana: 80, var: 'dungeonDreaming', mod: { id: 'dreaming-throne', name: '王座之梦', raids: -1, monHpMult: 1.07, monSpdAdd: -0.03 } },
+      awaken: { ...storyCampaignReward(160, 100), var: 'dungeonAwake', mod: { id: 'awake-dungeon', name: '醒着的地牢', raids: -1, trapMult: 1.10, roomLimitAdd: 1 } },
+      dreaming: { ...storyCampaignReward(260, 80), var: 'dungeonDreaming', mod: { id: 'dreaming-throne', name: '王座之梦', raids: -1, monHpMult: 1.07, monSpdAdd: -0.03 } },
     },
   },
 };
@@ -1240,7 +1246,8 @@ function startStoryEncounter(effect) {
     chainId: effect.chain, stage: stageNo, route: effect.route,
     title: `${campaign.name}・${stage.title}`, brief: route.brief,
     reply: `${S.playerName}把这张不属于主线的战书压在王座扶手下：先活下来，再讨论它算不算历史。`,
-    members, affixes: affixSets[Math.min(affixSets.length - 1, stageNo - 1)], reward: { ...stage.reward }, briefed: false,
+    members, affixes: affixSets[Math.min(affixSets.length - 1, stageNo - 1)], reward: { ...stage.reward },
+    rewardLevel: Math.max(1, Math.round(baseLevel)), briefed: false,
   };
   S.story.encounter = encounter;
   const state = S.story.chains[effect.chain] ?? { id: effect.chain, history: [] };

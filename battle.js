@@ -2555,6 +2555,11 @@ function breach(b        ) {
   b.phaseT = 0;
 }
 
+export function raidKillBoneValue(raid) {
+  const level = Number.isFinite(raid?.rewardLevel) ? raid.rewardLevel : raid?.no;
+  return Math.round(8 + Math.max(1, level || 1) * 1.5);
+}
+
 function finish(b        ) {
   b.phase = 'done';
   const total = b.heroes.length;
@@ -2565,7 +2570,7 @@ function finish(b        ) {
   const seal = Math.round((b.seal / b.sealMax) * 100);
   const skulls = !win ? 0 : seal >= 75 ? 3 : seal >= 25 ? 2 : 1;
   const roomsHeld = b.rooms.filter((r) => !r.broken).length;
-  const killBone = kills * Math.round(8 + b.raid.no * 1.5);
+  const killBone = kills * raidKillBoneValue(b.raid);
   // 上弦（钟表胎）：战后存活的怪物额外产骨币
   let boneEcho = 0;
   for (const r of b.rooms) for (const m of r.mons) if (m.alive) boneEcho += m.eff?.boneEcho ?? 0;
