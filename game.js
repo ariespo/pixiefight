@@ -180,6 +180,7 @@ function freshSave(selectedDoctrine = 'default')       {
     workshopResearch: {},
     sealLv: 0, trapLv: 0,
     best: {}, reports: [],
+    failureRelief: {}, reliefNotices: [],
     overtime: false, otRaid: NORMAL_RAID_COUNT + 1, clearRecorded: false,
     raidBriefingsSeen: [],
     customs: [], cstNext: 1,
@@ -275,6 +276,8 @@ function sanitizeSave() {
   S.novel = sanitizeNovelState(S.novel);
   S.introSeen = !!S.introSeen || S.raidNo > 1 || S.overtime;
   S.reports = Array.isArray(S.reports) ? S.reports.filter((report) => report && typeof report.raidNo === 'number').slice(0, 5) : [];
+  S.failureRelief = S.failureRelief && typeof S.failureRelief === 'object' ? S.failureRelief : {};
+  S.reliefNotices = Array.isArray(S.reliefNotices) ? S.reliefNotices.filter((notice) => notice && typeof notice.title === 'string' && typeof notice.body === 'string').slice(-4) : [];
   for (const report of S.reports) if (report.aiState === 'pending') report.aiState = report.literary ? 'done' : 'fallback';
   if (Math.round(S.campaignVersion || 0) < 2 && S.overtime) S.otRaid = Math.max(NORMAL_RAID_COUNT + 1, Math.round(S.otRaid || 13) + 8);
   S.campaignVersion = 2;
@@ -1533,6 +1536,48 @@ let heroLoreBusyUid = null;
 let heroForceConfirmUid = null;
 const battleDialogueCache = new Map();
 const BATTLE_DIALOGUE_SCHEMA = 2;
+
+const failureKey = (raidNo = currentRaidIdentity()) => `${S.overtime ? 'overtime' : 'campaign'}:${raidNo}`;
+
+function recordFailedAttempt(raidNo, reason = '战斗失败') {
+  const key = failureKey(raidNo);
+  const state = S.failureRelief[key] ?? { count: 0, aid2: false, aid5: false };
+  state.count = Math.max(0, Math.round(state.count || 0)) + 1;
+  S.failureRelief[key] = state;
+  if (state.count >= 2 && !state.aid2) {
+    state.aid2 = true;
+    const bone = Math.max(180, Math.min(S.overtime ? 600 : 480, 140 + raidNo * 20));
+    const mana = Math.max(24, Math.min(S.overtime ? 140 : 100, 15 + raidNo * 5));
+    S.bone += bone; S.mana += mana;
+    S.reliefNotices.push({
+      title: '魔神的第一次围观',
+      body: `你在同一场入侵里第二次失败。云层裂开一只眼睛，魔神看了看勇者，又看了看你的防线。\n\n“我原以为你在布置战术，后来发现你只是在给勇者演示入口。”\n\n他笑够以后大手一挥。${bone}骨币和${mana}魔质从天而降，其中几块骨头还带着上一位失败者的名字。\n\n获得：${bone}骨币、${mana}魔质。`,
+    });
+  }
+  if (state.count >= 5 && !state.aid5) {
+    state.aid5 = true;
+    for (const champ of S.champs) {
+      champ.fatigue = 0; champ.restTurns = 0; champ.sorties = 0; champ.xp = Math.max(0, (champ.xp || 0) + 1000);
+      delete champ.forcedRaid;
+    }
+    S.reliefNotices.push({
+      title: '魔神终于看不下去了',
+      body: `第五次失败以后，魔神沉默了很久。\n\n“失败不可耻。把同一场失败完整排练五遍，多少有点追求艺术性。”\n\n他打了个响指。所有英雄从床上、疗愈池和自我怀疑中一起弹了起来；没人知道这算祝福还是不允许请假。\n\n所有英雄疲劳与休息清零，并各获得1000经验。`,
+    });
+  }
+  S.reliefNotices = S.reliefNotices.slice(-4);
+  return { key, count: state.count, reason };
+}
+
+function clearFailedAttempts(raidNo) { delete S.failureRelief[failureKey(raidNo)]; }
+
+function showPendingReliefNotice() {
+  const notice = S.reliefNotices.shift();
+  if (!notice) return false;
+  persist();
+  openDetailPopup(notice.title, notice.body, C.purple);
+  return true;
+}
 
 const FORCE_HERO_BONE = 300;
 const FORCE_HERO_MANA = 100;
@@ -8465,13 +8510,16 @@ function abortBattle() {
   if (screen !== 'battle' || !battle) return false;
   // 战斗模拟只使用开战时创建的瞬态副本；在 finishBattle 之前丢弃它，资源、经验、
   // 伤势、设施损失、战报和轮次均不会结算，经营存档保持在本次迎战之前。
+  const raidNo = battle.raid.no;
   if (battleCheckpoint) S = structuredClone(battleCheckpoint);
+  recordFailedAttempt(raidNo, '中途退出');
   battleCheckpoint = null;
   pendingResultRaid = 0;
   paused = false;
   speed = 1;
+  persist();
   backToManage();
-  say('已退出本次战斗，所有状态恢复到迎战前');
+  say('已退出本次战斗：状态已回退，并记为一次失败');
   return true;
 }
 
@@ -9042,20 +9090,25 @@ function settleNovelMission(report, battleResult) {
 function finishBattle() {
   const b = battle ;
   const r = b.result ;
+  const fullVictory = !!r.win && (r.skulls ?? 0) >= 3;
   screen = 'result';
   scheduleLayout();
   resultLayerBuilt = false;
-  if (!r.win) {
+  if (!fullVictory) {
     // 败战是一次可复盘的失败尝试，而不是第二套惩罚经济。恢复迎战前的完整经营
     // 状态，只额外保留一份不参与结算的战术记录，供玩家判断卡点。
     if (battleCheckpoint) S = structuredClone(battleCheckpoint);
     battleCheckpoint = null;
+    r.partialVictory = !!r.win;
+    r.win = false;
     r.bone = 0; r.mana = 0; r.relicLoot = 0; r.loot = []; r.economy = null; r.rolledBack = true;
+    const failure = recordFailedAttempt(b.raid.no, r.partialVictory ? '未达成全胜' : '封印失守');
     const units = [...b.heroes.map((unit) => ({ name: unit.name, dmg: Math.round(unit.dmgDealt), heal: Math.round(unit.healed), kills: unit.kills ?? 0, side: 'hero' })),
       ...b.rooms.flatMap((room) => room.mons.map((unit) => ({ name: unit.name, dmg: Math.round(unit.dmgDealt), heal: Math.round(unit.healed), kills: unit.kills ?? 0, side: 'mon' })))]
       .sort((a, z) => z.dmg - a.dmg);
     const report = {
-      raidNo: b.raid.no, title: b.raid.title, win: false, rolledBack: true, skulls: 0, seal: r.seal, time: b.time,
+      raidNo: b.raid.no, title: b.raid.title, win: false, partialVictory: r.partialVictory, rolledBack: true, failureCount: failure.count,
+      skulls: r.partialVictory ? r.skulls : 0, seal: r.seal, time: b.time,
       bone: 0, mana: 0, relicLoot: 0,
       rooms: b.rooms.map((room) => ({ i: room.index, broken: room.broken, t: room.breachTime, reason: room.breachReason,
         lootDuration: room.utility?.row?.realtime?.duration ?? 0, lootProgress: room.utility?.row?.realtime?.progress ?? 0,
@@ -9073,6 +9126,7 @@ function finishBattle() {
     playMusic('bgm-manage');
     return;
   }
+  clearFailedAttempts(b.raid.no);
   const rewardMult = dungeonRaidScale().reward;
   const directReward = S.doctrine === 'economy' ? 0.60 : 1;
   r.bone = Math.round(r.bone * rewardMult * directReward);
@@ -9226,7 +9280,7 @@ function buildResultOverlay() {
   overlay.addChild(g);
   g.rect(0, 0, VIEW_W, VIEW_H).fill({ color: C.bg, alpha: 0.86 });
   panelF(g, overlay, r.win ? 'gold' : 'stone', 70, 30, 340, 210, C.wall);
-  labelC(overlay, r.win ? '地牢守住了！' : '封印被击破…', 240, 40, 12, r.win ? C.green : C.red);
+  labelC(overlay, r.win ? '地牢全胜！' : r.partialVictory ? '守住了，但未能全胜…' : '封印被击破…', 240, 40, 12, r.win ? C.green : r.partialVictory ? C.gold : C.red);
   labelC(overlay, `${b.raid.title}  击倒 ${r.kills}/${r.total}  封印剩余 ${r.seal}`, 240, 58, 12, C.bone);
   if (r.win) {
     for (let i = 0; i < 3; i++) {
@@ -9292,7 +9346,7 @@ function returnFromResult() {
 function retryFailedBattle() {
   if (!battle?.result || battle.result.win) return;
   backToManage();
-  void startBattle();
+  if (!detailPopup) void startBattle();
 }
 
 function afterResult() {
@@ -9335,6 +9389,7 @@ function backToManage() {
   sel = null;
   playMusic('bgm-manage');
   render();
+  showPendingReliefNotice();
 }
 
 function buildEnding() {
@@ -9635,7 +9690,9 @@ window.__debug = {
   deployWorker: () => battle ? deployUtilityWorker(battle) : false,
   evacuateWorker: () => battle ? evacuateUtilityWorker(battle) : false,
   startBattle: async () => { await startBattle(); return screen; },
-  abortBattle: () => ({ ok: abortBattle(), screen, raidNo: S.raidNo, bone: S.bone, mana: S.mana, reports: S.reports.length }),
+  abortBattle: () => ({ ok: abortBattle(), screen, raidNo: S.raidNo, bone: S.bone, mana: S.mana, reports: S.reports.length,
+    failure: structuredClone(S.failureRelief[failureKey()] ?? null), relief: detailPopup ? { ...detailPopup } : null }),
+  get failureRelief() { return { states: structuredClone(S.failureRelief), notices: structuredClone(S.reliefNotices), detail: detailPopup ? { ...detailPopup } : null }; },
   get raidBriefing() { return raidBriefing ? { ...raidBriefing } : null; },
   confirmRaidBriefing: async () => { await confirmRaidBriefing(); return screen; },
   get lawAudit() { return lawAudit ? { ...lawAudit } : null; },
@@ -9665,10 +9722,10 @@ window.__debug = {
     finishBattle();
     return { screen, rolledBack: battle.result.rolledBack, report: S.reports[0] };
   },
-  devSettleWin: () => {
+  devSettleWin: (skulls = 3) => {
     if (!battle || screen !== 'battle') return null;
     const monXp = S.monsters.slice(0, 2).map((unit) => ({ uid: unit.uid, xp: 5 }));
-    battle.result = { win: true, skulls: 3, seal: Math.max(1, Math.round(battle.seal)), kills: battle.heroes.length, total: battle.heroes.length,
+    battle.result = { win: true, skulls: Math.max(0, Math.min(3, Math.round(skulls))), seal: Math.max(1, Math.round(battle.seal)), kills: battle.heroes.length, total: battle.heroes.length,
       firstCause: '测试守住封印', review: ['测试胜利结算'], metrics: {}, bone: battle.raid.reward?.bone ?? 0, mana: battle.raid.reward?.mana ?? 0,
       relicLoot: 0, loot: [], xp: monXp, champXp: [], champStats: [] };
     battle.phase = 'done';

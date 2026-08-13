@@ -231,6 +231,7 @@ try {
     && onboarding.abort.bone === onboarding.beforeAbort.bone && onboarding.abort.mana === onboarding.beforeAbort.mana
     && onboarding.abort.reports === onboarding.beforeAbort.reports,
   `Exiting battle did not restore the pre-settlement management state: ${JSON.stringify(onboarding)}`);
+  assert(onboarding.abort.failure?.count === 1, `Mid-battle exit was not recorded as a failed attempt: ${JSON.stringify(onboarding.abort)}`);
   assert(JSON.stringify(onboarding.initial.visibleTabs) === JSON.stringify(['throne', 'dungeon', 'army'])
     && JSON.stringify(onboarding.initial.visiblePages) === JSON.stringify(['throne', 'dungeon', 'mob']),
   `First raid exposed locked pages: ${JSON.stringify(onboarding.initial)}`);
@@ -297,6 +298,36 @@ try {
     && JSON.stringify(failedRollback.after.mods) === JSON.stringify(failedRollback.before.mods),
   `Failed battle leaked settlement damage into management: ${JSON.stringify(failedRollback)}`);
   await page.evaluate(async (raw) => { await __debug.restoreRaw(raw); }, rawBeforeFailedBattle);
+
+  const reliefFlow = await page.evaluate(async () => {
+    __debug.forceRaid(20);
+    const hero = __debug.save.champs[0];
+    if (hero) { __debug.devFatigue(hero.uid, 88); __debug.devRotation(hero.uid, 3, 2); }
+    const initial = { bone: __debug.save.bone, mana: __debug.save.mana, heroXp: hero?.xp ?? 0 };
+    const attempts = [];
+    for (let i = 1; i <= 5; i++) {
+      await __debug.startBattle(); if (__debug.raidBriefing) await __debug.confirmRaidBriefing();
+      if (i === 1) __debug.devSettleWin(2); else __debug.devSettleLoss();
+      __debug.returnResult();
+      attempts.push({ i, state: structuredClone(__debug.failureRelief), bone: __debug.save.bone, mana: __debug.save.mana,
+        hero: __debug.save.champs[0] ? { xp: __debug.save.champs[0].xp, fatigue: __debug.save.champs[0].fatigue,
+          restTurns: __debug.save.champs[0].restTurns, sorties: __debug.save.champs[0].sorties } : null });
+      if (__debug.detail) __debug.closeDetail();
+    }
+    return { initial, attempts, raidNo: __debug.save.raidNo };
+  });
+  const aid2 = reliefFlow.attempts[1], aid5 = reliefFlow.attempts[4];
+  assert(reliefFlow.attempts[0].state.states['campaign:20']?.count === 1
+    && reliefFlow.attempts[0].state.detail?.title === undefined
+    && aid2.state.states['campaign:20']?.count === 2 && aid2.state.states['campaign:20']?.aid2
+    && aid2.state.detail?.title === '魔神的第一次围观'
+    && aid2.bone > reliefFlow.initial.bone && aid2.mana > reliefFlow.initial.mana,
+  `Two-failure resource relief did not trigger from a partial victory plus defeat: ${JSON.stringify(reliefFlow)}`);
+  assert(aid5.state.states['campaign:20']?.count === 5 && aid5.state.states['campaign:20']?.aid5
+    && aid5.state.detail?.title === '魔神终于看不下去了'
+    && (!aid5.hero || (aid5.hero.fatigue === 0 && aid5.hero.restTurns === 0 && aid5.hero.sorties === 0
+      && aid5.hero.xp >= reliefFlow.initial.heroXp + 1000)),
+  `Five-failure hero relief did not clear fatigue and grant XP: ${JSON.stringify(reliefFlow)}`);
 
   const uiArchitecture = await page.evaluate(() => {
     __debug.uiTourSkip();
