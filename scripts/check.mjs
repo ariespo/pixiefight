@@ -34,8 +34,11 @@ const battleSource = readFileSync('battle.js', 'utf8');
 for (const kind of ['slime', 'goblin', 'archer', 'bat', 'shaman', 'ogre', 'bonedragon', 'hundredarm', 'lich', 'beholder', 'mindflayer', 'plaguelord', 'magmagolem', 'broodqueen']) {
   if (!battleSource.includes(`  ${kind}: {`)) throw new Error(`Missing identity-driven monster dialogue: ${kind}`);
 }
-for (const contract of ['monsterTargetLine(b, u, tgt)', "monsterLine(b, u, 'attack')", "monsterLine(b, u, 'skill'", 'monsterContextLine(b, monSpeaker, livingHeroes)', "fatal: ['"]) {
+for (const contract of ['monsterTargetLine(b, u, tgt)', "monsterLine(b, u, 'attack')", "monsterLine(b, u, 'skill'", 'monsterLevelLine(b, livingHeroes)', 'monsterRivalLine(b, monSpeaker, livingHeroes)', 'monsterContextLine(b, monSpeaker, livingHeroes)', "fatal: ['"]) {
   if (!battleSource.includes(contract)) throw new Error(`Monster dialogue context/severity contract is missing: ${contract}`);
+}
+for (const staleTone of ['报销', '工位', '保险', '绩效', '工资', '加班费', '考勤', '审批']) {
+  if (battleSource.includes(staleTone)) throw new Error(`Stale office-humor battle dialogue remains: ${staleTone}`);
 }
 if (!battleSource.includes("generatedLine(b, u, 'attack') || monsterTargetLine")
   || !battleSource.includes("generatedLine(b, tgt, 'reaction') || reactionText"))
@@ -111,14 +114,30 @@ if (!(affixFour.heroes[0].atk > affixOne.heroes[0].atk && affixFour.heroes[0].sh
   && affixFour.roomLimit < affixOne.roomLimit && raidAffixInfo(affixRaid(4), 'holywater')?.value === '缩短65%'))
   throw new Error('Raid affix levels I-IV do not produce increasing numerical effects.');
 const voiceBattle = createBattle({ no: 3, title: 'voice-check', members: [
-  { cls: 'knight', lv: 3 }, { cls: 'cleric', lv: 3 }, { cls: 'mage', lv: 3 },
-  { cls: 'archer', lv: 3 }, { cls: 'rogue', lv: 3 },
+  { cls: 'rogue', lv: 3 }, { cls: 'rogue', lv: 3 }, { cls: 'rogue', lv: 3 },
+  { cls: 'rogue', lv: 3 }, { cls: 'rogue', lv: 3 },
 ], affixes: [], reward: { bone: 0, mana: 0 } },
 [{ theme: 'stone', trap: 'none', front: 108, back: null, leader: null, flank: null }],
 [{ uid: 108, kind: 'hundredarm', lv: 5, xp: 0 }]);
-const hundredArmContext = new Set(['终于每只手都有对手了。', '留十只手专门拍牧师。', '拆甲这活，我手多。', '箭只有一支，手可不止。']);
+const hundredArmContext = new Set(['终于每只手都有对手了。']);
 if (!voiceBattle.dialogue.some((entry) => hundredArmContext.has(entry.text)))
   throw new Error(`Monster composition dialogue did not enter the visible speech stream: ${JSON.stringify(voiceBattle.dialogue)}`);
+const rivalBattle = createBattle({ no: 4, title: 'rival-check', members: [
+  { cls: 'captain', lv: 9 }, { cls: 'swordmaster', lv: 9 },
+], affixes: [], reward: { bone: 0, mana: 0 } },
+[{ theme: 'stone', trap: 'none', front: 109, back: null, leader: null, flank: null }],
+[{ uid: 109, kind: 'hundredarm', lv: 5, xp: 0 }]);
+const hundredArmRivals = new Set(['队长尽管指挥，我有足够的手逐个反对。', '剑圣出一剑，我出一百零八巴掌。']);
+if (!rivalBattle.dialogue.some((entry) => hundredArmRivals.has(entry.text)))
+  throw new Error(`Named hero-class dialogue did not enter the visible speech stream: ${JSON.stringify(rivalBattle.dialogue)}`);
+const levelBattle = createBattle({ no: 5, title: 'level-check', members: [
+  { cls: 'knight', lv: 26 },
+], affixes: [], reward: { bone: 0, mana: 0 } },
+[{ theme: 'stone', trap: 'none', front: 110, back: null, leader: null, flank: null }],
+[{ uid: 110, kind: 'slime', lv: 5, xp: 0 }]);
+const levelDread = new Set(['二十六级。现在逃跑也来不及了，战斗早就自动保存。', '我开始希望复活只是宣传，不是功能。']);
+if (!levelBattle.dialogue.some((entry) => levelDread.has(entry.text)))
+  throw new Error(`Five-level dread escalation did not enter the visible speech stream: ${JSON.stringify(levelBattle.dialogue)}`);
 if (!(effectiveThorns(2) < 0.85 && effectiveThorns(2) > effectiveThorns(1) && effectiveThorns(1) < 1))
   throw new Error('Thorns diminishing returns are not monotonic and safely capped.');
 if (!(effectiveMitigationMultiplier(0) > 0.14 && armorMultiplier(1000000) > 0.20))

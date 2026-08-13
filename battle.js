@@ -396,7 +396,7 @@ const MONSTER_VOICES = {
     context: { solo: ['一个人？够我慢慢裹住。'], crowd: ['这么多双鞋，正好一起黏。'], healer: ['先黏住那个会发光的。'], armored: ['铁罐头也会陷进黏液。'], caster: ['离火远点，我不想变干。'] },
   },
   goblin: {
-    attack: ['刀子很短，离你够近就行。', '别看手，看你的钱袋！'], skill: ['第一刀试甲，第二刀收账！', '我可从没答应只刺一次。'],
+    attack: ['刀子很短，离你够近就行。', '别看手，看你的钱袋！'], skill: ['第一刀试甲，第二刀收货！', '我可从没答应只刺一次。'],
     reaction: { graze: ['你连我的耳朵都没削到。'], hurt: ['喂，这刀口是真的！'], severe: ['血比赃物掉得还快！'], critical: ['再挨一下就没处藏了…'], fatal: ['我的逃跑路线呢…'] },
     context: { solo: ['就一个？连赃物都不够分。'], crowd: ['人多好，口袋也多。'], healer: ['先偷走牧师的咒语。'], armored: ['甲缝里总能塞进一把刀。'], ranged: ['射箭的，先看好你背后。'] },
   },
@@ -462,6 +462,31 @@ const MONSTER_VOICES = {
   },
 };
 
+// 对头领职业的反应仍从怪物自身出发，而不是换成一套所有人共用的职场笑话。
+const MONSTER_RIVAL_LINES = {
+  slime: { knight: '剑士，小心脚下；剑再快也砍不断一滩。', captain: '队长先黏住，剩下的人自然会乱。', swordmaster: '剑圣也得先把鞋从我身上拔出来。', inquisitor: '审判官，先判判黏液该算固体还是液体。' },
+  goblin: { knight: '剑士盯着刀，我盯着你的口袋。', captain: '队长倒下以后，命令就归捡到的人。', swordmaster: '剑圣出剑很快，丢东西也会很快。', inquisitor: '审判官的印章应该能卖个好价钱。' },
+  archer: { knight: '剑士，剑够不到骨缝里飞出的箭。', captain: '队长的羽饰，正好替我标出靶心。', swordmaster: '剑圣能斩箭，那就多送你几支。', inquisitor: '审判官，骨头没有罪，也没有耳朵。' },
+  bat: { knight: '剑士，我在你挥剑前就听见了。', captain: '队长的号令太响，蒙眼也找得到。', swordmaster: '剑圣再快，也斩不中回声。', inquisitor: '审判官的祷词，听起来像晚餐铃。' },
+  shaman: { knight: '剑士的肺，也很适合养孢子。', captain: '队长先咳起来，整队都会跟着咳。', swordmaster: '剑圣能切开蘑菇，切不开飘散的孢子。', inquisitor: '审判官，圣火烤过的蘑菇更香。' },
+  ogre: { knight: '剑士，你的剑还没有我的手指长。', captain: '队长站前面，省得我找两次。', swordmaster: '剑圣砍得快，我只要砸中一次。', inquisitor: '审判官的话很多，压扁以后就安静了。' },
+  bonedragon: { knight: '剑士，你面对的是死过一次的龙。', captain: '队长，把你的阵形摆成适合吐息的样子。', swordmaster: '剑圣可以斩骨，却斩不断龙留下的威严。', inquisitor: '审判官，坟墓不接受第二次判决。' },
+  hundredarm: { knight: '剑士只有一把剑，我可以递给你一百个破绽。', captain: '队长尽管指挥，我有足够的手逐个反对。', swordmaster: '剑圣出一剑，我出一百零八巴掌。', inquisitor: '审判官，给我的每只手分别宣判吧。' },
+  lich: { knight: '剑士的剑会钝，墓碑不会。', captain: '队长，你的命令传不到死者耳中。', swordmaster: '剑圣追求一剑，我已经死过一次。', inquisitor: '审判官，我们都研究死亡，只是我有实战经验。' },
+  beholder: { knight: '剑士，你只有两只眼，却带了这么多破绽。', captain: '队长的每一道手势，我都有一只眼盯着。', swordmaster: '剑圣能骗过一双眼，骗不过全部。', inquisitor: '审判官，轮到我审视你了。' },
+  mindflayer: { knight: '剑士握住剑就好，念头交给我。', captain: '队长的脑子里，全是别人该怎么死。', swordmaster: '剑圣的剑意，尝起来应该很锋利。', inquisitor: '审判官，让我看看你的信念从哪一页开始松动。' },
+  plaguelord: { knight: '剑士可以斩人，斩不了一次咳嗽。', captain: '队长先染病，纪律会替我传播。', swordmaster: '剑圣的剑很快，病发得更早。', inquisitor: '审判官，瘟疫对所有判决一视同仁。' },
+  magmagolem: { knight: '剑士，剑刃烧红以后可别松手。', captain: '队长，把他们排好，我要一次烧完。', swordmaster: '剑圣能斩开岩壳，里面正好更热。', inquisitor: '审判官，熔岩不认罪，只认温度。' },
+  broodqueen: { knight: '剑士挥剑越快，缠上的丝越多。', captain: '队长落网，整支队伍都会来救。', swordmaster: '剑圣能斩一根丝，我有一整座巢。', inquisitor: '审判官，先问问蛛网愿不愿意放人。' },
+};
+
+const LEVEL_DREAD_LINES = [
+  ['十一级以后还肯下地牢？看来你的命已经不是一次性用品了。', '超过十级了……这次可能轮到我先写遗言。'],
+  ['十六级。上一道门没来得及惨叫，原来不是因为勇敢。', '这种等级还叫勇者？这已经是会走路的结局了。'],
+  ['二十一级。没关系，死了下场还会刷新；疼只是这一场的事。', '系统说我能复活，没说我会忘记这一刀。'],
+  ['二十六级。现在逃跑也来不及了，战斗早就自动保存。', '我开始希望复活只是宣传，不是功能。'],
+];
+
 const voiceKey = (u) => String(u?.kind ?? '').replace(/^elite-/, '');
 const monsterVoice = (u) => u?.side === 'mon' ? MONSTER_VOICES[voiceKey(u)] : null;
 function monsterLine(b, u, kind, chance = 0.65) {
@@ -476,8 +501,29 @@ function targetKind(tgt) {
   return '';
 }
 function monsterTargetLine(b, u, tgt) {
+  const rivalKey = tgt?.kind === 'hero' ? 'knight' : tgt?.kind;
+  const rival = MONSTER_RIVAL_LINES[voiceKey(u)]?.[rivalKey];
+  if (rival && b.rng() < 0.72) return rival;
   const pool = monsterVoice(u)?.context?.[targetKind(tgt)];
   return Array.isArray(pool) && pool.length && b.rng() < 0.45 ? pickLine(pool, b.rng) : '';
+}
+function monsterRivalLine(b, u, enemies) {
+  const rivals = MONSTER_RIVAL_LINES[voiceKey(u)];
+  if (!rivals) return '';
+  const lines = enemies.map((enemy) => rivals[enemy.kind === 'hero' ? 'knight' : enemy.kind]).filter(Boolean);
+  return lines.length ? pickLine(lines, b.rng) : '';
+}
+function monsterLevelLine(b, enemies) {
+  const maxLevel = Math.max(0, ...enemies.map((enemy) => Number(enemy.lv) || 0));
+  if (maxLevel <= 10) return '';
+  const tier = Math.floor((maxLevel - 11) / 5);
+  if (tier < LEVEL_DREAD_LINES.length) return pickLine(LEVEL_DREAD_LINES[tier], b.rng);
+  const threshold = 11 + tier * 5;
+  const endless = [
+    `敌军越过${threshold}级线了。好消息是我还能复活；坏消息是记忆不会重置。`,
+    `这是第${tier + 1}层绝望。再高五级，我就把阵亡当作进场动画。`,
+  ];
+  return pickLine(endless, b.rng);
 }
 function monsterContextLine(b, u, enemies) {
   const context = monsterVoice(u)?.context;
@@ -617,7 +663,7 @@ const HERO_PARTY_BANTER = [
   ['谁走前面？', '欠债最多的那个，死了账也比较好算。'],
   ['墙上那是血吗？', '别舔。上次舔墙的人现在还在墙里。'],
   ['如果我倒下，记得带我回去。', '当然，你的靴子还值两个银币。'],
-  ['这扇门后会有什么？', '按经验，是一份没有加班费的工作。'],
+  ['这扇门后会有什么？', '按经验，是另一种比较具体的死法。'],
   ['火把快灭了。', '省着点，葬礼还得用。'],
   ['你听见磨刀声了吗？', '听见了，至少这里重视餐前准备。'],
   ['这趟结束我就退休。', '大家进地牢时都这么说，地牢很爱听。'],
@@ -648,28 +694,28 @@ const BREACH_LINES = [
 
 const STAT_LINES = {
   max: {
-    hero: ['我已经升无可升，工资倒还有下降空间。', '履历写满了。遗书还空着。', '满级只说明我活得比培训手册久。'],
-    mon: ['我的等级满了，胃口没有。', '工坊说我已经没有可升级的地方，真没礼貌。', '五级满编，今日也拒绝善终。'],
+    hero: ['我已经升无可升，剩下的只能靠活着证明。', '等级写满了，遗书还空着。', '满级只说明死亡暂时追不上我。'],
+    mon: ['我的等级满了，胃口没有。', '数值到头了，牙齿还可以继续往前。', '满级以后，死亡只是一次很短的退场。'],
   },
   attack: {
-    hero: ['这一剑的报价，比你整间地牢都贵。', '我的攻击很高，命中率由会计另行解释。', '让开，我的数值已经先冲进去了。'],
-    mon: ['我的攻击高得需要单独报税。', '别挡，我这一爪按拆迁费结算。', '工坊把“适量”两个字锻没了。'],
+    hero: ['这一剑下去，我们至少有一个不用继续赶路。', '我的攻击很高，至于砍中以后谁更后悔，马上揭晓。', '让开，我的数值已经先冲进去了。'],
+    mon: ['这一爪很重，死亡会替你确认重量。', '别挡，我只想把你送回下一次刷新。', '工坊把“适量”两个字锻没了。'],
   },
   defense: {
-    hero: ['这身甲能挡刀，挡不住差旅报销。', '尽管打，维修单会寄给王国。', '我的防御很高，主要因为不想回家。'],
-    mon: ['你砍的是甲，疼的是你的预算。', '我的防御来自多年拒绝沟通。', '请继续，你的剑比较先需要治疗。'],
+    hero: ['这身甲能挡刀，挡不住我意识到自己还活着。', '尽管打，盔甲碎完才轮到我。', '我的防御很高，主要因为死亡一直没找对入口。'],
+    mon: ['你砍的是甲，先累死的可能是剑。', '我的防御来自多年拒绝躺下。', '请继续，你的剑比较先需要治疗。'],
   },
   hp: {
-    hero: ['血条很长，假期很短。', '我能撑很久，遗憾的是远征也是。', '这点生命够我写完三份阵亡报告。'],
-    mon: ['我的血条比你们的补给线长。', '慢慢砍，夜班才刚开始。', '生命很多，生活没有。'],
+    hero: ['血条很长，葬礼得再等等。', '我能撑很久，遗憾的是远征也是。', '这点生命够我死得非常有过程。'],
+    mon: ['我的血条比你们的补给线长。', '慢慢砍，我还没选好倒下的姿势。', '生命很多，死起来也比较费时间。'],
   },
   thorns: {
-    hero: ['碰我之前，先签反伤知情书。', '盔甲会还手，我只负责站着。', '你打我一下，算我们共同受伤。'],
-    mon: ['请用力，我靠反伤完成绩效。', '盔甲长刺，是因为社交边界很重要。', '打我吧，疼痛会自动抄送。'],
+    hero: ['碰我之前先想清楚，我们可能一起倒下。', '盔甲会还手，我只负责站着。', '你打我一下，算我们共同受伤。'],
+    mon: ['请用力，我死之前争取先送走你。', '盔甲长刺，是因为我不喜欢独自流血。', '打我吧，疼痛会原路返回。'],
   },
   mitigation: {
-    hero: ['伤害会被折算，痛苦不会。', '减伤很高，但会议仍是真实伤害。', '刀只能进来一部分，加班可以全部进来。'],
-    mon: ['伤害正在衰减，你的士气也是。', '我不是无敌，只是很擅长浪费你的时间。', '再高的减伤也挡不住月底考核。'],
+    hero: ['伤害会被折算，痛苦不会。', '减伤很高，所以我能更慢地意识到自己快死了。', '刀只能进来一部分，死亡得在外面排队。'],
+    mon: ['伤害正在衰减，你的士气也是。', '我不是无敌，只是很擅长推迟死亡。', '再高的减伤也只是把遗言说得更完整。'],
   },
 };
 
@@ -762,7 +808,10 @@ function enterRoom(b        ) {
   }
   let localMonOpening = '';
   if (!aiOpening && monSpeaker) {
-    localMonOpening = monsterContextLine(b, monSpeaker, livingHeroes) || MON_ROOM_LINES[Math.floor(b.rng() * MON_ROOM_LINES.length)];
+    localMonOpening = monsterLevelLine(b, livingHeroes)
+      || monsterRivalLine(b, monSpeaker, livingHeroes)
+      || monsterContextLine(b, monSpeaker, livingHeroes)
+      || MON_ROOM_LINES[Math.floor(b.rng() * MON_ROOM_LINES.length)];
     log(b, `　${monSpeaker.name}：${localMonOpening}`, 'good');
   }
   // 每进一房各挑一名尚未发过属性台词的单位。高属性获得辨识度，但不会在同一瞬间把气泡铺满屏幕。
@@ -2367,8 +2416,8 @@ export function stepBattle(b        , dt        ) {
   }
 }
 
-const WORKER_DEPLOY_LINES = ['工钱得拿命挣了！', '后勤也是地牢的一道门！', '放下账本，拿起武器！'];
-const WORKER_EVAC_LINES = ['账本带走，设备不要了！', '活着才能重建，撤！', '封存仓库，从侧道撤离！'];
+const WORKER_DEPLOY_LINES = ['活干不完没关系，勇者得先死！', '后勤也是地牢的一道门！', '工具放下，能咬的都来咬！'];
+const WORKER_EVAC_LINES = ['命先带走，东西下次复活再捡！', '活着才能重建，撤！', '封住仓库，从侧道撤离！'];
 const HERO_LOOT_LINES = ['砸开库门，能带走的全带走！', '五秒，搜光这里！', '先搬资源，再毁设备！'];
 
 function utilityServiceTotal(row) {
@@ -2488,7 +2537,7 @@ export function evacuateUtilityWorker(b) {
   utility.row.workerEvacuated = true;
   const line = WORKER_EVAC_LINES[Math.floor(b.rng() * WORKER_EVAC_LINES.length)];
   speak(b, worker, line, 'worker');
-  log(b, `${worker.name}携带账本从第${room.index + 1}层安全撤离`, 'good');
+  log(b, `${worker.name}带着剩余物资从第${room.index + 1}层安全撤离`, 'good');
   b.events.push({ k: 'worker-evacuate', room: room.index, unit: worker, x: worker.x });
   return true;
 }
