@@ -726,14 +726,20 @@ export async function requestNovelSummary(snap) {
 const cleanLine = (value, max = 24) => String(value ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, max);
 
 export function battleDialoguePrompt(snap) {
+  const keys = (snap?.units ?? []).map((unit) => unit.key);
+  const skeleton = {
+    opening: keys.slice(0, Math.min(3, keys.length)).map((key) => ({ key, text: '填写一句开场台词' })),
+    units: keys.map((key) => ({ key, attack: ['填写攻击台词一', '填写攻击台词二'], skill: ['填写技能台词'],
+      reaction: ['填写受伤台词一', '填写受伤台词二'], heal: ['填写恢复台词'], special: ['填写特殊效果台词'] })),
+  };
   return [
     '你为中文像素风地牢经营游戏《勇者去死！》编写一场战前台词包。只输出 JSON，不要解释。',
     '语气是地牢守方视角的黑色幽默。台词必须短、能在人物头顶两行内读完，不要描述伤害数值。',
     '只使用输入中给出的 key；根据角色阵营、职业/种族、技能、性格、属性特征写出有辨识度的句子。',
     promptDirective('dialogue'),
-    '必须为输入中的每一个单位都返回一项 units。attack、skill、reaction 每类必须写1至3句；heal、special每类写1至2句，即使该单位通常不会治疗，也要写符合其身份的恢复或特殊效果反应备用句。opening写2至4句开场交锋。不得省略单位或把必填数组留空。',
+    `本场恰好有${keys.length}个单位，units数组也必须恰好有${keys.length}项，并按给定key逐项填写。attack和reaction各写2句；skill、heal、special各写1句。即使通常不会治疗，也要写符合身份的恢复反应备用句。不得省略、合并角色或把数组留空。`,
     `<战斗事实>${JSON.stringify(snap)}</战斗事实>`,
-    '输出格式：{"opening":[{"key":"hero:王国剑士","text":"门后有动静。"}],"units":[{"key":"mon:骨头书记","attack":["留下加班费。"],"skill":[],"reaction":[],"heal":[],"special":[]}]}',
+    `必须严格填满下面这份与本场角色一一对应的JSON骨架；保留每个key，只替换所有“填写…”文字：${JSON.stringify(skeleton)}`,
   ].join('\n');
 }
 
@@ -768,7 +774,25 @@ export function sanitizeBattleDialogue(raw, snap) {
 
 export async function requestBattleDialogue(snap) {
   const j = await ask(battleDialoguePrompt(snap), 'dialogue', 24000);
-  return sanitizeBattleDialogue(j, snap);
+  let pack = sanitizeBattleDialogue(j, snap);
+  const missing = (snap?.units ?? []).filter((unit) => !pack?.units?.[unit.key]);
+  if (missing.length) {
+    const supplementSnap = { ...snap, units: missing };
+    const supplement = sanitizeBattleDialogue(await ask([
+      battleDialoguePrompt(supplementSnap),
+      `这是缺失角色补写请求。只返回上述${missing.length}个key；任何一个都不能省略。`,
+    ].join('\n'), 'dialogue', 24000), supplementSnap);
+    if (supplement) {
+      const units = { ...(pack?.units ?? {}), ...supplement.units };
+      const opening = [...(pack?.opening ?? []), ...supplement.opening].slice(0, 4);
+      const expected = (snap?.units ?? []).length, covered = Object.keys(units).length;
+      const lines = opening.length + Object.values(units).reduce((total, entry) => total
+        + Object.values(entry).reduce((sum, pool) => sum + pool.length, 0), 0);
+      const coreCovered = Object.values(units).filter((entry) => entry.attack.length && entry.skill.length && entry.reaction.length).length;
+      pack = { opening, units, stats: { expected, covered, coreCovered, lines } };
+    }
+  }
+  return pack;
 }
 
 // ---------- 文学化战报 ----------
