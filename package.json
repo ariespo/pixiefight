@@ -6,6 +6,7 @@
     "start": "node scripts/serve.mjs",
     "check": "node scripts/check.mjs",
     "smoke": "node scripts/smoke-browser.mjs",
+    "smoke:real-ai": "node scripts/smoke-real-ai.mjs",
     "verify": "npm run check && npm run smoke"
   },
   "devDependencies": {
