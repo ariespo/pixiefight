@@ -692,8 +692,14 @@ function consumeWorkshopCharge(quote) {
 function recruitQuote(k) {
   const eligible = !isCustomKind(k.id) && !k.legend && S.dungeon.hatcheryCharges > 0;
   const discount = eligible ? S.dungeon.hatcheryDiscount : 0;
-  const base = doctrineCost('recruit', k.cost).bone;
-  return { cost: Math.max(1, Math.ceil(base * (1 - discount))), discount, base };
+  const doctrineBase = doctrineCost('recruit', k.cost).bone;
+  // 第一轮的史莱姆与骷髅弓手是强制教学步骤。方针可以给优惠，但不能把这两笔
+  // 必需消费抬到基础价以上，否则“精兵誓约”等未来价格倍率会锁死新手流程。
+  const protectedByTutorial = !S.overtime && S.raidNo === 1 && (k.id === 'slime' || k.id === 'archer')
+    && !S.monsters.some((monster) => monster.kind === k.id);
+  const base = protectedByTutorial ? Math.min(doctrineBase, k.cost) : doctrineBase;
+  return { cost: Math.max(1, Math.ceil(base * (1 - discount))), discount, base,
+    tutorialPrice: protectedByTutorial && base < doctrineBase };
 }
 
 function consumeHatcheryCharge(quote) {
@@ -4617,7 +4623,7 @@ function drawPortraitMob(x, y, w, h) {
       const recruitX = custom ? x + w - 128 : x + w - 112;
       const recruitW = custom ? 68 : 96;
       button(portraitGfx, portraitLayer, portraitHits, recruitX, cy + 11, recruitW, 38,
-        eliteLocked ? `第${k.eliteMin}轮` : custom ? `招 ${rq.cost}骨` : `招募 ${rq.cost}骨`, () => recruit(k.id),
+        eliteLocked ? `第${k.eliteMin}轮` : custom ? `招 ${rq.cost}骨` : rq.tutorialPrice ? `教程价 ${rq.cost}骨` : `招募 ${rq.cost}骨`, () => recruit(k.id),
         { size: custom ? 11 : 13, enabled: !eliteLocked && S.bone >= rq.cost && S.monsters.length < monsterCap(), fill: C.greenDark, border: C.green, color: C.white });
       portraitActionMap[`recruit-${k.id}`] = { x: recruitX, y: cy + 11, w: recruitW, h: 38 };
       if (custom) {
@@ -6079,7 +6085,7 @@ function drawSidePanel(g               ) {
       { size: 12, fill: C.ink, border: C.purple, color: C.purple });
 
     const custom = isCustomKind(k.id);
-    button(g, uiLayer, hits, 340, 176, custom ? 82 : 130, 18, `${custom ? '再缝' : '招募'} ${rq.cost}骨${rq.discount ? `(-${Math.round(rq.discount * 100)}%)` : ''}`,
+    button(g, uiLayer, hits, 340, 176, custom ? 82 : 130, 18, `${custom ? '再缝' : rq.tutorialPrice ? '教程招募' : '招募'} ${rq.cost}骨${rq.discount ? `(-${Math.round(rq.discount * 100)}%)` : ''}`,
       () => recruit(k.id),
       { size: custom ? 10 : 11, enabled: S.bone >= rq.cost, fill: C.greenDark, border: C.green, color: C.white });
     if (custom) button(g, uiLayer, hits, 424, 176, 46, 18, customDeleteConfirm === k.id ? '确认删' : '删图纸', () => deleteCustomKind(k.id),
@@ -7372,7 +7378,7 @@ function recruit(kindId        ) {
     : { kind: 'inst', uid: inst.uid };
   playSfx('buy');
   persist();
-  say(`招募了${k.name}${quote.discount ? `，孵化室节省${k.cost - quote.cost}骨币` : ''}`);
+  say(`招募了${k.name}${quote.tutorialPrice ? '，采用首轮教程保护价' : quote.discount ? `，孵化室节省${k.cost - quote.cost}骨币` : ''}`);
   render();
 }
 
@@ -8084,7 +8090,7 @@ function pageMob(g               ) {
       .stroke({ width: 1, color: selected ? C.gold : cst ? C.purpleDark : el ? C.goldDark : C.ink, alignment: 0 });
     uiLayer.addChild(portraitEffect(sprite(k.tex, 18, y + 19, 18), false, selected, k.id.length * 13));
     label(uiLayer, cut(k.name, 4), 30, y + 4, 12, cst ? C.purple : el ? C.gold : C.bone);
-    label(uiLayer, open ? `${rq.cost}骨${rq.discount ? '↓' : ''}` : `第${k.eliteMin}轮`, 92, y + 4, 12,
+    label(uiLayer, open ? `${rq.cost}骨${rq.tutorialPrice ? '◆' : rq.discount ? '↓' : ''}` : `第${k.eliteMin}轮`, 92, y + 4, 12,
       !open ? C.stoneLit : S.bone >= rq.cost ? C.gold : C.redDark);
     label(uiLayer, k.row === 'front' ? '前' : k.row === 'back' ? '后' : '任', 142, y + 4, 12, C.stoneLit);
     hits.add(6, y, 152, 20, () => { if (customDeleteConfirm !== k.id) customDeleteConfirm = ''; sel = { kind: 'monkind', id: k.id }; selectedEntity = { type: 'monster-kind', id: k.id }; inspectorView = 'summary'; playSfx('tab'); render(); });

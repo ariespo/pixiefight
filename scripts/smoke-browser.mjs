@@ -756,7 +756,35 @@ try {
   assert(doctrineTitle.title.mode === 'doctrine'
     && ['default', 'swarm', 'elite', 'economy'].every((id) => doctrineTitle.actions[`doctrine-${id}`]),
   'A permanent clear did not unlock all four starting doctrines.');
-  await page.evaluate(async () => { __debug.titlePick('economy'); await __debug.titleConfirm(); __debug.introContinue(); });
+  const doctrineTutorialSafety = await page.evaluate(async () => {
+    const out = {};
+    for (const id of ['default', 'swarm', 'elite', 'economy']) {
+      __debug.titlePick(id);
+      await __debug.titleConfirm();
+      const startBone = __debug.bone;
+      const slime = __debug.economyQuotes(0, 0, 'slime').recruit;
+      __debug.devBuyMonster('slime');
+      const archer = __debug.economyQuotes(0, 0, 'archer').recruit;
+      __debug.devBuyMonster('archer');
+      const units = __debug.monsters;
+      const recruitState = { startBone, slime, archer, bone: __debug.bone, monsters: units.length,
+        regularSlime: __debug.economyQuotes(0, 0, 'slime').recruit };
+      __debug.introContinue();
+      __debug.devAssign(0, 'front', units.find((unit) => unit.kind === 'slime').uid);
+      __debug.devAssign(0, 'back', units.find((unit) => unit.kind === 'archer').uid);
+      __debug.setTab('throne');
+      await __debug.startBattle();
+      if (__debug.raidBriefing) await __debug.confirmRaidBriefing();
+      const battle = __debug.runBattleToEnd();
+      out[id] = { ...recruitState, deploymentReady: __debug.progression.deploymentReady, win: battle?.result?.win === true };
+      __debug.returnResult();
+    }
+    return out;
+  });
+  assert(Object.values(doctrineTutorialSafety).every((entry) => entry.monsters === 2 && entry.bone >= 0 && entry.deploymentReady && entry.win)
+    && doctrineTutorialSafety.elite.slime.cost === 30 && doctrineTutorialSafety.elite.archer.cost === 45
+    && doctrineTutorialSafety.elite.regularSlime.cost === 39,
+  `A starting doctrine can still make the mandatory first-round recruits unaffordable: ${JSON.stringify(doctrineTutorialSafety)}`);
   assert(await page.evaluate(() => __debug.screen === 'manage' && __debug.save.doctrine === 'economy'),
     'The selected starting doctrine was not persisted into the new run.');
 
