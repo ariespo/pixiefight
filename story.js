@@ -847,6 +847,78 @@ export const SCENES          = [
       { label: '在王座上坐到天亮', reply: '天亮时你想清楚了一件事，但说不出是什么。', effects: [{ t: 'res', mana: 8 }] },
     ],
   },
+  {
+    id: 'chain-death-start', chained: true, who: '披着过大斗篷的小死神',
+    text: '它从一具刚倒下的勇者身后钻出来，承认自己把第一份死亡通知送错了地址。冥府正在追捕它，也正在假装这种错误从未发生。',
+    choices: [
+      { label: '把它藏进地牢', reply: '你给它安排了一个没有窗的储物间。它很感动：这与冥府的员工宿舍相比，已经属于景观房。', effects: [{ t: 'encounter', chain: 'death', stage: 1, route: 'shelter' }] },
+      { label: '拿它向冥府索要赎金', reply: '冥府同意谈判，并强调赎金通常由活着的一方支付。你们在定义上发生分歧，只好用武器校对。', effects: [{ t: 'encounter', chain: 'death', stage: 1, route: 'ransom' }] },
+    ],
+  },
+  {
+    id: 'chain-death-mid', chained: true, who: '会自行翻页的亡者名单',
+    text: '名单开始在午夜念出尚未死去的名字。每念一个，墙里就多一次呼吸；小死神说这是系统在努力把错误变成流程。',
+    choices: [
+      { label: '释放名单里的亡魂', reply: '名字从纸上爬下来，第一次发现死亡之后仍然需要排队。它们决定先替你守门，再去投诉。', effects: [{ t: 'encounter', chain: 'death', stage: 2, route: 'names' }] },
+      { label: '把名单炼进一把武器', reply: '铁匠问这把刀叫什么。名单回答了一长串名字，于是它暂时被登记为“等会儿再填”。', effects: [{ t: 'encounter', chain: 'death', stage: 2, route: 'blade' }] },
+    ],
+  },
+  {
+    id: 'chain-death-final', chained: true, who: '真正的死神',
+    text: '死神本人来到王座前，递上一份没有退订按钮的契约。小死神躲在你身后小声提醒：别怕，最坏也只是死；这游戏里死通常只耽误下一场出勤。',
+    choices: [
+      { label: '撕毁契约，给小死神自由', reply: '契约裂成两半，冥府立刻派出一支队伍证明自由属于未经批准的异常状态。', effects: [{ t: 'encounter', chain: 'death', stage: 3, route: 'freedom' }] },
+      { label: '把死亡契约钉上王座', reply: '从这一刻起，死亡也得先经过你的前台。冥府认为这是严重的业务劫持，并亲自上门催收。', effects: [{ t: 'encounter', chain: 'death', stage: 3, route: 'crown' }] },
+    ],
+  },
+  {
+    id: 'chain-thirteenth-start', chained: true, who: '不存在的第十三远征队',
+    text: '十二名幽灵在门口站成十三个人的队形。他们说王国删掉了整支远征队，只因为报告表格最多容纳十二个编号。',
+    choices: [
+      { label: '替他们保存姓名', reply: '你把名字刻在墙上。王国档案员闻到证据的味道，举着火把赶来维护历史的整洁。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 1, route: 'remember' }] },
+      { label: '让他们替地牢引路', reply: '幽灵欣然接受。被历史遗忘以后，他们终于找到一份不查身份的工作。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 1, route: 'exploit' }] },
+    ],
+  },
+  {
+    id: 'chain-thirteenth-mid', chained: true, who: '没有编号的旗手',
+    text: '一面旧旗从墙缝里展开。只要它还竖着，远征队就不会彻底消失；代价是王国每次看见它，都得再派人来否认一次。',
+    choices: [
+      { label: '升起第十三面旗', reply: '旗帜升到入口上方。王国军官宣布它不存在，然后命令所有人向不存在的目标冲锋。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 2, route: 'banner' }] },
+      { label: '把幽灵藏进墙内伏击', reply: '墙壁突然变得很有团队精神。每当勇者敲门，里面都会礼貌地多回答一声。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 2, route: 'ambush' }] },
+    ],
+  },
+  {
+    id: 'chain-thirteenth-final', chained: true, who: '王国首席史官',
+    text: '史官带着剑圣和一瓶更正液来到门前。他愿意承认第十三远征队存在，条件是所有见证者先变成适合写进脚注的过去式。',
+    choices: [
+      { label: '为他们建立纪念碑', reply: '你决定把名字留在石头上。史官叹气，历史最讨厌石头：删起来必须动用攻城锤。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 3, route: 'memorial' }] },
+      { label: '抹去名字，保留他们的暗道', reply: '名字消失了，脚步声却留在地下。王国派出圣火军，准备烧掉所有可能通向真相的路。', effects: [{ t: 'encounter', chain: 'thirteenth', stage: 3, route: 'erase' }] },
+    ],
+  },
+  {
+    id: 'chain-dream-start', chained: true, who: '睡着的地牢',
+    text: '整座地牢在深夜翻了个身，所有门同时换到另一面。它说自己梦见了出口，却不确定出口是让人离开，还是让更多麻烦进来。',
+    choices: [
+      { label: '设法唤醒地牢', reply: '你敲了敲王座。梦里的勇者认为这声音来自现实，决定先把制造噪音的人解决掉。', effects: [{ t: 'encounter', chain: 'dream', stage: 1, route: 'wake' }] },
+      { label: '让梦境继续加深', reply: '走廊变得比昨天更长，账本却坚持建筑面积没有变化。梦外的勇者沿着误差走了进来。', effects: [{ t: 'encounter', chain: 'dream', stage: 1, route: 'deepen' }] },
+    ],
+  },
+  {
+    id: 'chain-dream-mid', chained: true, who: '会呼吸的房间',
+    text: '房间开始挑选住客，也开始拒绝自己不喜欢的战斗。墙壁和守军各自递交了一份排班表，双方都把挨打安排给了对方。',
+    choices: [
+      { label: '站在墙壁一边', reply: '墙壁满意地合拢。王国拆迁队立刻赶来，宣称任何会拒绝拆除的建筑都不符合规范。', effects: [{ t: 'encounter', chain: 'dream', stage: 2, route: 'walls' }] },
+      { label: '站在住客一边', reply: '地牢把不受欢迎的房间折进梦里，也顺手折进去一队追兵。剩下的人决定进来把地图摊平。', effects: [{ t: 'encounter', chain: 'dream', stage: 2, route: 'tenants' }] },
+    ],
+  },
+  {
+    id: 'chain-dream-final', chained: true, who: '王座的梦话',
+    text: '王座要求拥有自己的梦。它保证不会梦见更好的魔王，至少今晚不会。现实与梦境同时派来军队，准备争夺谁有权宣布另一边不存在。',
+    choices: [
+      { label: '让整座地牢醒来', reply: '所有砖石睁开不存在的眼睛。梦境为了避免被醒来，只能派出最后的守护者。', effects: [{ t: 'encounter', chain: 'dream', stage: 3, route: 'awaken' }] },
+      { label: '允许王座继续做梦', reply: '你把现实关在门外。现实对此很不服气，带着一支联合军要求重新测量门的位置。', effects: [{ t: 'encounter', chain: 'dream', stage: 3, route: 'dreaming' }] },
+    ],
+  },
 ];
 
 // ---------- 本地规则 provider ----------

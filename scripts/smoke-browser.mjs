@@ -43,6 +43,38 @@ try {
   await page.evaluate(() => __debug.introContinue());
   assert(await page.evaluate(() => __debug.screen === 'manage'), 'Opening story did not enter management mode.');
 
+  // 长期事件链：三场临时战斗逐段升级，结算不推进主线，终局写入永久路线效果。
+  const eventChain = await page.evaluate(async () => {
+    const original = __debug.rawSave;
+    __debug.forceRaid(5); __debug.giveResources(9999, 9999);
+    while (!__debug.progression.teachingComplete) {
+      const target = __debug.progression.guide?.[0];
+      if (['throne', 'dungeon', 'hero', 'mob', 'shop', 'report', 'story'].includes(target) && target !== __debug.currentTab) __debug.setTab(target);
+      __debug.ackGuide();
+    }
+    const guard = __debug.devRecruit('slime'); __debug.devAssign(0, 'front', guard); __debug.setTab('throne');
+    const startRaid = __debug.save.raidNo;
+    const stages = [];
+    for (const [stage, route] of [[1, 'shelter'], [2, 'names'], [3, 'freedom']]) {
+      const issued = __debug.devStoryEncounter('death', stage, route);
+      const encounter = __debug.storyEncounter;
+      await __debug.startBattle(); if (__debug.raidBriefing) await __debug.confirmRaidBriefing();
+      __debug.devSettleWin(3); const wonTitle = __debug.save.reports[0]?.title; __debug.returnResult();
+      if (__debug.detail) __debug.closeDetail();
+      stages.push({ issued, encounter, wonTitle, raid: __debug.save.raidNo, chain: __debug.storyChains.death });
+    }
+    const result = { startRaid, stages, finalBone: __debug.save.bone, finalMana: __debug.save.mana,
+      permanent: __debug.save.story.mods.find((mod) => mod.id === 'death-freed'), encounter: __debug.storyEncounter };
+    await __debug.restoreRaw(original);
+    return result;
+  });
+  assert(eventChain.stages.every((stage) => stage.issued.ok && stage.encounter && stage.raid === eventChain.startRaid)
+    && eventChain.stages[0].chain.nextDueRaid === eventChain.startRaid + 1
+    && eventChain.stages[1].chain.nextDueRaid === eventChain.startRaid + 2
+    && eventChain.stages[2].chain.status === 'complete' && eventChain.stages[2].chain.ending === 'freedom'
+    && eventChain.permanent?.raids === -1 && !eventChain.encounter,
+  `Long-term event chain did not settle three temporary battles safely: ${JSON.stringify(eventChain)}`);
+
   // AI 设置必须走“地址/Key → 刷新模型 → 选择模型 → 保存”的完整链路。
   let requestedModel = '';
   let requestedPrompt = '';

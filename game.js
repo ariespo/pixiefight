@@ -190,7 +190,7 @@ function freshSave(selectedDoctrine = 'default')       {
     champs: [], champNext: 1, cands: [], candRaid: 0, candNext: 1, champPot: {},
     vault: [], forged: [], fgNext: 1,
     story: { vars: {}, mods: [], unlocks: [], seen: [], credits: 1, leads: [], archive: [], leadNext: 1,
-      relations: {}, exiles: [], exileNext: 1 },
+      relations: {}, exiles: [], exileNext: 1, chains: {}, encounter: null },
     novel: freshNovelState(),
   };
 }
@@ -278,6 +278,9 @@ function sanitizeSave() {
   S.reports = Array.isArray(S.reports) ? S.reports.filter((report) => report && typeof report.raidNo === 'number').slice(0, 5) : [];
   S.failureRelief = S.failureRelief && typeof S.failureRelief === 'object' ? S.failureRelief : {};
   S.reliefNotices = Array.isArray(S.reliefNotices) ? S.reliefNotices.filter((notice) => notice && typeof notice.title === 'string' && typeof notice.body === 'string').slice(-4) : [];
+  if (!S.story || typeof S.story !== 'object') S.story = freshSave().story;
+  S.story.chains = S.story.chains && typeof S.story.chains === 'object' ? S.story.chains : {};
+  S.story.encounter = S.story.encounter && typeof S.story.encounter === 'object' ? S.story.encounter : null;
   for (const report of S.reports) if (report.aiState === 'pending') report.aiState = report.literary ? 'done' : 'fallback';
   if (Math.round(S.campaignVersion || 0) < 2 && S.overtime) S.otRaid = Math.max(NORMAL_RAID_COUNT + 1, Math.round(S.otRaid || 13) + 8);
   S.campaignVersion = 2;
@@ -387,10 +390,13 @@ function sanitizeSave() {
     relations: st?.relations && typeof st.relations === 'object' ? st.relations : {},
     exiles: Array.isArray(st?.exiles) ? st.exiles.filter((x) => x && typeof x.id === 'number' && x.champ) : [],
     exileNext: typeof st?.exileNext === 'number' ? Math.max(1, Math.round(st.exileNext)) : 1,
+    chains: st?.chains && typeof st.chains === 'object' ? st.chains : {},
+    encounter: st?.encounter && typeof st.encounter === 'object' ? st.encounter : null,
   };
   S.story.exileNext = Math.max(S.story.exileNext, ...S.story.exiles.map((x) => x.id + 1));
   S.story.leadNext = Math.max(S.story.leadNext,
     ...S.story.leads.map((x) => x.id + 1), ...S.story.archive.map((x) => (x.id ?? 0) + 1));
+  maybeQueueStoryCampaigns();
   // 英雄名册：等级/经验/专精数量都要自洽，坏档不能把培养页打崩
   if (!Array.isArray(S.champs)) S.champs = [];
   if (typeof S.champNext !== 'number') S.champNext = 1;
@@ -1088,7 +1094,117 @@ function champStatMap() {
 }
 const seatedChampUids = () => S.rooms.map((r) => r.leader).filter((u)              => u != null);
 const roomOfChamp = (uid        ) => S.rooms.findIndex((r) => r.leader === uid);
+
+const STORY_CAMPAIGNS = {
+  death: {
+    name: '借来的死神', startRaid: 5, scenes: ['chain-death-start', 'chain-death-mid', 'chain-death-final'],
+    stages: [
+      { title: '收尸人敲错了门', reward: { bone: 90, mana: 18 }, routes: {
+        shelter: { brief: '你把逃亡的小死神藏进地牢。冥府收尸人依法上门，唯一缺少的是允许他们活着离开的条款。', members: ['rogue', 'warlock', 'cleric'] },
+        ransom: { brief: '你向冥府索要赎金。对方派来的谈判代表携带三把镰刀，并坚持这属于诚意。', members: ['knight', 'lancer', 'warlock'] },
+      } },
+      { title: '亡者名单开始追人', reward: { bone: 150, mana: 34 }, routes: {
+        names: { brief: '你释放了名单上的亡魂。负责把他们重新写回死亡的人，带着审判官和一桶墨赶来。', members: ['inquisitor', 'cleric', 'mage', 'knight'] },
+        blade: { brief: '你把名单炼进武器。冥府决定回收武器、名单，以及握着武器的所有手。', members: ['swordmaster', 'warlock', 'lancer', 'cleric'] },
+      } },
+      { title: '死神本人前来销账', reward: { bone: 360, mana: 110 }, routes: {
+        freedom: { brief: '小死神撕掉契约。真正的死神前来纠正错误：自由不在服务范围内。', members: ['inquisitor', 'swordmaster', 'warlock', 'cleric', 'paladin'] },
+        crown: { brief: '你把死亡契约钉上王座。冥府派出最豪华的讨债队，准备把王座连同坐垫一起搬走。', members: ['captain', 'swordmaster', 'inquisitor', 'cleric', 'mage'] },
+      } },
+    ],
+    endings: {
+      freedom: { bone: 120, mana: 80, var: 'deathFreed', mod: { id: 'death-freed', name: '死亡缓刑', raids: -1, monHpMult: 1.06 } },
+      crown: { bone: 320, mana: 30, var: 'deathCrowned', mod: { id: 'death-crown', name: '王座死契', raids: -1, monAtkMult: 1.08, heroHpMult: 1.04 } },
+    },
+  },
+  thirteenth: {
+    name: '第十三远征队', startRaid: 9, scenes: ['chain-thirteenth-start', 'chain-thirteenth-mid', 'chain-thirteenth-final'],
+    stages: [
+      { title: '不存在的勇者来访', reward: { bone: 110, mana: 22 }, routes: {
+        remember: { brief: '你答应替第十三远征队保存姓名。王国档案员带着火把前来删除证据。', members: ['knight', 'archer', 'mage'] },
+        exploit: { brief: '你让无名勇者替地牢引路。追捕他们的同僚顺着假地图走进了真陷阱。', members: ['ranger', 'rogue', 'captain'] },
+      } },
+      { title: '被删除者的反攻', reward: { bone: 180, mana: 42 }, routes: {
+        banner: { brief: '你升起第十三面旗。王国坚持只有十二支队伍，于是派人来证明算术比尸体可靠。', members: ['captain', 'paladin', 'bard', 'cleric'] },
+        ambush: { brief: '你把幽灵藏进墙里。王国搜索队每敲一下墙，就有一名旧队员在背后回答。', members: ['inquisitor', 'rogue', 'mage', 'lancer'] },
+      } },
+      { title: '王国史官的最终修订', reward: { bone: 420, mana: 95 }, routes: {
+        memorial: { brief: '你要让第十三远征队进入历史。王国史官带着剑圣，准备删掉见证者。', members: ['swordmaster', 'captain', 'inquisitor', 'bard', 'cleric'] },
+        erase: { brief: '你同意抹去他们最后的名字，但名单拒绝消失，并引来一支专门消灭纸张的圣火军。', members: ['inquisitor', 'mage', 'warlock', 'paladin', 'cleric'] },
+      } },
+    ],
+    endings: {
+      memorial: { bone: 180, mana: 60, var: 'thirteenthRemembered', mod: { id: 'thirteenth-banner', name: '第十三面旗', raids: -1, monSpdAdd: 0.07 } },
+      erase: { bone: 420, mana: 20, var: 'thirteenthErased', mod: { id: 'erased-route', name: '无名暗道', raids: -1, roomLimitAdd: 1 } },
+    },
+  },
+  dream: {
+    name: '地牢梦见了出口', startRaid: 13, scenes: ['chain-dream-start', 'chain-dream-mid', 'chain-dream-final'],
+    stages: [
+      { title: '第一场梦漏进现实', reward: { bone: 130, mana: 30 }, routes: {
+        wake: { brief: '你试图唤醒地牢。梦里的勇者认为自己才是真实的一方，决定先把你叫醒。', members: ['mage', 'monk', 'ranger'] },
+        deepen: { brief: '你让地牢继续做梦。梦境长出一扇门，门外的勇者排队要求进入你的潜意识。', members: ['warlock', 'bard', 'rogue'] },
+      } },
+      { title: '房间开始选择住客', reward: { bone: 210, mana: 50 }, routes: {
+        walls: { brief: '你站在会呼吸的墙一边。拆迁队带着圣锤前来，坚称活墙不符合建筑规范。', members: ['paladin', 'lancer', 'inquisitor', 'cleric'] },
+        tenants: { brief: '你站在住客一边。地牢把不满意的房间折成迷宫，也把追来的勇者折了进去。', members: ['captain', 'ranger', 'mage', 'rogue'] },
+      } },
+      { title: '王座要求拥有一个梦', reward: { bone: 460, mana: 130 }, routes: {
+        awaken: { brief: '你决定让整座地牢醒来。梦境派出最后一批勇者，试图保护自己不被现实杀死。', members: ['swordmaster', 'inquisitor', 'mage', 'bard', 'paladin'] },
+        dreaming: { brief: '你允许王座继续做梦。现实派来一支联合军，准备证明石头没有想象力。', members: ['captain', 'swordmaster', 'inquisitor', 'cleric', 'warlock'] },
+      } },
+    ],
+    endings: {
+      awaken: { bone: 160, mana: 100, var: 'dungeonAwake', mod: { id: 'awake-dungeon', name: '醒着的地牢', raids: -1, trapMult: 1.10, roomLimitAdd: 1 } },
+      dreaming: { bone: 260, mana: 80, var: 'dungeonDreaming', mod: { id: 'dreaming-throne', name: '王座之梦', raids: -1, monHpMult: 1.07, monSpdAdd: -0.03 } },
+    },
+  },
+};
+
+function storyEncounterRaid() {
+  const encounter = S.story.encounter;
+  if (!encounter) return null;
+  return { no: encounter.no, title: encounter.title, members: encounter.members, affixes: encounter.affixes,
+    reward: encounter.reward, encounter: true, chainId: encounter.chainId, stage: encounter.stage,
+    briefing: { body: encounter.brief, reply: encounter.reply } };
+}
+
+function storyCampaignBaseLevel() {
+  const raid = !S.overtime && S.raidNo <= NORMAL_RAID_COUNT ? RAIDS[S.raidNo - 1] : makeOvertimeRaid(S.otRaid);
+  const levels = (raid?.members ?? []).map((member) => member.lv).filter(Number.isFinite);
+  return levels.length ? Math.max(1, Math.round(levels.reduce((sum, level) => sum + level, 0) / levels.length)) : 1;
+}
+
+function startStoryEncounter(effect) {
+  S.story.chains = S.story.chains && typeof S.story.chains === 'object' ? S.story.chains : {};
+  if (S.story.encounter) return { ok: false, text: `临时入侵“${S.story.encounter.title}”仍在王座等待处理` };
+  const campaign = STORY_CAMPAIGNS[effect.chain];
+  const stageNo = Math.max(1, Math.min(3, Math.round(effect.stage || 1)));
+  const stage = campaign?.stages?.[stageNo - 1];
+  const route = stage?.routes?.[effect.route];
+  if (!campaign || !stage || !route) return { ok: false, text: '这条长期事件暂时无法生成对应入侵' };
+  const baseLevel = storyCampaignBaseLevel() + (stageNo - 1) * 2;
+  const members = route.members.map((cls, index) => ({ cls, lv: baseLevel + (stageNo === 3 && index === 0 ? 2 : index === 0 ? 1 : 0) }));
+  const affixSets = [[], ['brave'], ['haste', effect.route.length % 2 ? 'shield' : 'holywater']];
+  const encounter = {
+    no: 7000 + Object.keys(STORY_CAMPAIGNS).indexOf(effect.chain) * 10 + stageNo,
+    chainId: effect.chain, stage: stageNo, route: effect.route,
+    title: `${campaign.name}・${stage.title}`, brief: route.brief,
+    reply: `${S.playerName}把这张不属于主线的战书压在王座扶手下：先活下来，再讨论它算不算历史。`,
+    members, affixes: affixSets[stageNo - 1], reward: { ...stage.reward }, briefed: false,
+  };
+  S.story.encounter = encounter;
+  const state = S.story.chains[effect.chain] ?? { id: effect.chain, history: [] };
+  state.stage = stageNo; state.route = effect.route; state.status = 'battle';
+  state.history = Array.isArray(state.history) ? state.history : [];
+  state.history.push({ stage: stageNo, route: effect.route, chosenRaid: S.raidNo });
+  S.story.chains[effect.chain] = state;
+  return { ok: true, text: `临时战斗已加入王座：${encounter.title}（不会推进主线）` };
+}
+
 function currentRaid()          {
+  const encounter = storyEncounterRaid();
+  if (encounter) return encounter;
   if (!S.overtime && S.raidNo <= NORMAL_RAID_COUNT) return RAIDS[S.raidNo - 1];
   if (S.novel?.enabled && S.novel.pendingMission && !S.novel.pendingMission.resolved
     && S.novel.pendingMission.issuedRaid === S.otRaid) {
@@ -1228,6 +1344,7 @@ function applyProgressionGrants() {
     S.champPot[gift.uid] = 0;
     t.heroGift = true;
   }
+  maybeQueueStoryCampaigns();
 }
 const tutorialData = () => {
   if (!S.tutorial || typeof S.tutorial !== 'object') S.tutorial = { step: 0, visited: {}, roundSteps: {}, heroGift: false };
@@ -1409,6 +1526,8 @@ function uiTasks() {
   const add = (severity, id, title, summary, reason, page, target = {}) => tasks.push({
     id, severity, title, summary, reason, page, target, blocking: severity === 'block',
   });
+  if (S.story.encounter) add('opportunity', 'story-encounter', `支线入侵：${S.story.encounter.title}`,
+    '临时战斗正在王座等待；胜败不会推进主线，胜利会推动事件链。', '你在长期事件中签发了一场额外战斗', 'throne');
   if (!roundTeachingComplete()) add('block', 'teaching', '完成本轮教学', '阅读当前高光步骤后才可迎战。', '新机制尚未确认', ROUND_TUTORIALS[S.raidNo]?.[Math.max(0, Math.round(tutorialData().roundSteps[S.raidNo] || 0))]?.page ?? 'throne');
   if (S.overtime && S.novel?.enabled && loadMode() !== 'http')
     add('block', 'novel-api', '小说战役等待叙事者', '重新接入有效API后才能继续签发任务与迎战。', '小说战役已经接管本档，但当前外部模型不可用', 'story', { type: 'novel' });
@@ -1537,7 +1656,9 @@ let heroForceConfirmUid = null;
 const battleDialogueCache = new Map();
 const BATTLE_DIALOGUE_SCHEMA = 2;
 
-const failureKey = (raidNo = currentRaidIdentity()) => `${S.overtime ? 'overtime' : 'campaign'}:${raidNo}`;
+const failureKey = (raidNo = currentRaidIdentity()) => S.story?.encounter
+  ? `event:${S.story.encounter.chainId}:${S.story.encounter.stage}`
+  : `${S.overtime ? 'overtime' : 'campaign'}:${raidNo}`;
 
 function recordFailedAttempt(raidNo, reason = '战斗失败') {
   const key = failureKey(raidNo);
@@ -6263,6 +6384,9 @@ const STORY_LEAD_SCENES = new Set([
   'echo-merchant-route', 'echo-monster-quarrel', 'echo-rested-shift', 'echo-bone-bed', 'echo-missing-door',
   'echo-lair-name', 'echo-sign-board', 'echo-stray-monster', 'echo-seal-crack', 'echo-trap-salesman',
   'echo-fear-answer', 'echo-lost-blueprint', 'echo-captain-letter', 'echo-room-name', 'echo-leftover-mana', 'echo-quiet-night',
+  'chain-death-start', 'chain-death-mid', 'chain-death-final',
+  'chain-thirteenth-start', 'chain-thirteenth-mid', 'chain-thirteenth-final',
+  'chain-dream-start', 'chain-dream-mid', 'chain-dream-final',
 ]);
 
 function queueStoryLead(key, sceneId, source, title, context = {}, dueRaid = S.raidNo) {
@@ -6277,6 +6401,22 @@ function queueStoryLead(key, sceneId, source, title, context = {}, dueRaid = S.r
   S.story.leads.unshift(lead);
   if (S.story.leads.length > 24) S.story.leads.length = 24;
   return lead;
+}
+
+function maybeQueueStoryCampaigns() {
+  if (S.overtime || S.story.encounter) return null;
+  if (!Array.isArray(S.story.leads) || !Array.isArray(S.story.archive)) return null;
+  S.story.chains = S.story.chains && typeof S.story.chains === 'object' ? S.story.chains : {};
+  for (const [id, campaign] of Object.entries(STORY_CAMPAIGNS)) {
+    if (S.raidNo < campaign.startRaid || S.story.chains[id]) continue;
+    const lead = queueStoryLead(`campaign:${id}:1`, campaign.scenes[0], '长期事件链', `${campaign.name}・第一幕`,
+      { chainId: id, stage: 1 }, S.raidNo);
+    if (lead) {
+      S.story.chains[id] = { id, stage: 0, status: 'offered', history: [], startedRaid: S.raidNo };
+      return lead;
+    }
+  }
+  return null;
 }
 
 function storyLeadSubjects(source = '', context = {}, stored = null) {
@@ -6411,6 +6551,9 @@ async function enrichContextStory(run, lead, sc) {
 
 function openStoryLead(id) {
   const lead = S.story.leads.find((x) => x.id === id);
+  if (lead?.source === '长期事件链' && S.story.encounter) {
+    say(`先完成王座上的临时战斗“${S.story.encounter.title}”`); render(); return false;
+  }
   let sc = lead && (lead.scene ?? sceneById(lead.sceneId));
   // 早期版本只保存 AI 无主秘闻的临时 id，刷新后无法在本地剧情表找回正文。
   // 对这类旧线索就地补成一条当前条件可用的本地秘闻，避免“处理”静默无响应。
@@ -6588,6 +6731,7 @@ const storyBridge              = {
     S.story.mods = S.story.mods.filter((x) => x.id !== m.id);
     S.story.mods.push({ ...m, originLeadId: storyRun?.leadId ?? null, originSceneId: storyRun?.scene?.id ?? null });
   },
+  startEncounter(e) { return startStoryEncounter(e); },
   shiftRaid(n) {
     // 负数=推迟下一波（把当前轮次往回拨），正数=提前
     const before = S.raidNo;
@@ -8410,11 +8554,12 @@ function confirmRaidBriefing() {
   if (!raidBriefing) return;
   const scene = raidBriefing;
   const no = scene.no;
-  if (!S.raidBriefingsSeen.includes(no)) S.raidBriefingsSeen.push(no);
+  const encounter = S.story.encounter?.no === no ? S.story.encounter : null;
+  if (!encounter && !S.raidBriefingsSeen.includes(no)) S.raidBriefingsSeen.push(no);
   const key = `raid-briefing:${no}`;
   if (!S.story.archive.some((x) => x.key === key)) {
-    S.story.archive.unshift({ id: S.story.leadNext++, key, sceneId: key, source: '正式战役',
-      title: `第${no}轮・${scene.title}`, summary: `${S.playerName}在${S.lairName}收到来报：${scene.body}`, resolvedRaid: no,
+    S.story.archive.unshift({ id: S.story.leadNext++, key, sceneId: key, source: encounter ? '支线远征' : '正式战役',
+      title: encounter ? scene.title : `第${no}轮・${scene.title}`, summary: `${S.playerName}在${S.lairName}收到来报：${scene.body}`, resolvedRaid: encounter ? S.raidNo : no,
       outcome: `${S.playerName}的王座回应：${scene.reply}`, effects: '迎战', refs: [], battleRefs: [] });
   }
   raidBriefing = null;
@@ -8464,7 +8609,14 @@ async function startBattle() {
     say('线上远征生成失败，本批改用本地加班勇者');
   }
   if (stitch) closeStitch();
-  if (!S.overtime && !S.raidBriefingsSeen.includes(S.raidNo)) {
+  const encounterRaid = storyEncounterRaid();
+  if (encounterRaid && !S.story.encounter.briefed) {
+    S.story.encounter.briefed = true;
+    raidBriefing = { no: encounterRaid.no, title: encounterRaid.title,
+      body: encounterRaid.briefing.body, reply: encounterRaid.briefing.reply };
+    persist(); playSfx('tab'); scheduleLayout(); render(); return;
+  }
+  if (!encounterRaid && !S.overtime && !S.raidBriefingsSeen.includes(S.raidNo)) {
     raidBriefing = RAID_BRIEFINGS[S.raidNo - 1] ?? null;
     if (raidBriefing) { playSfx('tab'); scheduleLayout(); render(); return; }
   }
@@ -9321,6 +9473,7 @@ function buildResultOverlay() {
 function advanceWonResult() {
   const b = battle;
   if (!b?.result?.win) return false;
+  if (b.raid.encounter) return resolveStoryEncounterWin(b);
   let changed = false;
   if (S.overtime) {
     if (S.otRaid <= b.raid.no) { S.otRaid = b.raid.no + 1; changed = true; }
@@ -9333,6 +9486,42 @@ function advanceWonResult() {
     persist();
   }
   return changed;
+}
+
+function resolveStoryEncounterWin(b) {
+  const encounter = S.story.encounter;
+  if (!encounter || encounter.chainId !== b.raid.chainId || encounter.stage !== b.raid.stage) return false;
+  const campaign = STORY_CAMPAIGNS[encounter.chainId];
+  const state = S.story.chains[encounter.chainId] ?? { id: encounter.chainId, history: [] };
+  state.history = Array.isArray(state.history) ? state.history : [];
+  const record = state.history.slice().reverse().find((item) => item.stage === encounter.stage && item.route === encounter.route);
+  if (record) record.wonRaid = S.raidNo;
+  state.stage = encounter.stage;
+  S.story.encounter = null;
+  if (encounter.stage < 3) {
+    const nextStage = encounter.stage + 1;
+    const delay = encounter.stage % 2 === 1 ? 1 : 2;
+    state.status = 'waiting'; state.nextDueRaid = S.raidNo + delay;
+    queueStoryLead(`campaign:${encounter.chainId}:${nextStage}`, campaign.scenes[nextStage - 1], '长期事件链',
+      `${campaign.name}・第${['一', '二', '三'][nextStage - 1]}幕`, { chainId: encounter.chainId, stage: nextStage }, state.nextDueRaid);
+    S.reliefNotices.push({ title: `${campaign.name}・阶段胜利`,
+      body: `你赢下了“${encounter.title}”，获得本阶段战利品。主线仍停留在第${S.raidNo}轮。\n\n这件事没有结束，只是暂时去别处制造麻烦。再推进${delay}个主线关卡，下一幕秘闻会出现。` });
+  } else {
+    const ending = campaign.endings[encounter.route];
+    state.status = 'complete'; state.ending = encounter.route; state.completedRaid = S.raidNo;
+    if (ending) {
+      S.bone += ending.bone; S.mana += ending.mana;
+      S.story.vars[ending.var] = 1;
+      S.story.mods = S.story.mods.filter((mod) => mod.id !== ending.mod.id);
+      S.story.mods.push({ ...ending.mod, originSceneId: campaign.scenes[2], originLeadId: null });
+      S.reliefNotices.push({ title: `${campaign.name}・终局`,
+        body: `最后一场临时入侵已经结束。终局选择成为既定事实。\n\n额外获得：${ending.bone}骨币、${ending.mana}魔质。\n永久效果：${ending.mod.name}——${modSummary(ending.mod)}。` });
+    }
+  }
+  S.story.chains[encounter.chainId] = state;
+  S.reliefNotices = S.reliefNotices.slice(-4);
+  persist();
+  return true;
 }
 
 function returnFromResult() {
@@ -9574,6 +9763,9 @@ window.__debug = {
     features: { hero: featureOpen('hero'), equipmentForge: featureOpen('equipmentForge'), heroTalent: featureOpen('heroTalent'), heroGraft: featureOpen('heroGraft') },
     heroGift: S.champs.find((c) => c.introGift) ? { uid: S.champs.find((c) => c.introGift).uid,
       race: S.champs.find((c) => c.introGift).race, potential: S.champPot[S.champs.find((c) => c.introGift).uid] ?? 0 } : null }; },
+  get storyEncounter() { return S.story.encounter ? structuredClone(S.story.encounter) : null; },
+  get storyChains() { return structuredClone(S.story.chains ?? {}); },
+  devStoryEncounter: (chain, stage, route) => { const result = startStoryEncounter({ chain, stage, route }); persist(); render(); return result; },
   get bone() { return S.bone; },
   get mana() { return S.mana; },
   exchange: (direction) => { exchangeConfirm = direction; return exchangeResource(direction); },
