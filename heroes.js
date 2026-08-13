@@ -535,6 +535,19 @@ export const auraText = (id        , pow        ) => {
   }
 };
 
+// 所有“休息回合减少”都走同一入口；最后一回合结束即代表完成轮值，
+// 不能留下已经复工却仍带着上一轮疲劳的半结算状态。
+export function reduceHeroRest(c, turns = 1) {
+  const before = Math.max(0, Math.round(c.restTurns || 0));
+  c.restTurns = Math.max(0, before - Math.max(0, Math.round(turns || 0)));
+  if (before > 0 && c.restTurns === 0) {
+    c.fatigue = 0;
+    c.sorties = 0;
+    return true;
+  }
+  return false;
+}
+
 // 战后轮值与疲劳结算：出战次数跨留守累计；第四场结束后强制休息三轮。
 export function tickFatigue(champs         , seated          , forced = new Set()) {
   const newlyResting = [];
@@ -554,7 +567,7 @@ export function tickFatigue(champs         , seated          , forced = new Set(
       }
     } else {
       c.fatigue = Math.max(0, c.fatigue - 25);
-      if ((c.restTurns || 0) > 0) c.restTurns--;
+      if ((c.restTurns || 0) > 0) reduceHeroRest(c, 1);
     }
   }
   return newlyResting;

@@ -24,7 +24,7 @@ import { clearSlot, exportSlot, flushAutosave, getActiveSlot, importIntoSlot, in
 import { CHAMP_CAP, CHAMP_LV_CAP, CHEM_INFO, HEAL_MANA, HERO_REST_ROUNDS, HERO_SORTIE_LIMIT, POT_MULT, POT_NAME, REROLL_MANA, REST_MANA, RESPEC_MANA,
   REROLL_TRAIT_BONE, REROLL_TRAIT_MANA, TALENTS, TALENT_CAP, TALENT_TIERS, TIER_LV, TRAITS, WOUND_CAP,
   activeTitleOf, auraText, backgroundById, canLevel, champStats, chemOf, chemistry, ensureChampLore, fatigueTier, newChamp, nextTitle, pendingTier, personalityById, randomName, respecCost,
-  rerollTraits, rollCands, talentSlots, tickFatigue, titleById, titleOf, unlockedTitles, upCostOf, xpNeed } from './heroes.js';
+  reduceHeroRest, rerollTraits, rollCands, talentSlots, tickFatigue, titleById, titleOf, unlockedTitles, upCostOf, xpNeed } from './heroes.js';
                                                          
 import { TEX, txt, label, labelC, panel, panelF, frame, bar, sprite, Hits, button, setTextRes, FONT,
   boundedText, paginateText, measureWrappedText, resetBoundedTextAudit, boundedTextAudit } from './ui.js';
@@ -181,7 +181,7 @@ function freshSave(selectedDoctrine = 'default')       {
     sealLv: 0, trapLv: 0,
     best: {}, reports: [],
     failureRelief: {}, reliefNotices: [],
-    overtime: false, otRaid: NORMAL_RAID_COUNT + 1, clearRecorded: false,
+    overtime: false, otRaid: NORMAL_RAID_COUNT + 1, clearRecorded: false, fatigueRestVersion: 2,
     raidBriefingsSeen: [],
     customs: [], cstNext: 1,
     diy: [], diyNext: 1,
@@ -490,6 +490,10 @@ function sanitizeSave() {
     if (!workerKinds.has(u.kind) || !monsterUids.has(u.workerUid) || deployedMonsters.has(u.workerUid) || occupiedWorkers.has(u.workerUid)) u.workerUid = null;
     if (u.workerUid != null) occupiedWorkers.add(u.workerUid);
   }
+  if (Math.round(S.fatigueRestVersion || 0) < 2) {
+    for (const c of S.champs) if (!c.restTurns && !c.sorties && c.fatigue > 0) c.fatigue = 0;
+  }
+  S.fatigueRestVersion = 2;
   const occupiedTraining = new Set();
   for (const floor of S.floors) {
     const u = floor.utility;
@@ -6801,7 +6805,12 @@ const storyBridge              = {
     if (!c) return { ok: false, text: '' };
     const parts = [];
     if (e.xp) { c.xp = Math.max(0, c.xp + Math.round(e.xp)); parts.push(`经验${e.xp > 0 ? '+' : ''}${Math.round(e.xp)}`); }
-    if (e.rest) { const before = c.restTurns || 0; c.restTurns = Math.max(0, Math.min(HERO_REST_ROUNDS, before + Math.round(e.rest))); if (c.restTurns !== before) parts.push(`休息${c.restTurns - before > 0 ? '+' : ''}${c.restTurns - before}`); }
+    if (e.rest) {
+      const before = c.restTurns || 0;
+      if (e.rest < 0) reduceHeroRest(c, -e.rest);
+      else c.restTurns = Math.max(0, Math.min(HERO_REST_ROUNDS, before + Math.round(e.rest)));
+      if (c.restTurns !== before) parts.push(`休息${c.restTurns - before > 0 ? '+' : ''}${c.restTurns - before}`);
+    }
     if (e.wounds) { const before = c.wounds || 0; c.wounds = Math.max(0, Math.min(WOUND_CAP, before + Math.round(e.wounds))); if (c.wounds !== before) parts.push(`伤势${c.wounds - before > 0 ? '+' : ''}${c.wounds - before}`); }
     return { ok: parts.length > 0, text: parts.length ? `${c.name}：${parts.join('，')}` : '' };
   },
@@ -7725,12 +7734,12 @@ function restChamp(c       ) {
   if (S.mana < REST_MANA) { say('魔质不足'); return; }
   S.mana -= REST_MANA;
   S.dungeon.healingCharges--;
-  c.restTurns--;
+  const rotationCleared = reduceHeroRest(c, 1);
   queueStoryLead(`hero-healing:${c.uid}`, 'hero-healing', '英雄秘闻', `${c.name}在疗愈池的低语`,
     { ref: c.uid, hero: c.name, race: champKind(c).name });
   playSfx('place');
   persist();
-  say(`${c.name} 接受疗愈，休息缩短至 ${c.restTurns} 回合`);
+  say(rotationCleared ? `${c.name} 完成疗养，休息、疲劳与轮值均已清零` : `${c.name} 接受疗愈，休息缩短至 ${c.restTurns} 回合`);
   render();
 }
 
@@ -10126,6 +10135,7 @@ window.__debug = {
     persist(); render();
     return { sorties: c.sorties, restTurns: c.restTurns };
   },
+  devTickFatigue: (seated = []) => { tickFatigue(S.champs, seated); persist(); render(); return S.champs.map((c) => ({ uid: c.uid, fatigue: c.fatigue, sorties: c.sorties, restTurns: c.restTurns })); },
   forceHero: (uid) => { const c = champById(uid); return c ? forceRestingHero(c) : false; },
   heroLoreOptimize: async (uid) => {
     const c = champById(uid);

@@ -767,7 +767,7 @@ export function sanitizeBattleDialogue(raw, snap) {
 }
 
 export async function requestBattleDialogue(snap) {
-  const j = await ask(battleDialoguePrompt(snap), 'dialogue', 8000);
+  const j = await ask(battleDialoguePrompt(snap), 'dialogue', 24000);
   return sanitizeBattleDialogue(j, snap);
 }
 
@@ -852,7 +852,7 @@ export function makePlatformBackend()             {
         system: '你是一款中文 8-bit 地牢经营游戏的设计助手。严格只输出一个 JSON 对象，不要解释、不要 markdown 代码块。',
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.9,
-        maxTokens: ({ scene: 700, dialogue: 800, report: 1100, context: 800 })[opts.kind] ?? 320,
+        maxTokens: ({ scene: 700, dialogue: 3200, report: 1100, context: 800 })[opts.kind] ?? 320,
       });
       if (!r.ok) {
         const MSG                         = {
@@ -878,46 +878,55 @@ export function makeHttpBackend(cfg         )             {
     name: clean?.model ? `${presetById(clean.provider).name}・${clean.model}` : '外部模型',
     async complete(prompt, opts) {
       if (!clean?.baseUrl || !clean.model) throw new Error('请先刷新并选择模型');
-      const maxTokens = ({ scene: 850, storyReply: 650, overtimeRaid: 850, dialogue: 800, report: 1100, context: 800, heroLore: 900,
+      const maxTokens = ({ scene: 850, storyReply: 650, overtimeRaid: 850, dialogue: 3600, report: 1100, context: 800, heroLore: 900,
         novelTurn: 1400, novelMission: 1000, novelSummary: 1400, part: 640, affix: 480 })[opts.kind] ?? 480;
       const ctrl = new AbortController();
       const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
       try {
         const anthropic = clean.protocol === 'anthropic';
-        const res = await fetch(endpoint(clean.baseUrl, anthropic ? 'messages' : 'chat/completions'), {
-          method: 'POST',
-          headers: {
-            'content-type': 'application/json',
-            ...authHeaders(clean),
-          },
-          body: JSON.stringify(anthropic ? {
-            model: clean.model,
-            system: '你是一款中文 8-bit 地牢经营游戏的设计助手。严格只输出一个 JSON 对象，不要解释、不要 markdown 代码块。',
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.9,
-            max_tokens: maxTokens,
-          } : {
-            model: clean.model,
-            messages: [{ role: 'user', content: prompt }],
-            temperature: 0.9,
-            max_tokens: maxTokens,
-            ...(isDeepSeek ? { thinking: { type: 'disabled' }, response_format: { type: 'json_object' } } : {}),
-          }),
-          signal: ctrl.signal,
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const j = await res.json();
-        const anthropicText = Array.isArray(j?.content)
-          ? j.content.filter((item) => item?.type === 'text').map((item) => item.text).join('') : '';
-        const openAiContent = j?.choices?.[0]?.message?.content;
-        const openAiText = Array.isArray(openAiContent)
-          ? openAiContent.map((item) => typeof item === 'string' ? item : item?.text ?? '').join('') : openAiContent;
-        const txt = openAiText || anthropicText || j?.content || j?.output_text || '';
-        if (!txt) {
+        const tokenAttempts = opts.kind === 'dialogue' ? [maxTokens, Math.max(6000, maxTokens)] : [maxTokens];
+        let emptyReason = '模型返回为空';
+        for (let attempt = 0; attempt < tokenAttempts.length; attempt++) {
+          const requestPrompt = attempt ? `${prompt}\n请缩短每句并立即输出完整JSON，不要输出思考过程。` : prompt;
+          const res = await fetch(endpoint(clean.baseUrl, anthropic ? 'messages' : 'chat/completions'), {
+            method: 'POST',
+            headers: {
+              'content-type': 'application/json',
+              ...authHeaders(clean),
+            },
+            body: JSON.stringify(anthropic ? {
+              model: clean.model,
+              system: '你是一款中文 8-bit 地牢经营游戏的设计助手。严格只输出一个 JSON 对象，不要解释、不要 markdown 代码块。',
+              messages: [{ role: 'user', content: requestPrompt }],
+              temperature: 0.9,
+              max_tokens: tokenAttempts[attempt],
+            } : {
+              model: clean.model,
+              messages: [{ role: 'user', content: requestPrompt }],
+              temperature: 0.9,
+              max_tokens: tokenAttempts[attempt],
+              ...(isDeepSeek ? { thinking: { type: 'disabled' }, response_format: { type: 'json_object' } } : {}),
+            }),
+            signal: ctrl.signal,
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const j = await res.json();
+          const textOf = (value) => {
+            if (typeof value === 'string') return value;
+            if (!Array.isArray(value)) return '';
+            return value.map((item) => typeof item === 'string' ? item : item?.text ?? item?.content ?? item?.value ?? '').join('');
+          };
+          const message = j?.choices?.[0]?.message;
+          const outputItems = Array.isArray(j?.output) ? j.output.flatMap((item) => item?.content ?? []) : [];
+          const primary = textOf(message?.content) || textOf(j?.content) || textOf(j?.output_text)
+            || textOf(outputItems) || textOf(j?.choices?.[0]?.text);
+          const reasoning = textOf(message?.reasoning_content);
+          const txt = primary || (/[\[{]/.test(reasoning) ? reasoning : '');
+          if (txt.trim()) return txt;
           const finish = j?.choices?.[0]?.finish_reason;
-          throw new Error(finish === 'length' ? '模型输出额度不足，未返回最终内容' : '模型返回为空');
+          emptyReason = finish === 'length' ? '模型输出额度不足，未返回最终内容' : '模型返回为空';
         }
-        return String(txt);
+        throw new Error(`${emptyReason}（已自动重试）`);
       } finally {
         clearTimeout(timer);
       }
