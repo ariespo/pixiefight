@@ -206,9 +206,10 @@ try {
     await __debug.confirmRaidBriefing();
     const briefingArchived = __debug.story.archive.some((x) => x.key === 'raid-briefing:1');
     const initialBattle = __debug.battle;
+    const beforeAbort = { raidNo: __debug.save.raidNo, bone: __debug.save.bone, mana: __debug.save.mana, reports: __debug.reports.length };
     const liveDialogue = __debug.stepBattleForTest(240);
     const battle = { ...initialBattle, liveDialogue };
-    __debug.backManage();
+    const abort = __debug.abortBattle();
     const unlocks = {};
     for (const raid of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) {
       __debug.forceRaid(raid);
@@ -223,8 +224,13 @@ try {
       unlocks[raid] = { tabs: before.visibleTabs, pages: before.visiblePages, kinds: before.recruitKinds, guide: before.guide, features: before.features,
         heroGift: before.heroGift, tutorialTotal: before.roundTutorialTotal, complete: __debug.progression.teachingComplete };
     }
-    return { initial, hiddenRouteBlocked, afterSlime, ready, briefing, briefingArchived, battle, unlocks };
+    return { initial, hiddenRouteBlocked, afterSlime, ready, briefing, briefingArchived, battle, beforeAbort, abort, unlocks };
   });
+  assert(onboarding.abort.ok && onboarding.abort.screen === 'manage'
+    && onboarding.abort.raidNo === onboarding.beforeAbort.raidNo
+    && onboarding.abort.bone === onboarding.beforeAbort.bone && onboarding.abort.mana === onboarding.beforeAbort.mana
+    && onboarding.abort.reports === onboarding.beforeAbort.reports,
+  `Exiting battle did not restore the pre-settlement management state: ${JSON.stringify(onboarding)}`);
   assert(JSON.stringify(onboarding.initial.visibleTabs) === JSON.stringify(['throne', 'dungeon', 'army'])
     && JSON.stringify(onboarding.initial.visiblePages) === JSON.stringify(['throne', 'dungeon', 'mob']),
   `First raid exposed locked pages: ${JSON.stringify(onboarding.initial)}`);
@@ -743,6 +749,10 @@ try {
   const portraitBattle = await page.evaluate(() => __debug.viewport());
   assert(portraitBattle.portraitLayout?.logicalLeft === 0 && portraitBattle.portraitLayout?.logicalWidth === 480,
     'Portrait battle still crops the sides of the combat viewport.');
+  assert(portraitBattle.portraitActions?.battleExit, 'Portrait battle does not expose a dedicated exit action.');
+  await clickPortraitAction('battleExit');
+  assert(await page.evaluate(() => __debug.screen === 'manage' && __debug.save.raidNo === 1),
+    'Portrait battle exit did not return to the same pre-battle round.');
 
   // The permanent clear marker must unlock exactly four doctrines on future new games.
   await page.evaluate(() => {

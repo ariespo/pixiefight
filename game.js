@@ -2245,6 +2245,7 @@ function bindInput() {
     } else if (screen === 'battle') {
       if (e.key === ' ') { paused = !paused; return; }
       if (e.key.toLowerCase() === 's') { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; return; }
+      if (e.key === 'Escape') { abortBattle(); return; }
     } else if (screen === 'result') {
       if (e.key === 'Enter') { afterResult(); return; }
     } else if (screen === 'ending') {
@@ -5458,7 +5459,14 @@ function ensurePortraitChrome() {
   const primaryAction = screen === 'manage' ? (guideAck ? acknowledgeRoundGuide : startBattle) : screen === 'battle'
     ? () => { paused = !paused; portraitChromeKey = ''; }
     : screen === 'result' ? afterResult : enterOvertime;
-  button(portraitGfx, portraitLayer, portraitHits, margin, primaryY, w - margin * 2, 44, primaryLabel, primaryAction,
+  if (screen === 'battle') {
+    const quitW = Math.max(92, Math.floor((w - margin * 2) * 0.32));
+    button(portraitGfx, portraitLayer, portraitHits, margin, primaryY, w - margin * 2 - quitW - gap, 44, primaryLabel, primaryAction,
+      { size: 17, fill: C.greenDark, border: C.green, color: C.white });
+    button(portraitGfx, portraitLayer, portraitHits, w - margin - quitW, primaryY, quitW, 44, '退出战斗', abortBattle,
+      { size: 15, fill: C.redDark, border: C.red, color: C.white });
+    portraitActionMap.battleExit = { x: w - margin - quitW, y: primaryY, w: quitW, h: 44 };
+  } else button(portraitGfx, portraitLayer, portraitHits, margin, primaryY, w - margin * 2, 44, primaryLabel, primaryAction,
     { size: 17, enabled: !battlePrepBusy, fill: guideAck ? C.goldDark : C.greenDark, border: guideAck ? C.gold : C.green, color: C.white });
   if (screen === 'manage' && currentGuide?.[0] === 'battle') {
     const pulse = new PIXI.Graphics().roundRect(margin - 2, primaryY - 2, w - margin * 2 + 4, 48, 4)
@@ -8451,6 +8459,18 @@ async function startBattle() {
   else say('');
 }
 
+function abortBattle() {
+  if (screen !== 'battle' || !battle) return false;
+  // 战斗模拟只使用开战时创建的瞬态副本；在 finishBattle 之前丢弃它，资源、经验、
+  // 伤势、设施损失、战报和轮次均不会结算，经营存档保持在本次迎战之前。
+  pendingResultRaid = 0;
+  paused = false;
+  speed = 1;
+  backToManage();
+  say('已退出本次战斗，所有状态恢复到迎战前');
+  return true;
+}
+
 function buildBattleScene() {
   initBattleLayers();
   for (const c of bgLayer.removeChildren()) c.destroy({ children: true });
@@ -8910,6 +8930,7 @@ function drawBattleHud() {
     label(hudLayer, t, 8, 25, 12, on ? C.gold : C.redDark);
   }
   if (interactive) {
+    button(hudGfx, hudLayer, hits, 338, 2, 42, 18, '退出', abortBattle, { size: 11, fill: C.redDark, border: C.red, color: C.white });
     button(hudGfx, hudLayer, hits, 384, 2, 42, 18, paused ? '继续' : '暂停', () => { paused = !paused; }, { size: 12 });
     button(hudGfx, hudLayer, hits, 430, 2, 42, 18, `${speed}×`, () => { speed = speed === 1 ? 2 : speed === 2 ? 4 : 1; }, { size: 12 });
     const utility = b.rooms[b.roomIndex]?.utility;
@@ -9572,6 +9593,7 @@ window.__debug = {
   deployWorker: () => battle ? deployUtilityWorker(battle) : false,
   evacuateWorker: () => battle ? evacuateUtilityWorker(battle) : false,
   startBattle: async () => { await startBattle(); return screen; },
+  abortBattle: () => ({ ok: abortBattle(), screen, raidNo: S.raidNo, bone: S.bone, mana: S.mana, reports: S.reports.length }),
   get raidBriefing() { return raidBriefing ? { ...raidBriefing } : null; },
   confirmRaidBriefing: async () => { await confirmRaidBriefing(); return screen; },
   get lawAudit() { return lawAudit ? { ...lawAudit } : null; },
