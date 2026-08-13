@@ -31,12 +31,15 @@ for (const id of followups) if (!ids.has(id)) throw new Error(`Missing follow-up
 
 const source = readFileSync('game.js', 'utf8');
 const battleSource = readFileSync('battle.js', 'utf8');
-for (const line of ['报销单先斩了。', '桶装冲锋开始。', '肋骨被扣绩效了。', '这次差旅没有返程票。']) {
-  if (!battleSource.includes(line)) throw new Error(`Missing promoted local battle dialogue: ${line}`);
+for (const kind of ['slime', 'goblin', 'archer', 'bat', 'shaman', 'ogre', 'bonedragon', 'hundredarm', 'lich', 'beholder', 'mindflayer', 'plaguelord', 'magmagolem', 'broodqueen']) {
+  if (!battleSource.includes(`  ${kind}: {`)) throw new Error(`Missing identity-driven monster dialogue: ${kind}`);
 }
-if (!battleSource.includes('generatedLine(b, u, \'attack\') || localUnitLine')
-  || !battleSource.includes('generatedLine(b, tgt, \'reaction\') || localUnitLine'))
-  throw new Error('Promoted unit dialogue is not wired behind the AI dialogue priority.');
+for (const contract of ['monsterTargetLine(b, u, tgt)', "monsterLine(b, u, 'attack')", "monsterLine(b, u, 'skill'", 'monsterContextLine(b, monSpeaker, livingHeroes)', "fatal: ['"]) {
+  if (!battleSource.includes(contract)) throw new Error(`Monster dialogue context/severity contract is missing: ${contract}`);
+}
+if (!battleSource.includes("generatedLine(b, u, 'attack') || monsterTargetLine")
+  || !battleSource.includes("generatedLine(b, tgt, 'reaction') || reactionText"))
+  throw new Error('Identity-driven dialogue is not wired behind the AI dialogue priority.');
 if (!source.includes("const GAME_NAME = '勇者去死！'")) throw new Error('The unified player-visible game name is missing.');
 if (/夜曲地牢|夜 曲 地 牢/.test(source)) throw new Error('A legacy game title remains in game.js.');
 for (const zone of ['throne', 'dungeon', 'army', 'shop', 'archive']) {
@@ -107,6 +110,15 @@ const affixFour = createBattle(affixRaid(4), [structuredClone(affixRoom)], struc
 if (!(affixFour.heroes[0].atk > affixOne.heroes[0].atk && affixFour.heroes[0].shield > affixOne.heroes[0].shield
   && affixFour.roomLimit < affixOne.roomLimit && raidAffixInfo(affixRaid(4), 'holywater')?.value === '缩短65%'))
   throw new Error('Raid affix levels I-IV do not produce increasing numerical effects.');
+const voiceBattle = createBattle({ no: 3, title: 'voice-check', members: [
+  { cls: 'knight', lv: 3 }, { cls: 'cleric', lv: 3 }, { cls: 'mage', lv: 3 },
+  { cls: 'archer', lv: 3 }, { cls: 'rogue', lv: 3 },
+], affixes: [], reward: { bone: 0, mana: 0 } },
+[{ theme: 'stone', trap: 'none', front: 108, back: null, leader: null, flank: null }],
+[{ uid: 108, kind: 'hundredarm', lv: 5, xp: 0 }]);
+const hundredArmContext = new Set(['终于每只手都有对手了。', '留十只手专门拍牧师。', '拆甲这活，我手多。', '箭只有一支，手可不止。']);
+if (!voiceBattle.dialogue.some((entry) => hundredArmContext.has(entry.text)))
+  throw new Error(`Monster composition dialogue did not enter the visible speech stream: ${JSON.stringify(voiceBattle.dialogue)}`);
 if (!(effectiveThorns(2) < 0.85 && effectiveThorns(2) > effectiveThorns(1) && effectiveThorns(1) < 1))
   throw new Error('Thorns diminishing returns are not monotonic and safely capped.');
 if (!(effectiveMitigationMultiplier(0) > 0.14 && armorMultiplier(1000000) > 0.20))

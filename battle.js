@@ -387,26 +387,110 @@ const ATTACK_LINES = {
   hero: ['破绽在这里！', '别给它喘息！', '压住它！', '这一击开路！', '跟上我的节奏！', '先解决眼前这个！', '守住队形，我来！', '往关节打！'],
   mon: ['留下来！', '尝尝这个！', '别想越过我！', '王座不欢迎你！', '撕开那身甲！', '把火把留下！', '再往前一步试试！', '地牢会吞掉你！'],
 };
-// AI 回归中临时创作、且符合角色身份的句子沉淀为本地专属池。专属池只会由
-// 对应职业/种族抽取，并与通用池混用，避免关闭 AI 后所有人说同一种“会计腔”。
-const LOCAL_UNIT_LINES = {
-  'hero:剑士': {
-    attack: ['报销单先斩了。'], skill: ['为了最低工资！'], reaction: ['这不在保险范围。'],
-    heal: ['先把医药费记账。'], special: ['王国规定我还能站。'],
+// 本地台词首先描述“这个生物是什么”，再描述战况。精英沿用原种族声音；
+// 命名英雄也按 race/kind 取声线，因此改名不会丢失身份台词。
+const MONSTER_VOICES = {
+  slime: {
+    attack: ['送你一份黏糊糊的问候！', '先沾一下，再谈过去。'], skill: ['越挣扎，黏得越紧。', '脚底已经不是你的了。'],
+    reaction: { graze: ['噗叽，只掉了一滴。'], hurt: ['黏液被打散了！'], severe: ['桶快装不住我了！'], critical: ['我只剩薄薄一层了…'], fatal: ['再漏就捡不回来了…'] },
+    context: { solo: ['一个人？够我慢慢裹住。'], crowd: ['这么多双鞋，正好一起黏。'], healer: ['先黏住那个会发光的。'], armored: ['铁罐头也会陷进黏液。'], caster: ['离火远点，我不想变干。'] },
   },
-  'mon:史莱姆': {
-    attack: ['黏住再算账。'], skill: ['桶装冲锋开始。'], reaction: ['桶又要漏了。'],
-    heal: ['把漏掉的黏液捡回来。'], special: ['这滩也算特殊工位。'],
+  goblin: {
+    attack: ['刀子很短，离你够近就行。', '别看手，看你的钱袋！'], skill: ['第一刀试甲，第二刀收账！', '我可从没答应只刺一次。'],
+    reaction: { graze: ['你连我的耳朵都没削到。'], hurt: ['喂，这刀口是真的！'], severe: ['血比赃物掉得还快！'], critical: ['再挨一下就没处藏了…'], fatal: ['我的逃跑路线呢…'] },
+    context: { solo: ['就一个？连赃物都不够分。'], crowd: ['人多好，口袋也多。'], healer: ['先偷走牧师的咒语。'], armored: ['甲缝里总能塞进一把刀。'], ranged: ['射箭的，先看好你背后。'] },
   },
-  'mon:骷髅弓手': {
-    attack: ['箭也要走报销。'], skill: ['后排工位开始放箭。'], reaction: ['肋骨被扣绩效了。'],
-    heal: ['把骨钉重新按回去。'], special: ['远程岗位拒绝近战。'],
+  archer: {
+    attack: ['弦响以后，你才会听懂。', '别躲，我的箭比眼睛快。'], skill: ['这支箭专走人群后面。', '前排让开，我要后面的。'],
+    reaction: { graze: ['你的箭从我骨头缝里穿过去了。'], hurt: ['那是我的肋骨，不是箭靶！'], severe: ['弓弦和骨头一起在响…'], critical: ['我快散成一袋箭杆了…'], fatal: ['至少把我的箭留下…'] },
+    context: { solo: ['一个靶子，足够了。'], crowd: ['排成一列，我省些箭。'], healer: ['白袍很好认，也很好瞄。'], armored: ['面甲上的缝，我看见了。'], ranged: ['看看谁先射断谁的弦。'] },
+  },
+  bat: {
+    attack: ['我听见你的血在跑。', '灯灭了，你就归我了。'], skill: ['耳朵比你的眼睛更快！', '我从你看不见的地方咬。'],
+    reaction: { graze: ['风都比这一下更重。'], hurt: ['翅膜裂开了！'], severe: ['我的回声开始发抖了…'], critical: ['我听不见另一边了…'], fatal: ['别让黑暗接住我…'] },
+    context: { solo: ['你的心跳太响了。'], crowd: ['好多心跳，吵得我饿了。'], healer: ['那个祷告声最刺耳。'], caster: ['念咒吧，我会顺着声音找到你。'], ranged: ['弓箭追不上回声。'] },
+  },
+  shaman: {
+    attack: ['吸一口，肺里会开花。', '孢子已经认识你了。'], skill: ['这一团治谁，要看风往哪吹。', '毒与药，只差蘑菇的心情。'],
+    reaction: { graze: ['只震落几粒孢子。'], hurt: ['菌盖被削开了！'], severe: ['菌丝正在一根根断掉…'], critical: ['我的孢子快散尽了…'], fatal: ['把我埋下，还会再长…'] },
+    context: { solo: ['一个人也能养出一片菌床。'], crowd: ['人越多，孢子传得越快。'], healer: ['看看你的圣光治不治霉。'], armored: ['盔甲里面最适合长菌。'], caster: ['火法先倒，蘑菇都同意。'] },
+  },
+  ogre: {
+    attack: ['站近点，我不想挥第二次。', '这一棒把你和门一起开了！'], skill: ['全都趴下，省得我挨个找！', '横着扫，谁也别漏！'],
+    reaction: { graze: ['挠得不错，再用点力。'], hurt: ['你真敢砍我？'], severe: ['这一下让骨头响了…'], critical: ['腿开始不听话了…'], fatal: ['地面怎么越来越近…'] },
+    context: { solo: ['一个小人，一根手指。'], crowd: ['来得多，横扫才不浪费。'], healer: ['先砸会把人扶起来的。'], armored: ['铁皮响起来最好听。'], ranged: ['躲远也只是晚一点挨棒。'] },
+  },
+  bonedragon: {
+    attack: ['听见骨翼刮过来了吗？', '龙死了，龙威还没有。'], skill: ['骨焰不需要活着才能燃烧！', '把呼吸还给坟墓！'],
+    reaction: { graze: ['只刮下一点骨灰。'], hurt: ['我的翼骨裂了一节。'], severe: ['龙骨也会记住疼痛…'], critical: ['脊骨正在失去火焰…'], fatal: ['别让我的头颅低下…'] },
+    context: { solo: ['独自见龙，是你的葬礼。'], crowd: ['站密些，吐息更省力。'], healer: ['圣光照不暖龙骨。'], armored: ['盔甲会替你焖熟。'], caster: ['让我看看谁的火更古老。'] },
+  },
+  hundredarm: {
+    attack: ['看我一百零八巴掌！', '你挡住一只手，还有九十九只！'], skill: ['万手齐落，数漏了也算你输！', '每只手都想认识你的脸！'],
+    reaction: { graze: ['你只碰到最闲的那只手。'], hurt: ['有三只手开始喊疼了！'], severe: ['一排手臂都抬不起来了…'], critical: ['我已经数不清还剩几只手…'], fatal: ['最后一只手也要抓住你…'] },
+    context: { solo: ['一个人不够我一轮握手。'], crowd: ['终于每只手都有对手了。'], healer: ['留十只手专门拍牧师。'], armored: ['拆甲这活，我手多。'], ranged: ['箭只有一支，手可不止。'] },
+  },
+  lich: {
+    attack: ['你的寿命，我先替你保管。', '活人的气息太浪费了。'], skill: ['死灵之握，连灵魂一起收紧！', '倒下的归我，站着的也快了。'],
+    reaction: { graze: ['死亡早就伤过我一次。'], hurt: ['这副骨架又要修补了。'], severe: ['魂火被你削弱了…'], critical: ['命匣的回声越来越远…'], fatal: ['死亡竟敢来收第二次…'] },
+    context: { solo: ['一个灵魂，也值得收藏。'], crowd: ['这么多寿命，够点一盏长灯。'], healer: ['牧师，你借来的光该还了。'], armored: ['灵魂可不穿盔甲。'], caster: ['你的咒语还没有我的墓志铭长。'] },
+  },
+  beholder: {
+    attack: ['我每只眼睛都看见了破绽。', '别眨眼，那是我的工作。'], skill: ['看着我，然后变成石头。', '这一眼，替你省去后悔。'],
+    reaction: { graze: ['你躲过了几只眼，仅此而已。'], hurt: ['那只眼睛还要用！'], severe: ['视野缺了一大片…'], critical: ['世界正在一只眼一只眼地熄灭…'], fatal: ['最后一眼也会盯着你…'] },
+    context: { solo: ['我有十只眼，你只有一个人。'], crowd: ['很好，每只眼都有目标。'], healer: ['你的光让我很不舒服。'], armored: ['金属反光，只会让我看得更清楚。'], ranged: ['瞄准之前，你已经被看见了。'] },
+  },
+  mindflayer: {
+    attack: ['这个念头不错，我拿走了。', '别抵抗，你的脑子会累。'], skill: ['转过身，把剑给同伴看看。', '你的意志，现在借我使用。'],
+    reaction: { graze: ['疼痛只是一个可以删除的念头。'], hurt: ['你碰乱了我的思绪！'], severe: ['意识正在从触须间漏出去…'], critical: ['我听不清自己的声音了…'], fatal: ['别让我的思想沉下去…'] },
+    context: { solo: ['一个脑子，安静又好用。'], crowd: ['这么多念头，谁先背叛谁？'], healer: ['信仰也是一种可以改写的念头。'], armored: ['头盔挡不住里面的门。'], caster: ['让我替你念完下一句。'] },
+  },
+  plaguelord: {
+    attack: ['钟响一下，病就深一层。', '你的咳嗽已经加入合唱。'], skill: ['丧钟敲响，旧伤全部醒来！', '瘟疫不赶时间，它只等结果。'],
+    reaction: { graze: ['伤口也会替我传播。'], hurt: ['疫袍被撕开了。'], severe: ['钟声开始变得断续…'], critical: ['病气已经托不住我了…'], fatal: ['我倒下，瘟疫还会站着…'] },
+    context: { solo: ['一个宿主，也能开始一场疫潮。'], crowd: ['人群是瘟疫最好的道路。'], healer: ['牧师来了，正好检验疗效。'], armored: ['盔甲里闷着的病最香。'], caster: ['火能烧尸体，烧不掉病名。'] },
+  },
+  magmagolem: {
+    attack: ['靠近点，让盔甲先融。', '石头不会怒，只会喷发。'], skill: ['地壳开裂，轮到你们沸腾！', '熔喷之下，没有干净的落脚处！'],
+    reaction: { graze: ['只敲下一块冷却的壳。'], hurt: ['裂缝里开始漏火了。'], severe: ['核心正在不稳地翻滚…'], critical: ['岩壳快压不住熔心了…'], fatal: ['我会碎，但不会冷却…'] },
+    context: { solo: ['一个人，也值得一场喷发。'], crowd: ['站在一起，热得更均匀。'], healer: ['圣水倒下来，只会多一团蒸汽。'], armored: ['铁甲会变成你的第二层皮。'], ranged: ['箭进得来，熔岩也出得去。'] },
+  },
+  broodqueen: {
+    attack: ['别动，孩子们正在量你的尺寸。', '网不是墙，是第二层地面。'], skill: ['织巢，把每一双脚都留下！', '孩子们，晚餐自己走进来了。'],
+    reaction: { graze: ['蛛丝替我分走了力道。'], hurt: ['你惊动了我的幼体！'], severe: ['巢壁正在大片断裂…'], critical: ['我听见孩子们在后退…'], fatal: ['护住卵，别管我…'] },
+    context: { solo: ['一个猎物，也够孩子们练习。'], crowd: ['猎物很多，巢要织大一点。'], healer: ['先用网封住那双祷告的手。'], armored: ['甲越重，黏在网上越稳。'], ranged: ['箭会停在网里，你也会。'] },
   },
 };
 
-function localUnitLine(b, u, kind, chance = 0.5) {
-  const pool = LOCAL_UNIT_LINES[`${u.side}:${u.name}`]?.[kind];
+const voiceKey = (u) => String(u?.kind ?? '').replace(/^elite-/, '');
+const monsterVoice = (u) => u?.side === 'mon' ? MONSTER_VOICES[voiceKey(u)] : null;
+function monsterLine(b, u, kind, chance = 0.65) {
+  const pool = monsterVoice(u)?.[kind];
   return Array.isArray(pool) && pool.length && b.rng() < chance ? pickLine(pool, b.rng) : '';
+}
+function targetKind(tgt) {
+  if (tgt?.kind === 'cleric') return 'healer';
+  if (['mage', 'warlock'].includes(tgt?.kind)) return 'caster';
+  if (['knight', 'paladin', 'captain', 'monk'].includes(tgt?.kind)) return 'armored';
+  if (['archer', 'ranger'].includes(tgt?.kind)) return 'ranged';
+  return '';
+}
+function monsterTargetLine(b, u, tgt) {
+  const pool = monsterVoice(u)?.context?.[targetKind(tgt)];
+  return Array.isArray(pool) && pool.length && b.rng() < 0.45 ? pickLine(pool, b.rng) : '';
+}
+function monsterContextLine(b, u, enemies) {
+  const context = monsterVoice(u)?.context;
+  if (!context) return '';
+  const keys = [];
+  if (enemies.length === 1) keys.push('solo');
+  if (enemies.length >= 5) keys.push('crowd');
+  for (const enemy of enemies) {
+    const key = targetKind(enemy);
+    if (key && !keys.includes(key)) keys.push(key);
+  }
+  const pools = keys.flatMap((key) => context[key] ?? []);
+  return pools.length ? pickLine(pools, b.rng) : '';
 }
 const BACK_ATTACK_LINES = {
   hero: ['后排露出来了！', '治疗者先倒！', '越过前线，取后阵！', '你躲得不够远！'],
@@ -443,23 +527,23 @@ function attackSpeech(b, u, tgt) {
   if (b.rng() > 0.24) return;
   const side = u.side === 'hero' ? 'hero' : 'mon';
   const pool = tgt?.row === 1 ? BACK_ATTACK_LINES[side] : ATTACK_LINES[side];
-  speak(b, u, generatedLine(b, u, 'attack') || localUnitLine(b, u, 'attack', 0.55) || pickLine(pool, b.rng), 'attack');
+  speak(b, u, generatedLine(b, u, 'attack') || monsterTargetLine(b, u, tgt) || monsterLine(b, u, 'attack') || pickLine(pool, b.rng), 'attack');
 }
 
 function skillSpeech(b, u, nature, fallback) {
   const pool = SKILL_LINES[nature] ?? SKILL_LINES.strike;
-  speak(b, u, generatedLine(b, u, 'skill') || localUnitLine(b, u, 'skill', 0.65) || pickLine(pool, b.rng) || fallback, 'skill', true);
+  speak(b, u, generatedLine(b, u, 'skill') || monsterLine(b, u, 'skill', 0.8) || pickLine(pool, b.rng) || fallback, 'skill', true);
 }
 
 function specialSpeech(b, u, kind) {
   const pool = SPECIAL_LINES[kind];
   // 特殊机制必须留下对白/战报记录；同一瞬间若连续触发，画面仍只保留该单位最后一句。
-  if (pool) speak(b, u, generatedLine(b, u, 'special') || localUnitLine(b, u, 'special', 0.45) || pickLine(pool, b.rng), kind, true);
+  if (pool) speak(b, u, generatedLine(b, u, 'special') || pickLine(pool, b.rng), kind, true);
 }
 
 function recoverySpeech(b, u) {
   const pool = u.side === 'hero' ? RECOVERY_LINES.hero : RECOVERY_LINES.mon;
-  speak(b, u, generatedLine(b, u, 'heal') || localUnitLine(b, u, 'heal', 0.55) || pickLine(pool, b.rng), 'heal');
+  speak(b, u, generatedLine(b, u, 'heal') || pickLine(pool, b.rng), 'heal');
 }
 
 function impactText(dmg        , tgt      )          {
@@ -482,16 +566,23 @@ function reactionText(tgt      , dmg        , beforeHp        , rng           ) 
     mid: ['可恶…', '还能撑住', '小伤而已', '这地方比情报里危险', '别停，我还能走', '治疗留给更需要的人', '它抓住了我的破绽', '重新列阵！', '我低估这些守军了', '小心，它们会配合', '伤口不深，继续', '别让它再来一次'],
     low: ['呃啊！', '好痛…', '该死…', '护住侧翼！', '我快撑不住了', '谁来压住那只怪物', '药剂，快！', '别管我，先破门', '视线开始模糊了', '这不是普通守军', '再中一下就危险了', '队长，换我到后排'],
     crit: ['难道我就会在这里…', '不、不可能…', '还没…结束…', '别让远征停在这里', '我听不见号令了…', '至少把同伴送出去', '王座就在前面…', '我的手已经握不住了', '告诉他们，我没有后退', '光啊，再借我一次力量', '这座地牢记住我了', '最后一口气，也要挥剑'],
+    fatal: ['这一击拿走了我大半条命…', '再没有人拉我一把，就到这里了…', '我连下一次呼吸都不敢保证…', '别等我，阵线不能陪我倒下…'],
   } : {
     high: ['哼，软弱', '再来啊', '不够看', '地牢的门还在我身后', '你打碎的只是灰尘', '勇者都这么没力气吗', '再靠近一步试试', '主人在看着这场战斗', '我的骨头比城墙还硬', '这点伤只会让我清醒', '轮到我还手了', '你们走不到下一间房'],
     mid: ['嘶…有点意思', '不过如此', '有点疼', '守住门口！', '它们比上一队难缠', '别让牧师抬手', '盯紧那个拿盾的', '血的味道让我兴奋', '阵脚还没有乱', '我记住你的气味了', '把它们拖进陷阱', '统领，我还能战'],
     low: ['吼！', '该死…', '你会后悔的', '不许碰王座！', '我的甲壳裂开了', '快封住缺口', '地牢不会交给你们', '就算爬也要拦住他们', '先杀治疗者', '墙后还有我们的同伴', '别让旗帜倒下', '我需要一点时间'],
     crit: ['不…我的地牢…', '我…倒下…', '不可能…', '替我守住下一道门', '别踩过我的影子', '主人，我尽力了', '至少留下一个勇者', '把我的部件带回工坊', '门闩还没有断…', '我会在骨坑里再醒来', '王座不能落到他们手里', '下一批守军会替我复仇'],
+    fatal: ['这一击几乎把我整个拿走了…', '我只剩最后一点东西还能动…', '守住门，我已经站不了多久…', '别让他们从我的尸体上轻松过去…'],
   };
-  const tier = shock >= 0.75 || r <= 0.12 ? 'crit'
-    : shock >= 0.42 || r <= 0.3 ? 'low'
-      : shock >= 0.18 || r <= 0.58 ? 'mid' : 'high';
-  const pool = pools[tier];
+  // 五档同时读取单次伤害/总生命、单次伤害/受击前当前生命，以及受击后残血。
+  // 因此“满血吃掉一半”和“残血被打掉一半”不会再说同一档反应。
+  const tier = currentRatio >= 0.82 || r <= 0.06 ? 'fatal'
+    : shock >= 0.58 || r <= 0.16 ? 'critical'
+      : shock >= 0.34 || r <= 0.36 ? 'severe'
+        : shock >= 0.15 || r <= 0.64 ? 'hurt' : 'graze';
+  const voicePool = monsterVoice(tgt)?.reaction?.[tier];
+  if (voicePool?.length && rng() < 0.75) return pickLine(voicePool, rng);
+  const pool = pools[{ graze: 'high', hurt: 'mid', severe: 'low', critical: 'crit', fatal: 'fatal' }[tier]];
   return pool[Math.floor(rng() * pool.length)];
 }
 
@@ -506,7 +597,7 @@ function logHit(b        , src      , tgt      , dmg        , action        , he
   log(b, `${src.name}对${tgt.name}${action}，造成${dmg}点伤害（${imp}）`, tone);
   const beforeHp = Math.min(tgt.maxHp, Math.max(dmg, tgt.hp + dmg));
   if (dmg / Math.max(1, tgt.maxHp) >= 0.05 || dmg / Math.max(1, beforeHp) >= 0.14 || tgt.hp / Math.max(1, tgt.maxHp) < 0.35) {
-    const line = generatedLine(b, tgt, 'reaction') || localUnitLine(b, tgt, 'reaction', 0.5) || reactionText(tgt, dmg, beforeHp, rng ?? b.rng);
+    const line = generatedLine(b, tgt, 'reaction') || reactionText(tgt, dmg, beforeHp, rng ?? b.rng);
     log(b, `　${tgt.name}：${line}`, tone);
     speak(b, tgt, line, 'reaction');
   }
@@ -519,7 +610,7 @@ const HERO_ROOM_LINES = [
   '伤员站中间，前排跟我上。', '这间房交给我们，速战速决。', '不要分散火力，逐个击破。',
   '墙缝里有风，附近一定还有暗道。', '先听呼吸声，再决定砍哪边。', '别追倒下的，活着的更危险。',
   '盾沿贴紧，别给它们钻进队列。', '地上的灰是新的，守军刚换过岗。', '治疗者报位置，别等受伤才喊。',
-  '门后若没有声音，反而要更小心。', '把退路记住，我们可能得抬人出去。', '这次差旅没有返程票。',
+  '门后若没有声音，反而要更小心。', '把退路记住，我们可能得抬人出去。',
 ];
 const HERO_PARTY_BANTER = [
   ['这地方闻起来像墓地。', '好消息，我们已经省了返程车费。'],
@@ -669,10 +760,16 @@ function enterRoom(b        ) {
     speak(b, a, lead, 'banter');
     speak(b, z, reply, 'banter');
   }
-  if (!aiOpening && monSpeaker) log(b, `　${monSpeaker.name}：${MON_ROOM_LINES[Math.floor(b.rng() * MON_ROOM_LINES.length)]}`, 'good');
+  let localMonOpening = '';
+  if (!aiOpening && monSpeaker) {
+    localMonOpening = monsterContextLine(b, monSpeaker, livingHeroes) || MON_ROOM_LINES[Math.floor(b.rng() * MON_ROOM_LINES.length)];
+    log(b, `　${monSpeaker.name}：${localMonOpening}`, 'good');
+  }
   // 每进一房各挑一名尚未发过属性台词的单位。高属性获得辨识度，但不会在同一瞬间把气泡铺满屏幕。
   statSpeech(b, room.mons);
   statSpeech(b, livingHeroes);
+  // 属性宣言之后再放出战况台词，确保玩家头顶最终看到的是对当前敌军构成的回应。
+  if (localMonOpening) speak(b, monSpeaker, localMonOpening, 'banter', true);
   // 足部件的入场效果：进房瞬间结算一次
   for (const m of room.mons) {
     if (!m.alive || !m.eff?.entry) continue;
