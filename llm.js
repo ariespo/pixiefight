@@ -731,7 +731,7 @@ export function battleDialoguePrompt(snap) {
     '语气是地牢守方视角的黑色幽默。台词必须短、能在人物头顶两行内读完，不要描述伤害数值。',
     '只使用输入中给出的 key；根据角色阵营、职业/种族、技能、性格、属性特征写出有辨识度的句子。',
     promptDirective('dialogue'),
-    '每个单位可写 attack、skill、reaction、heal、special，每类0至3句；opening写2至4句开场交锋。',
+    '必须为输入中的每一个单位都返回一项 units。attack、skill、reaction 每类必须写1至3句；heal、special每类写1至2句，即使该单位通常不会治疗，也要写符合其身份的恢复或特殊效果反应备用句。opening写2至4句开场交锋。不得省略单位或把必填数组留空。',
     `<战斗事实>${JSON.stringify(snap)}</战斗事实>`,
     '输出格式：{"opening":[{"key":"hero:王国剑士","text":"门后有动静。"}],"units":[{"key":"mon:骨头书记","attack":["留下加班费。"],"skill":[],"reaction":[],"heal":[],"special":[]}]}',
   ].join('\n');
@@ -757,7 +757,13 @@ export function sanitizeBattleDialogue(raw, snap) {
     const key = String(item?.key ?? ''), text = cleanLine(item?.text, 24);
     if (allowed.has(key) && text.length >= 2) opening.push({ key, text });
   }
-  return opening.length || Object.keys(units).length ? { opening, units } : null;
+  if (!opening.length && !Object.keys(units).length) return null;
+  const expected = (snap?.units ?? []).length;
+  const covered = Object.keys(units).length;
+  const lines = opening.length + Object.values(units).reduce((total, entry) => total
+    + Object.values(entry).reduce((sum, pool) => sum + pool.length, 0), 0);
+  const coreCovered = Object.values(units).filter((entry) => entry.attack.length && entry.skill.length && entry.reaction.length).length;
+  return { opening, units, stats: { expected, covered, coreCovered, lines } };
 }
 
 export async function requestBattleDialogue(snap) {

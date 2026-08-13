@@ -378,7 +378,9 @@ const pickLine = (pool, rng) => pool[Math.floor(rng() * pool.length)];
 function generatedLine(b, u, kind) {
   const entry = b.dialoguePack?.units?.[`${u.side}:${u.name}`];
   const pool = entry?.[kind];
-  return Array.isArray(pool) && pool.length ? pickLine(pool, b.rng) : '';
+  if (!Array.isArray(pool) || !pool.length) return '';
+  b.__aiDialogueUsed = (b.__aiDialogueUsed ?? 0) + 1;
+  return pickLine(pool, b.rng);
 }
 
 const ATTACK_LINES = {
@@ -629,6 +631,7 @@ function enterRoom(b        ) {
       const unit = present.find((u) => `${u.side}:${u.name}` === item.key);
       if (!unit) continue;
       aiOpening = true;
+      b.__aiDialogueUsed = (b.__aiDialogueUsed ?? 0) + 1;
       log(b, `　${unit.name}：${item.text}`, unit.side === 'hero' ? 'bad' : 'good');
       speak(b, unit, item.text, 'banter', true);
     }

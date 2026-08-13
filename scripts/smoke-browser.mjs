@@ -62,8 +62,9 @@ try {
       choices: ['补签昨天的入职日期，并要求账房逐字记录这份跨越死亡与欠薪的正式声明', '承认工龄', '把手册埋回去'], facts: { relations: ['幽灵开始信任巫妖'], promises: [], threads: ['员工手册仍会翻页'], places: ['战后账房'] } };
     else if (prompt.includes('维护小说战役的长期记忆')) content = { summary: '地牢的员工手册开始自行记录伤亡。', facts: { relations: ['幽灵开始信任巫妖'], promises: [], threads: ['员工手册仍会翻页'], places: ['战后账房'] } };
     else if (prompt.includes('战前台词包')) content = { opening: [{ key: 'hero:剑士', text: '这次差旅没有返程票。' }], units: [
-      { key: 'hero:剑士', attack: ['报销单先斩了。'], skill: ['为了最低工资！'], reaction: ['这不在保险范围。'], heal: [], special: [] },
-      { key: 'mon:史莱姆', attack: ['黏住再算账。'], skill: [], reaction: ['桶又要漏了。'], heal: [], special: [] },
+      { key: 'hero:剑士', attack: ['报销单先斩了。'], skill: ['为了最低工资！'], reaction: ['这不在保险范围。'], heal: ['先把医药费记账。'], special: ['王国规定我还能站。'] },
+      { key: 'mon:史莱姆', attack: ['黏住再算账。'], skill: ['桶装冲锋开始。'], reaction: ['桶又要漏了。'], heal: ['把漏掉的黏液捡回来。'], special: ['这滩也算特殊工位。'] },
+      { key: 'mon:骷髅弓手', attack: ['箭也要走报销。'], skill: ['后排工位开始放箭。'], reaction: ['肋骨被扣绩效了。'], heal: ['把骨钉重新按回去。'], special: ['远程岗位拒绝近战。'] },
     ] };
     else if (prompt.includes('战地书记')) content = { title: '门轴与加班费', summary: '剑士按规定入侵，按事故离场。',
       chronicle: '门轴响了第一声，守军便开始计算抚恤。\n\n战斗结束时，账本比剑士完整。', highlights: ['所有数字仍由原始战报作证。'] };
@@ -204,7 +205,9 @@ try {
     const briefing = __debug.raidBriefing;
     await __debug.confirmRaidBriefing();
     const briefingArchived = __debug.story.archive.some((x) => x.key === 'raid-briefing:1');
-    const battle = __debug.battle;
+    const initialBattle = __debug.battle;
+    const liveDialogue = __debug.stepBattleForTest(240);
+    const battle = { ...initialBattle, liveDialogue };
     __debug.backManage();
     const unlocks = {};
     for (const raid of [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]) {
@@ -234,6 +237,10 @@ try {
   assert(onboarding.battle?.heroesAlive === 1, 'Guided battle did not start against one enemy.');
   assert(onboarding.battle?.dialoguePack?.opening?.[0]?.text === '这次差旅没有返程票。',
     'The selected AI model did not provide the pre-battle dialogue pack.');
+  assert(onboarding.battle?.dialoguePack?.stats?.coreCovered === onboarding.battle?.dialoguePack?.stats?.expected
+    && onboarding.battle?.dialogue?.some((line) => line.text === '这次差旅没有返程票。') && onboarding.battle?.aiDialogueUsed > 0
+    && onboarding.battle?.liveDialogue?.dialogue.some((line) => ['报销单先斩了。', '为了最低工资！', '这不在保险范围。', '黏住再算账。', '桶装冲锋开始。', '桶又要漏了。'].includes(line.text)),
+  `AI dialogue was parsed but did not enter the live battle dialogue stream: ${JSON.stringify(onboarding.battle?.dialoguePack)}`);
   assert(onboarding.unlocks[2].tabs.includes('archive') && onboarding.unlocks[2].pages.includes('report') && !onboarding.unlocks[2].pages.includes('hero'), 'Raid 2 unlock schedule is incorrect.');
   assert(!onboarding.unlocks[3].pages.includes('hero') && !onboarding.unlocks[3].tabs.includes('shop'), 'Raid 3 unlock schedule is incorrect.');
   assert(onboarding.unlocks[4].tabs.includes('shop') && !onboarding.unlocks[4].pages.includes('story') && !onboarding.unlocks[4].pages.includes('hero'), 'Raid 4 unlock schedule is incorrect.');

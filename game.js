@@ -1525,6 +1525,7 @@ let battlePrepBusy = false;
 let heroLoreBusyUid = null;
 let heroForceConfirmUid = null;
 const battleDialogueCache = new Map();
+const BATTLE_DIALOGUE_SCHEMA = 2;
 
 const FORCE_HERO_BONE = 300;
 const FORCE_HERO_MANA = 100;
@@ -1640,7 +1641,8 @@ function battleDialogueSnapshot(raid) {
 async function prepareBattleDialogue(raid) {
   if (!aiGenerationEnabled()) return null;
   const snap = battleDialogueSnapshot(raid);
-  const key = JSON.stringify([getBackend()?.name, snap.raid, snap.units, snap.rooms]);
+  const dialoguePrompt = loadPromptOverrides().dialogue ?? '';
+  const key = JSON.stringify([BATTLE_DIALOGUE_SCHEMA, getBackend()?.name, dialoguePrompt, snap.raid, snap.units, snap.rooms]);
   if (battleDialogueCache.has(key)) return battleDialogueCache.get(key);
   try {
     const pack = await requestBattleDialogue(snap);
@@ -8397,7 +8399,11 @@ async function startBattle() {
   buildBattleScene();
   render();
   playMusic('bgm-battle');
-  say('');
+  if (dialoguePack?.stats) {
+    const s = dialoguePack.stats;
+    say(`AI台词已装载：${s.covered}/${s.expected}名角色、核心分类${s.coreCovered}/${s.expected}，共${s.lines}句`);
+  } else if (aiGenerationEnabled()) say('AI台词未返回有效内容，本场已使用本地台词包');
+  else say('');
 }
 
 function buildBattleScene() {
@@ -9491,6 +9497,8 @@ window.__debug = {
       phase: battle.phase, seal: battle.seal, roomIndex: battle.roomIndex, time: battle.time,
       heroesAlive: battle.heroes.filter((h) => h.alive).length,
       dialoguePack: battle.dialoguePack,
+      dialogue: battle.dialogue.map((line) => ({ ...line })),
+      aiDialogueUsed: battle.__aiDialogueUsed ?? 0,
       heroHp: battle.heroes.map((h) => Math.round(h.hp)),
       monHp: battle.rooms.map((r) => r.mons.map((m) => Math.round(m.hp))),
       loot: battle.rooms[battle.roomIndex]?.utility?.loot ? { ...battle.rooms[battle.roomIndex].utility.loot } : null,
@@ -9534,6 +9542,15 @@ window.__debug = {
     consumeEvents();
     if (battle.phase === 'done' && battle.result) finishBattle();
     return { screen, steps, result: battle.result };
+  },
+  stepBattleForTest: (steps = 120) => {
+    if (!battle || screen !== 'battle') return null;
+    for (let i = 0; i < Math.max(1, Math.min(2000, Math.round(steps))); i++) {
+      if (battle.phase === 'done') break;
+      stepBattle(battle, 0.05);
+    }
+    consumeEvents();
+    return { dialogue: battle.dialogue.map((line) => ({ ...line })), aiDialogueUsed: battle.__aiDialogueUsed ?? 0, phase: battle.phase };
   },
   returnResult: () => { returnFromResult(); return { screen, raid: S.raidNo, overtimeRaid: S.otRaid }; },
   get result() { return battle?.result ?? null; },
