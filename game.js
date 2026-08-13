@@ -1810,6 +1810,8 @@ let portraitLayoutInfo = null;
 let portraitActionMap = {};
 let portraitStoryInputRect = null;
 let guidePulseNodes = [];
+const LARGE_SCREEN_SCALE = 3;
+const UHD_SCREEN_SCALE = 4;
 
 const loadingEl   = document.getElementById('loading');
 const loadingText = document.getElementById('loading-text');
@@ -1993,9 +1995,13 @@ function layout() {
   const portraitLogicalWidth = portraitManage ? (portraitPane === 0 ? VIEW_W : VIEW_W / 2) : VIEW_W;
   const portraitSceneHeight = portraitManage ? 202 : VIEW_H;
   const portraitControlsHeight = portrait ? portraitConsoleHeight() : 0;
+  // 横屏不能无限追随窗口高度放大：2K 浏览器下接近 4× 的界面会让文字和
+  // 底部操作贴边，也更容易受浏览器工具栏/页面缩放影响。像素画面优先采用
+  // 稳定的整数档位；仅在真正的 4K 高度上允许 4×。
+  const landscapeScaleCap = h >= 1800 ? UHD_SCREEN_SCALE : LARGE_SCREEN_SCALE;
   viewScale = portrait
     ? Math.max(0.1, Math.min((w - 12) / portraitLogicalWidth, (h - portraitControlsHeight - 8) / portraitSceneHeight))
-    : Math.max(0.1, Math.min(w / VIEW_W, h / VIEW_H));
+    : Math.max(0.1, Math.min(landscapeScaleCap, w / VIEW_W, h / VIEW_H));
   smallScreen = w < 720 || h < 420 || viewScale < 1;
   const snap = (v) => Math.round(v * renderResolution) / renderResolution;
   root.scale.set(viewScale);
@@ -2367,6 +2373,8 @@ function buildIntro() {
   const intro = `你原本也是一位体面的魔王——至少名片上这么写。后来同行嫌你穷，王国嫌你偏，债主则认为两者都是优点，于是把你发配到边境乡下。\n\n这里唯一的产业，是一座漏风、欠税、尚未被勇者正式发现的地下城：${S.lairName}。你带着95骨币、18魔质和一份无法报销的雄心抵达。\n\n从今天起，${S.playerName}要招募怪物、经营房间、应付英雄，并说服一批批勇者：死亡不是失败，只是他们职业生涯中最后一次考核。`;
   boundedText(overlay, intro, 42, 72, 396, 118, 11, C.bone);
   button(g, overlay, hits, 300, 216, 138, 34, '开门营业', finishIntro, { size: 15, fill: C.redDark, border: C.gold, color: C.white });
+  // 高分屏和浏览器缩放下保留更宽松的真实命中区，视觉按钮仍维持原尺寸。
+  hits.add(282, 206, 174, 52, finishIntro);
   titleActionRects.intro = { x: 300, y: 216, w: 138, h: 34 };
 }
 
@@ -9419,6 +9427,8 @@ window.__debug = {
     return { width: app.screen.width, height: app.screen.height, scale: viewScale, portrait, smallScreen, rotateHint: !!rotateNode?.visible,
       portraitChrome: portraitLayer.visible, portraitContentBottom, portraitLayout: portraitLayoutInfo ? { ...portraitLayoutInfo } : null,
       nativePortrait: portraitNativeManage(), rootVisible: root.visible,
+      logicalFrame: { x: root.x, y: root.y, width: VIEW_W * viewScale, height: VIEW_H * viewScale,
+        right: root.x + VIEW_W * viewScale, bottom: root.y + VIEW_H * viewScale },
       portraitActions: { ...portraitActionMap },
       resolution: renderResolution, dpr: window.devicePixelRatio || 1,
       safeRect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null };

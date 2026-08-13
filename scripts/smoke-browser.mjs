@@ -753,6 +753,77 @@ try {
   assert(await page.evaluate(() => __debug.screen === 'manage' && __debug.save.doctrine === 'economy'),
     'The selected starting doctrine was not persisted into the new run.');
 
+  // Large desktop canvases use bounded integer pixel scaling. The opening CTA must remain
+  // comfortably inside the viewport and respond to a real physical click at 2K size.
+  const largeContext = await browser.newContext({ viewport: { width: 2560, height: 1440 } });
+  const largePage = await largeContext.newPage();
+  const largeErrors = [];
+  largePage.on('pageerror', (error) => largeErrors.push(error.stack || error.message));
+  largePage.on('console', (msg) => { if (msg.type() === 'error' && !msg.text().includes('favicon')) largeErrors.push(msg.text()); });
+  await largePage.goto(url, { waitUntil: 'domcontentloaded' });
+  await largePage.waitForFunction(() => window.__gpReady && window.__debug, null, { timeout: 20000 });
+  await largePage.evaluate(() => __debug.titleNew());
+  await largePage.evaluate(async () => { await __debug.identityStart('大屏魔王', '大屏地牢'); });
+  const introLarge = await largePage.evaluate(() => ({ screen: __debug.screen, viewport: __debug.viewport(), cta: __debug.toScreen(369, 233) }));
+  assert(introLarge.screen === 'intro' && introLarge.viewport.scale === 3
+    && introLarge.viewport.logicalFrame.x >= 0 && introLarge.viewport.logicalFrame.y >= 0
+    && introLarge.viewport.logicalFrame.right <= 2560 && introLarge.viewport.logicalFrame.bottom <= 1440
+    && introLarge.cta.x > 0 && introLarge.cta.x < 2560 && introLarge.cta.y > 0 && introLarge.cta.y < 1440,
+  `2K opening screen is not centered at a bounded scale: ${JSON.stringify(introLarge)}`);
+  await largePage.mouse.click(introLarge.cta.x, introLarge.cta.y);
+  await largePage.waitForFunction(() => __debug.screen === 'manage', null, { timeout: 5000 });
+  const largeViewportAudit = [];
+  for (const viewport of [{ width: 1920, height: 1080 }, { width: 2048, height: 1152 }, { width: 2560, height: 1440 },
+    { width: 3440, height: 1440 }, { width: 3840, height: 2160 }]) {
+    await largePage.setViewportSize(viewport); await largePage.waitForTimeout(80);
+    const metrics = await largePage.evaluate(() => __debug.viewport());
+    const expectedCap = viewport.height >= 1800 ? 4 : 3;
+    assert(metrics.scale <= expectedCap && metrics.logicalFrame.x >= 0 && metrics.logicalFrame.y >= 0
+      && metrics.logicalFrame.right <= metrics.width && metrics.logicalFrame.bottom <= metrics.height,
+    `Large viewport frame overflow at ${viewport.width}x${viewport.height}: ${JSON.stringify(metrics)}`);
+    largeViewportAudit.push({ ...viewport, scale: metrics.scale, frame: metrics.logicalFrame });
+  }
+  await largePage.setViewportSize({ width: 2560, height: 1440 });
+  const largePages = await largePage.evaluate(() => {
+    __debug.forceRaid(10);
+    const out = {};
+    for (const target of ['throne', 'dungeon', 'mob', 'hero', 'shop', 'report', 'story']) {
+      __debug.setTab(target); out[target] = __debug.uiBounds().violations;
+    }
+    __debug.openDetail('大屏百科检查', '大屏详情必须保持完整边界，同时不能改变背后页面的点击映射。'.repeat(12));
+    out.detail = __debug.uiBounds().violations;
+    __debug.closeDetail();
+    __debug.openStitch(); out.stitch = __debug.uiBounds().violations; __debug.closeStitch();
+    __debug.forgeOpen('part'); out.forge = __debug.uiBounds().violations; __debug.closeForge();
+    __debug.smithOpen(); out.smith = __debug.uiBounds().violations; __debug.smithClose();
+    return out;
+  });
+  assert(Object.values(largePages).every((items) => items.length === 0), `Large-screen page overflow: ${JSON.stringify({ largeViewportAudit, largePages })}`);
+  const largeBattle = await largePage.evaluate(async () => {
+    while (!__debug.progression.teachingComplete) {
+      const target = __debug.progression.guide?.[0];
+      if (['throne', 'dungeon', 'hero', 'mob', 'shop', 'report', 'story'].includes(target) && target !== __debug.currentTab) __debug.setTab(target);
+      __debug.ackGuide();
+    }
+    __debug.devOvertime(21); __debug.giveResources(9999, 9999);
+    const guard = __debug.devRecruit('slime'); __debug.devAssign(0, 'front', guard); __debug.setTab('throne');
+    const setup = { guard, rooms: __debug.rooms, tasks: __debug.uiTasks };
+    await __debug.startBattle(); if (__debug.raidBriefing) await __debug.confirmRaidBriefing();
+    const started = { screen: __debug.screen, viewport: __debug.viewport() };
+    __debug.runBattleToEnd();
+    const result = { screen: __debug.screen, viewport: __debug.viewport() };
+    return { setup, started, result };
+  });
+  await largePage.evaluate(() => __debug.devEnding()); await largePage.waitForTimeout(100);
+  largeBattle.ending = await largePage.evaluate(() => __debug.endingLayout);
+  largeBattle.endingViewport = await largePage.evaluate(() => __debug.viewport());
+  assert(largeBattle.started.screen === 'battle' && largeBattle.result.screen === 'result'
+    && largeBattle.started.viewport.logicalFrame.bottom <= 1440 && largeBattle.result.viewport.logicalFrame.bottom <= 1440
+    && largeBattle.ending?.bounds?.right <= 480 && largeBattle.ending?.bounds?.bottom <= 270,
+  `Large-screen battle/result/ending audit failed: ${JSON.stringify(largeBattle)}`);
+  assert(largeErrors.length === 0, `Large-screen browser errors:\n${largeErrors.join('\n')}`);
+  await largeContext.close();
+
   // A clean browser profile migrates the former localStorage singleton into slot 1 without deleting the source key.
   const migrationContext = await browser.newContext({ viewport: { width: 800, height: 450 } });
   const migrationPage = await migrationContext.newPage();
@@ -767,7 +838,7 @@ try {
   await migrationContext.close();
 
   assert(errors.length === 0, `Browser errors:\n${errors.join('\n')}`);
-  console.log('Browser smoke passed: boot, legacy save, story/facility flows, battle/report links, constrained text, landscape touch targets and portrait controls.');
+  console.log('Browser smoke passed: boot, legacy save, story/facility flows, battle/report links, constrained text, 1080P/2K/ultrawide/4K scaling, landscape touch targets and portrait controls.');
 } finally {
   await browser?.close();
   server.kill();
