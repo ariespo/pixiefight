@@ -7147,11 +7147,13 @@ function guideTargetRect(target) {
   if (target === 'zoneNav') return { x: 0, y: 238, w: VIEW_W, h: 32 };
   if (target === 'taskCenter') return { x: 6, y: 134, w: 310, h: 96 };
   if (target === 'inspector') return { x: 318, y: 38, w: 158, h: 196 };
-  if (target === 'encyclopedia') return { x: 338, y: 202, w: 128, h: 24 };
+  // 王座底部的“完整百科”和“迎战”是两个相邻按钮。高光必须严格贴合
+  // 各自的实际点击区域，不能用一块横跨两按钮的旧检查器底栏坐标。
+  if (target === 'encyclopedia') return { x: 328, y: 202, w: 66, h: 24 };
   if (target === 'mobRecruit') return { x: 338, y: 174, w: 134, h: 22 };
   if (target === 'frontSlot') return { x: 125, y: 85, w: 44, h: 27 };
   if (target === 'backSlot') return { x: 37, y: 85, w: 44, h: 27 };
-  if (target === 'battle') return { x: 342, y: 179, w: 126, h: 34 };
+  if (target === 'battle') return { x: 398, y: 202, w: 68, h: 24 };
   if (target === 'raidPanel') return { x: 6, y: 58, w: 324, h: 100 };
   if (target === 'reportPanel') return { x: 4, y: 38, w: 324, h: 196 };
   if (target === 'dungeonTools') return { x: 134, y: 68, w: 82, h: 20 };
@@ -10035,6 +10037,7 @@ window.__debug = {
     return screen;
   },
   setTab: (t     ) => setTab(t),
+  get guideTarget() { const guide = roundGuide(); return guide ? { target: guide[0], rect: guideTargetRect(guide[0]) } : null; },
   ackGuide: () => { acknowledgeRoundGuide(); return window.__debug.progression; },
   backManage: () => { backToManage(); return screen; },
   pagers: () => livePagers.map((p) => ({ ...p, page: pageState[p.key] ?? 0, focus: pagerFocus === p.key })),

@@ -43,6 +43,19 @@ try {
   await page.evaluate(() => __debug.introContinue());
   assert(await page.evaluate(() => __debug.screen === 'manage'), 'Opening story did not enter management mode.');
 
+  // 新版界面导览的最后一步只应框住“完整百科”，不能把旁边的迎战按钮也包进去。
+  const shellTourTargets = await page.evaluate(() => {
+    const targets = [];
+    for (let i = 0; i < 4; i++) { targets.push(__debug.guideTarget); __debug.ackGuide(); }
+    return targets;
+  });
+  assert(JSON.stringify(shellTourTargets) === JSON.stringify([
+    { target: 'zoneNav', rect: { x: 0, y: 238, w: 480, h: 32 } },
+    { target: 'taskCenter', rect: { x: 6, y: 134, w: 310, h: 96 } },
+    { target: 'inspector', rect: { x: 318, y: 38, w: 158, h: 196 } },
+    { target: 'encyclopedia', rect: { x: 328, y: 202, w: 66, h: 24 } },
+  ]), `Opening tutorial highlights drifted from their controls: ${JSON.stringify(shellTourTargets)}`);
+
   // 长期事件链：六场临时战斗逐段升级，结算不推进主线，终局写入永久路线效果。
   const eventChain = await page.evaluate(async () => {
     const original = __debug.rawSave;
